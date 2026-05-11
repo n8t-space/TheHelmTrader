@@ -1,0 +1,34 @@
+# Top-level catch-all. Per-subproject .gitignore files (TradingBot/.gitignore,
+# NT8_Trade_Perf/.gitignore) carry the project-specific rules.
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]
+.Python
+
+# Local secrets (defensive)
+*.env
+*.key
+*.pem
+secrets/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Node
+node_modules/
+
+# Local backups
+backups/
+*.zip
+*.tar
+*.tar.gz

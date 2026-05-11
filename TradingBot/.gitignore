@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
+app/trading_env/
+
+# Runtime caches and logs (regenerable)
+app/data/screenshots/
+app/data/tradebot.log
+app/data/market_context.json
+
+# Trade + signal data (contains account IDs, fills, LLM proposals -- never push)
+app/data/signals.jsonl
+app/data/feed.db
+app/data/feed.db-wal
+app/data/feed.db-shm
+
+# Local backups (use git for version history instead)
+backups/
+*.zip
+*.tar
+*.tar.gz
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/
+
+# Defensive — never commit secrets
+*.env
+*.key
+secrets/

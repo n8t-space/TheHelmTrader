@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Frontend
+dashboard/web/node_modules/
+dashboard/web/dist/
+dashboard/web/.vite/
+dashboard/web/.eslintcache
+
+# Logs
+*.log
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Local secrets
+.env
+.env.local
+
+# Trade data mirror (built by recorder.py from NT's own SQLite -- never push)
+trades.db
+trades.db-wal
+trades.db-shm
+
+# Watchdog log
+data/watchdog.log

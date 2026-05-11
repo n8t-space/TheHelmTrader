@@ -1,0 +1,610 @@
+import { useEffect, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import {
+  deleteJSON,
+  fetchJSON,
+  postJSON,
+  type Journal,
+  type Outcome,
+  type Signal,
+  type SignalDetailResp,
+  type TradeMetrics,
+} from '../api'
+
+const JOURNAL_VERDICTS: Journal['verdict'][] = ['agree', 'disagree', 'skip']
+const OUTCOME_RESULTS: Outcome['result'][] = [
+  'pending', 'target', 'stop', 'breakeven', 'partial', 'no_fill', 'not_watched', 'other',
+]
+
+// ---------- Formatting helpers ----------
+const fmtMoney = (n: number) =>
+  `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+const fmtNum = (n: number | null | undefined, digits = 2) =>
+  n === undefined || n === null ? '—' : n.toFixed(digits)
+const fmtPct = (n: number | null | undefined) =>
+  n === undefined || n === null ? '—' : `${(n * 100).toFixed(0)}%`
+
+// ---------- Page ----------
+export function SignalDetailPage() {
+  const { timestamp } = useParams<{ timestamp: string }>()
+  const navigate = useNavigate()
+  const qc = useQueryClient()
+  const ts = timestamp || ''
+  const tsEnc = encodeURIComponent(ts)
+
+  const q = useQuery<SignalDetailResp>({
+    queryKey: ['signal', ts],
+    queryFn: () => fetchJSON<SignalDetailResp>(`/api/signals/${tsEnc}`),
+    enabled: !!ts,
+  })
+
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['signal', ts] })
+    qc.invalidateQueries({ queryKey: ['signals'] })
+  }
+  const onDeleted = () => {
+    qc.invalidateQueries({ queryKey: ['signals'] })
+    navigate('/signals')
+  }
+
+  // ---- Editable state lifted to page ----
+  const [journalVerdict, setJournalVerdict] = useState<Journal['verdict']>('skip')
+  const [journalNote, setJournalNote] = useState('')
+  const [positionSize, setPositionSize] = useState('')
+  const [outcomeResult, setOutcomeResult] = useState<Outcome['result']>('pending')
+  const [outcomeNote, setOutcomeNote] = useState('')
+  const [outcomeClose, setOutcomeClose] = useState('')
+
+  const signal = q.data?.signal
+  useEffect(() => {
+    if (!signal) return
+    setJournalVerdict(signal.journal?.verdict ?? 'skip')
+    setJournalNote(signal.journal?.note ?? '')
+    setPositionSize(
+      signal.metrics?.position_size && signal.metrics.position_size > 0
+        ? String(signal.metrics.position_size)
+        : '',
+    )
+    setOutcomeResult(signal.outcome?.result ?? 'pending')
+    setOutcomeNote(signal.outcome?.note ?? '')
+    setOutcomeClose(
+      signal.outcome?.closing_price != null ? String(signal.outcome.closing_price) : '',
+    )
+  }, [signal])
+
+  // ---- Dirty tracking ----
+  const journalDirty =
+    !!signal &&
+    (journalVerdict !== (signal.journal?.verdict ?? 'skip') ||
+      (journalNote.trim() || null) !== (signal.journal?.note ?? null))
+
+  const positionDirty = (() => {
+    if (!signal) return false
+    const current = signal.metrics?.position_size ?? 0
+    const next = parseFloat(positionSize || '0')
+    if (!Number.isFinite(next) || next < 0) return false
+    return next !== current
+  })()
+
+  const outcomeDirty = (() => {
+    if (!signal) return false
+    if (outcomeResult !== (signal.outcome?.result ?? 'pending')) return true
+    if ((outcomeNote.trim() || null) !== (signal.outcome?.note ?? null)) return true
+    const cur = signal.outcome?.closing_price ?? null
+    const nxt = outcomeClose.trim() === '' ? null : parseFloat(outcomeClose)
+    if (nxt !== null && !Number.isFinite(nxt)) return false
+    return nxt !== cur
+  })()
+
+  const anyDirty = journalDirty || positionDirty || outcomeDirty
+
+  // ---- Single save mutation ----
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const saveAll = useMutation({
+    mutationFn: async () => {
+      const ops: Promise<unknown>[] = []
+      if (journalDirty) {
+        ops.push(postJSON(`/api/signals/${tsEnc}/journal`, {
+          verdict: journalVerdict,
+          note: journalNote.trim() || null,
+        }))
+      }
+      if (positionDirty) {
+        ops.push(postJSON(`/api/signals/${tsEnc}/position`, {
+          position_size: parseFloat(positionSize || '0'),
+        }))
+      }
+      if (outcomeDirty) {
+        const cp = outcomeClose.trim() === '' ? null : parseFloat(outcomeClose)
+        ops.push(postJSON(`/api/signals/${tsEnc}/outcome`, {
+          result: outcomeResult,
+          note: outcomeNote.trim() || null,
+          closing_price: cp,
+        }))
+      }
+      await Promise.all(ops)
+    },
+    onSuccess: () => {
+      setSaveError(null)
+      refresh()
+    },
+    onError: (e: Error) => setSaveError(e.message),
+  })
+
+  if (!ts) return <div className="card">No timestamp.</div>
+  if (q.isLoading) return <div className="card">Loading…</div>
+  if (q.error || !q.data) return <div className="card error">{String(q.error ?? 'no data')}</div>
+
+  const { children } = q.data
+  const sig = q.data.signal
+  const m = sig.metrics
+
+  return (
+    <>
+      <div className="card detail-header">
+        <div>
+          <h2>{sig.timestamp}</h2>
+          <Link to="/signals">← All signals</Link>
+        </div>
+        <DeleteButton ts={ts} onDeleted={onDeleted} />
+      </div>
+
+      {children.length > 0 && (
+        <ChildrenSection children={children} onChanged={refresh} />
+      )}
+
+      {sig.outcome_suggestion && !sig.outcome?.result && !sig.outcome_suggestion_dismissed && (
+        <PendingSuggestionBanner suggestion={sig.outcome_suggestion} />
+      )}
+
+      <div className="card">
+        <h2>Proposal</h2>
+        <ProposalDetails signal={sig} />
+        <h3>Reasoning</h3>
+        <p>{sig.proposal.reasoning}</p>
+        {sig.market_context && <MarketContextSection ctx={sig.market_context} />}
+        <h3>Trade Recap</h3>
+        <TradeRecap signal={sig} metrics={m} />
+        <div className="position-form">
+          <label htmlFor="position_size">Contracts / Shares:</label>
+          <input
+            id="position_size"
+            type="number"
+            min={0}
+            step="any"
+            placeholder="e.g. 1"
+            value={positionSize}
+            onChange={(e) => setPositionSize(e.target.value)}
+          />
+          {positionDirty && <span className="dirty-flag">unsaved</span>}
+        </div>
+        {m && m.position_size > 0 && m.point_value && <Totals metrics={m} />}
+        <TickAdjustmentsBlock signal={sig} />
+      </div>
+
+      <div className="forms-grid">
+        <JournalSection
+          verdict={journalVerdict} setVerdict={setJournalVerdict}
+          note={journalNote} setNote={setJournalNote}
+          saved={sig.journal} dirty={journalDirty}
+        />
+        <OutcomeSection
+          result={outcomeResult} setResult={setOutcomeResult}
+          note={outcomeNote} setNote={setOutcomeNote}
+          closingPrice={outcomeClose} setClosingPrice={setOutcomeClose}
+          suggestedClose={sig.proposal.target}
+          saved={sig.outcome} dirty={outcomeDirty}
+        />
+      </div>
+
+      <div className="save-bar">
+        <button
+          type="button"
+          className="primary"
+          onClick={() => saveAll.mutate()}
+          disabled={!anyDirty || saveAll.isPending}
+        >
+          {saveAll.isPending
+            ? 'Saving…'
+            : anyDirty
+              ? `Save changes (${[journalDirty, positionDirty, outcomeDirty].filter(Boolean).length} section${[journalDirty, positionDirty, outcomeDirty].filter(Boolean).length === 1 ? '' : 's'})`
+              : 'No changes'}
+        </button>
+        {saveError && <div className="error">{saveError}</div>}
+      </div>
+
+      <ScreenshotSection filename={sig.screenshot_filename} />
+
+      <JsonSnippetSection signal={sig} />
+    </>
+  )
+}
+
+// ---------- JSON snippet ----------
+function JsonSnippetSection({ signal }: { signal: Signal }) {
+  // market_context is already shown in its own collapsed section in the
+  // proposal card; strip it here so the snippet stays focused on the record.
+  const { market_context: _mc, raw_response: _rr, ...rest } = signal
+  void _mc; void _rr
+  return (
+    <div className="card">
+      <h2>Raw signal record</h2>
+      <details open>
+        <summary className="subtle">JSON (signals.jsonl entry)</summary>
+        <pre style={{ overflowX: 'auto', fontSize: 12, maxHeight: 480, marginTop: 8 }}>
+          {JSON.stringify(rest, null, 2)}
+        </pre>
+      </details>
+    </div>
+  )
+}
+
+// ---------- Children (reconciliations) ----------
+function ChildrenSection({
+  children, onChanged,
+}: {
+  children: Signal[]
+  onChanged: () => void
+}) {
+  const confirmM = useMutation({
+    mutationFn: (childTs: string) =>
+      postJSON(`/api/signals/${encodeURIComponent(childTs)}/suggestion/confirm`),
+    onSuccess: onChanged,
+  })
+
+  return (
+    <div className="card">
+      <h2>Reconciliations from this analysis</h2>
+      <p className="subtle">
+        The model reviewed {children.length} prior open trade(s) on this instrument against the new
+        chart. <strong>Confirm</strong> to apply the suggested outcome and remove the previous signal.
+      </p>
+      {children.map((c) => (
+        <div key={c.timestamp} className="child-suggestion">
+          <div className="child-header">
+            <Link to={`/signals/${encodeURIComponent(c.timestamp)}`}>{c.timestamp}</Link>
+            <span className={`dir-${c.proposal.direction}`}>{c.proposal.direction.toUpperCase()}</span>
+            <span>{c.proposal.instrument}</span>
+            <span className="subtle">
+              entry {fmtNum(c.proposal.entry, 4)} · stop {fmtNum(c.proposal.stop, 4)} · target {fmtNum(c.proposal.target, 4)}
+            </span>
+          </div>
+          {c.outcome_suggestion && (
+            <>
+              <div className="child-verdict">
+                <span className="subtle">Suggested:</span>{' '}
+                <span className={`dir-${c.outcome_suggestion.result}`}>
+                  {c.outcome_suggestion.result.toUpperCase()}
+                </span>
+                {' '}
+                <span className="subtle">conf {fmtPct(c.outcome_suggestion.confidence)}</span>
+              </div>
+              {c.outcome_suggestion.reasoning && (
+                <p className="child-reasoning">{c.outcome_suggestion.reasoning}</p>
+              )}
+            </>
+          )}
+          <button
+            type="button"
+            className="primary"
+            onClick={() => confirmM.mutate(c.timestamp)}
+            disabled={confirmM.isPending}
+          >
+            {confirmM.isPending ? 'Applying…' : 'Confirm & remove previous'}
+          </button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ---------- Pending suggestion (informational) ----------
+function PendingSuggestionBanner({ suggestion }: { suggestion: NonNullable<Signal['outcome_suggestion']> }) {
+  return (
+    <div className="card suggestion-info">
+      <p>
+        <strong>Pending reconciliation:</strong>{' '}
+        Model suggested{' '}
+        <span className={`dir-${suggestion.result}`}>{suggestion.result.toUpperCase()}</span>
+        {suggestion.confidence !== undefined && ` at ${fmtPct(suggestion.confidence)} confidence`}.
+        Confirm or reject on the{' '}
+        <Link to={`/signals/${encodeURIComponent(suggestion.source_signal_ts)}`}>
+          analysis from {suggestion.source_signal_ts}
+        </Link>.
+      </p>
+    </div>
+  )
+}
+
+// ---------- Screenshot ----------
+function ScreenshotSection({ filename }: { filename: string | null | undefined }) {
+  if (!filename) {
+    return <div className="card subtle">No screenshot on record.</div>
+  }
+  const url = `/api/screenshots/${encodeURIComponent(filename)}`
+  return (
+    <div className="card screenshot">
+      <h2>Chart screenshot</h2>
+      <a href={url} target="_blank" rel="noreferrer">
+        <img src={url} alt="chart" />
+      </a>
+    </div>
+  )
+}
+
+// ---------- Proposal details ----------
+function ProposalDetails({ signal }: { signal: Signal }) {
+  const p = signal.proposal
+  return (
+    <dl className="kv-grid">
+      <dt>Instrument</dt><dd>{p.instrument || '—'}</dd>
+      <dt>Direction</dt><dd className={`dir-${p.direction}`}>{p.direction || '—'}</dd>
+      <dt>Entry</dt><dd>{fmtNum(p.entry, 4)}</dd>
+      <dt>Stop</dt><dd>{fmtNum(p.stop, 4)}</dd>
+      <dt>Target</dt><dd>{fmtNum(p.target, 4)}</dd>
+      <dt>R:R</dt><dd>{fmtNum(p.risk_reward, 2)}</dd>
+      <dt>Confidence</dt><dd>{fmtNum(p.confidence, 2)}</dd>
+    </dl>
+  )
+}
+
+// ---------- Market context ----------
+type AnyDict = Record<string, unknown>
+
+function MarketContextSection({ ctx }: { ctx: AnyDict }) {
+  const current = (ctx.current ?? null) as { bid?: number; ask?: number; last?: number } | null
+  const daily = (ctx.daily_levels ?? null) as AnyDict | null
+  return (
+    <>
+      <h3>Market Context (NinjaTrader)</h3>
+      <div className="market-context">
+        <p className="subtle">
+          Instrument: <strong>{String(ctx.instrument ?? '?')}</strong>
+          {current && (
+            <>
+              {' · '}bid <strong>{current.bid}</strong>
+              {' / ask '}<strong>{current.ask}</strong>
+              {' / last '}<strong>{current.last}</strong>
+            </>
+          )}
+        </p>
+        {daily && (
+          <p className="subtle">
+            {daily.pivot_p !== undefined && (
+              <>Pivot {String(daily.pivot_p)} (R1 {String(daily.pivot_r1)} / R2 {String(daily.pivot_r2)} / R3 {String(daily.pivot_r3)} · S1 {String(daily.pivot_s1)} / S2 {String(daily.pivot_s2)} / S3 {String(daily.pivot_s3)})</>
+            )}
+            {daily.today_high !== undefined && (
+              <>{' · Today H/L: '}{String(daily.today_high)} / {String(daily.today_low)}</>
+            )}
+            {daily.yesterday_high !== undefined && (
+              <>{' · Yesterday H/L/C: '}{String(daily.yesterday_high)} / {String(daily.yesterday_low)} / {String(daily.yesterday_close)}</>
+            )}
+          </p>
+        )}
+        <details>
+          <summary>Full snapshot (JSON)</summary>
+          <pre style={{ overflowX: 'auto', fontSize: 12 }}>{JSON.stringify(ctx, null, 2)}</pre>
+        </details>
+      </div>
+    </>
+  )
+}
+
+// ---------- Trade recap ----------
+function TradeRecap({ signal, metrics }: { signal: Signal; metrics: TradeMetrics | undefined }) {
+  const p = signal.proposal
+  const usingTicks = metrics?.display_mode === 'ticks'
+  const reassessed = p.reassessed
+  return (
+    <dl className="kv-grid">
+      <dt>Instrument</dt>
+      <dd>
+        {p.instrument || '—'}{' '}
+        {metrics?.point_value ? (
+          <span className="subtle">($ / point: ${metrics.point_value})</span>
+        ) : (
+          <span className="subtle">(point value unknown)</span>
+        )}
+      </dd>
+      <dt>Levels</dt>
+      <dd>Entry {p.entry} → Stop {p.stop} → Target {p.target}</dd>
+      {reassessed && (
+        <>
+          <dt>Reassessment</dt>
+          <dd>
+            <span className="reassessed-badge">↻ {p.attempts} attempts</span>{' '}
+            confidences: {(p.attempt_confidences ?? []).map((c) => c.toFixed(2)).join(' → ')}
+            {p.confidence_floor !== undefined && p.confidence < p.confidence_floor && (
+              <span className="low-conf-flag"> below floor</span>
+            )}
+          </dd>
+        </>
+      )}
+      {metrics && metrics.point_value && (
+        <>
+          <dt>Risk / contract</dt>
+          <dd>
+            {usingTicks
+              ? <>{metrics.risk_ticks.toFixed(0)} ticks × ${metrics.tick_value} = <strong>{fmtMoney(metrics.risk_per_contract)}</strong></>
+              : <>{metrics.risk_points.toFixed(2)} pt × ${metrics.point_value} = <strong>{fmtMoney(metrics.risk_per_contract)}</strong></>}
+          </dd>
+          <dt>Reward / contract</dt>
+          <dd>
+            {usingTicks
+              ? <>{metrics.reward_ticks.toFixed(0)} ticks × ${metrics.tick_value} = <strong>{fmtMoney(metrics.reward_per_contract)}</strong></>
+              : <>{metrics.reward_points.toFixed(2)} pt × ${metrics.point_value} = <strong>{fmtMoney(metrics.reward_per_contract)}</strong></>}
+          </dd>
+        </>
+      )}
+    </dl>
+  )
+}
+
+// ---------- Totals (totals + realized P/L) ----------
+function Totals({ metrics: m }: { metrics: TradeMetrics }) {
+  const pnlClass = m.realized_pnl == null
+    ? '' : m.realized_pnl > 0 ? 'pnl-pos' : m.realized_pnl < 0 ? 'pnl-neg' : ''
+  return (
+    <dl className="kv-grid totals">
+      <dt>Total risk</dt><dd>{fmtMoney(m.total_risk)}</dd>
+      <dt>Total reward</dt><dd>{fmtMoney(m.total_reward)}</dd>
+      {m.realized_pnl !== null && (
+        <>
+          <dt>Realized P/L</dt>
+          <dd className={pnlClass}>
+            {fmtMoney(m.realized_pnl)}
+            {m.realized_pnl_source && (
+              <span className="subtle"> (from {m.realized_pnl_source})</span>
+            )}
+          </dd>
+        </>
+      )}
+    </dl>
+  )
+}
+
+// ---------- Tick adjustments ----------
+function TickAdjustmentsBlock({ signal }: { signal: Signal }) {
+  const p = signal.proposal
+  if (p.tick_adjustments && p.tick_adjustments.length > 0) {
+    return (
+      <div className="tick-adjustments">
+        <strong>Tick adjustments applied</strong>{' '}
+        (tick={p.tick_size_applied}, source={p.tick_source}):
+        <ul>
+          {p.tick_adjustments.map((a, i) => (
+            <li key={i}>{a.field}: {a.from} → {a.to}</li>
+          ))}
+        </ul>
+      </div>
+    )
+  }
+  if (p.tick_source === 'unknown') {
+    return (
+      <div className="tick-warning">
+        Unknown instrument <code>{p.instrument}</code> — no tick rounding applied.
+        Add it to <code>instruments.json</code> if you trade this regularly.
+      </div>
+    )
+  }
+  return null
+}
+
+// ---------- Journal section (controlled) ----------
+function JournalSection({
+  verdict, setVerdict, note, setNote, saved, dirty,
+}: {
+  verdict: Journal['verdict']
+  setVerdict: (v: Journal['verdict']) => void
+  note: string
+  setNote: (n: string) => void
+  saved: Journal | undefined
+  dirty: boolean
+}) {
+  return (
+    <div className="card form-block">
+      <h2>Journal {dirty && <span className="dirty-flag">unsaved</span>}</h2>
+      <p className="subtle">
+        Saved: <strong>{saved?.verdict ?? 'none'}</strong>
+        {saved?.note && ` — ${saved.note}`}
+      </p>
+      <fieldset>
+        {JOURNAL_VERDICTS.map((v) => (
+          <label key={v}>
+            <input
+              type="radio"
+              name="verdict"
+              value={v}
+              checked={verdict === v}
+              onChange={() => setVerdict(v)}
+            />
+            {' '}{v}
+          </label>
+        ))}
+      </fieldset>
+      <textarea
+        placeholder="Why?"
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+      />
+    </div>
+  )
+}
+
+// ---------- Outcome section (controlled) ----------
+function OutcomeSection({
+  result, setResult, note, setNote, closingPrice, setClosingPrice,
+  suggestedClose, saved, dirty,
+}: {
+  result: Outcome['result']
+  setResult: (r: Outcome['result']) => void
+  note: string
+  setNote: (n: string) => void
+  closingPrice: string
+  setClosingPrice: (s: string) => void
+  suggestedClose: number
+  saved: Outcome | undefined
+  dirty: boolean
+}) {
+  return (
+    <div className="card form-block">
+      <h2>Outcome {dirty && <span className="dirty-flag">unsaved</span>}</h2>
+      <p className="subtle">
+        Saved: <strong>{saved?.result ?? 'none'}</strong>
+        {saved?.note && ` — ${saved.note}`}
+        {saved?.closing_price != null && ` • close @ ${saved.closing_price}`}
+      </p>
+      <fieldset>
+        {OUTCOME_RESULTS.map((r) => (
+          <label key={r}>
+            <input
+              type="radio"
+              name="result"
+              value={r}
+              checked={result === r}
+              onChange={() => setResult(r)}
+            />
+            {' '}{r}
+          </label>
+        ))}
+      </fieldset>
+      <label className="inline-label">
+        Closing price (optional, overrides default P/L):{' '}
+        <input
+          type="number"
+          step="any"
+          value={closingPrice}
+          onChange={(e) => setClosingPrice(e.target.value)}
+          placeholder={`e.g. ${suggestedClose}`}
+        />
+      </label>
+      <textarea
+        placeholder="What happened?"
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+      />
+    </div>
+  )
+}
+
+// ---------- Delete button ----------
+function DeleteButton({ ts, onDeleted }: { ts: string; onDeleted: () => void }) {
+  const m = useMutation({
+    mutationFn: () => deleteJSON(`/api/signals/${encodeURIComponent(ts)}`),
+    onSuccess: onDeleted,
+  })
+  return (
+    <button
+      type="button"
+      className="danger"
+      onClick={() => {
+        if (confirm('Delete this signal? It will be hidden from the dashboard. (Recoverable by editing signals.jsonl.)'))
+          m.mutate()
+      }}
+      disabled={m.isPending}
+    >
+      {m.isPending ? 'Deleting…' : 'Delete'}
+    </button>
+  )
+}

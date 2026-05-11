@@ -1,0 +1,183 @@
+"""Home page aggregations.
+
+Reads signals.jsonl (LLM proposals + outcomes) and trades.db (actual NT8 fills)
+to build a single response the home page renders without extra round-trips.
+"""
+from __future__ import annotations
+
+import logging
+from datetime import date, timedelta
+from typing import Any
+
+from fastapi import APIRouter
+
+from . import _tradebot_bridge as bridge  # noqa: F401  -- side-effect: sys.path
+from . import db, trades as tradelib
+from .signals import _load_visible_signals
+from src import instruments  # type: ignore[import-not-found]  # via bridge
+
+router = APIRouter(prefix="/api/home", tags=["home"])
+
+logger = logging.getLogger(__name__)
+
+# Account categorization for cumulative-earnings card. Hardcoded for v1; if
+# this list grows past ~10 entries, lift it into instruments.json or a sibling
+# config file. Anything not listed is treated as uncategorized and excluded.
+ACCOUNT_CATEGORIES: dict[str, list[str]] = {
+    "live":       ["<live-account-id>"],
+    "evals":      ["<eval-account-id>"],
+    "simulation": ["<demo-account-id>", "SimBetaSIM", "Sim101", "Playback101", "Backtest"],
+}
+
+
+def _account_category(account_name: str) -> str | None:
+    for cat, members in ACCOUNT_CATEGORIES.items():
+        if account_name in members:
+            return cat
+    return None
+
+
+def _today_local_iso() -> str:
+    return date.today().isoformat()
+
+
+def _last_n_days_iso(n: int) -> list[str]:
+    today = date.today()
+    return [(today - timedelta(days=i)).isoformat() for i in range(n - 1, -1, -1)]
+
+
+@router.get("")
+def home() -> dict[str, Any]:
+    """Single endpoint serving everything the home page needs."""
+    visible = _load_visible_signals()
+    config = instruments.load_config()
+    today = _today_local_iso()
+
+    # Enrich signals with metrics so realized P/L is computable.
+    enriched: list[dict] = []
+    for sig in visible.values():
+        m = instruments.compute_trade_metrics(sig, config)
+        enriched.append({**sig, "metrics": m})
+    enriched.sort(key=lambda s: s.get("timestamp", ""), reverse=True)
+
+    # ---- Today's snapshot ----
+    today_signals = [s for s in enriched if s.get("timestamp", "")[:10] == today]
+    today_with_pnl = [s for s in today_signals
+                      if s["metrics"].get("realized_pnl") is not None]
+    today_pnl = sum(s["metrics"]["realized_pnl"] for s in today_with_pnl)
+    today_wins = sum(1 for s in today_with_pnl if s["metrics"]["realized_pnl"] > 0)
+    today_losses = sum(1 for s in today_with_pnl if s["metrics"]["realized_pnl"] < 0)
+    today_instruments = sorted({
+        s.get("proposal", {}).get("instrument", "?") for s in today_signals
+    })
+
+    # Today's trades from the recorder (independent source of truth).
+    today_trades_count = 0
+    today_trades_pnl = 0.0
+    try:
+        fills_rows = db.fetch_fills_for_derivation(date_from=today + "T00:00:00")
+        trades_rows = tradelib.derive_trades(fills_rows)
+        today_trades_count = len(trades_rows)
+        today_trades_pnl = sum(t["net_pnl"] for t in trades_rows)
+    except FileNotFoundError:
+        pass
+
+    # ---- Action queue ----
+    pending_suggestions: list[dict] = []
+    below_floor: list[dict] = []
+    missing_journal: list[dict] = []
+    for s in enriched:
+        proposal = s.get("proposal") or {}
+        outcome = s.get("outcome") or {}
+        sug = s.get("outcome_suggestion")
+        if sug and not s.get("outcome_suggestion_dismissed") and not outcome.get("result"):
+            pending_suggestions.append({
+                "timestamp": s["timestamp"],
+                "instrument": proposal.get("instrument"),
+                "result": sug.get("result"),
+                "source_signal_ts": sug.get("source_signal_ts"),
+            })
+        floor = proposal.get("confidence_floor") or 0.75
+        conf = proposal.get("confidence")
+        if conf is not None and conf < floor and not outcome.get("result"):
+            below_floor.append({
+                "timestamp": s["timestamp"],
+                "instrument": proposal.get("instrument"),
+                "confidence": conf,
+                "floor": floor,
+            })
+        verdict = (s.get("journal") or {}).get("verdict")
+        if not verdict:
+            missing_journal.append({
+                "timestamp": s["timestamp"],
+                "instrument": proposal.get("instrument"),
+            })
+
+    # ---- Cumulative earnings by account category ----
+    # All-time totals across four buckets:
+    #   live        - real brokerage (<live-account-id>)
+    #   evals       - prop firm eval accounts (<eval-account-id> = Tradify)
+    #   simulation  - sim/demo/playback/backtest accounts
+    #   signals     - realized P/L from the LLM-proposed trades in signals.jsonl
+    cumulative_earnings = {"live": 0.0, "evals": 0.0, "simulation": 0.0, "signals": 0.0}
+    try:
+        all_fills = db.fetch_fills_for_derivation()
+        all_trades = tradelib.derive_trades(all_fills)
+        for t in all_trades:
+            cat = _account_category(t.get("account", ""))
+            if cat is not None:
+                cumulative_earnings[cat] += t.get("net_pnl", 0.0) or 0.0
+    except FileNotFoundError:
+        pass
+    for s in enriched:
+        pnl = s["metrics"].get("realized_pnl")
+        if pnl is not None:
+            cumulative_earnings["signals"] += pnl
+    cumulative_earnings = {k: round(v, 2) for k, v in cumulative_earnings.items()}
+
+    # ---- Equity curve over 30 days ----
+    by_day: dict[str, float] = {}
+    for s in enriched:
+        pnl = s["metrics"].get("realized_pnl")
+        if pnl is None:
+            continue
+        d = (s.get("timestamp") or "")[:10]
+        if not d:
+            continue
+        by_day[d] = by_day.get(d, 0.0) + pnl
+
+    days = _last_n_days_iso(30)
+    cum = 0.0
+    equity_curve: list[dict] = []
+    for d in days:
+        daily = by_day.get(d, 0.0)
+        cum += daily
+        equity_curve.append({
+            "date": d,
+            "daily_pnl": round(daily, 2),
+            "cumulative_pnl": round(cum, 2),
+        })
+
+    return {
+        "today": {
+            "date": today,
+            "signal_count": len(today_signals),
+            "realized_pnl": round(today_pnl, 2),
+            "win_count": today_wins,
+            "loss_count": today_losses,
+            "instruments": today_instruments,
+            "trade_count": today_trades_count,
+            "trade_pnl": round(today_trades_pnl, 2),
+        },
+        "action_queue": {
+            "pending_suggestions": pending_suggestions[:10],
+            "below_floor": below_floor[:10],
+            "missing_journal": missing_journal[:10],
+            "total": (len(pending_suggestions) + len(below_floor)
+                      + len(missing_journal)),
+        },
+        "open_positions": [],  # TODO: depends on NS account-state indicator
+        "cumulative_earnings": cumulative_earnings,
+        "last_signal": enriched[0] if enriched else None,
+        "equity_curve": equity_curve,
+    }

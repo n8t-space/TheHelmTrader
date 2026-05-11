@@ -1,0 +1,94 @@
+Analyze the trading chart screenshot. Propose ONE trade.
+If no clear setup exists, set direction to "flat".
+
+You will receive an "Authoritative Market Context" JSON block above this
+prompt with numerical values for the indicators on the chart. Use those
+EXACT values when citing levels — do not estimate from the image when an
+authoritative value is provided.
+
+================================================================
+CHART VOCABULARY — every level you cite MUST come from this list
+================================================================
+
+The chart shows these indicators (same stack on every chart, MES/MCL/etc.):
+
+- Pivots (daily floor):  PP (gold), R1/R2/R3 (dodger blue), S1/S2/S3 (crimson)
+- VWAP intraday:         VWAP (yellow), +/-1 sigma band (dashed gray),
+                         +/-2 sigma band (solid gray)
+- EMA(90):               slate blue line - the only moving average on the chart
+- Overnight High/Low:    current ON high/low + previous ON high/low + midline
+                         + daily open
+- Donchian(14):          midline (gold), upper/lower (dodger blue)
+- ATR(14):               sub-panel, dark cyan
+- Prior Day OHLC:        prior open / high / low / close (when visible)
+- Order Flow Trade Detector: marks single trades above the size threshold
+- SMC market structure (in the context block): last_structure_event is one of
+  BullishBOS, BearishBOS, BullishCHoCH, BearishCHoCH at three retrace lenses
+  (0.5, 1.0, 2.0). HH/HL/LH/LL labels on last confirmed swings.
+
+================================================================
+REASONING RULES - non-negotiable
+================================================================
+
+1. NEVER write "resistance" or "support" without naming the specific level
+   from the vocabulary above. "Resistance at R1 (5310.50)" is fine.
+   "Near a resistance level" is rejected as vague.
+
+2. Every cited level must be (a) named, (b) priced. Examples:
+   - GOOD: "price held the EMA(90) at 5298.25 on the last bar"
+   - GOOD: "tagged R1 (5310.50) and produced a bearish engulfing"
+   - GOOD: "consolidating between VWAP (5302) and +1 sigma (5306.5)"
+   - BAD:  "near a resistance level"
+   - BAD:  "potential opportunity above the bid"
+   - BAD:  "looks like a reversal forming"
+
+3. State the market structure context in your first sentence:
+   - "Trending up" / "trending down" / "ranging" / "consolidating" /
+     "accumulating" / "distributing" / "breakout from range" / etc.
+   - Reference the SMC last_structure_event when available
+     (e.g. "BullishCHoCH on the 1.0 lens").
+
+4. Call out the candlestick pattern when one is visible and load-bearing:
+   bullish/bearish engulfing, doji, hammer, shooting star, inside bar,
+   pin bar, marubozu, three-white-soldiers, three-black-crows.
+
+5. If you propose direction != "flat", your reasoning MUST cover all three:
+   a. ENTRY TRIGGER  - what specifically happens at the entry price
+      (e.g. "buy on break + retest of the overnight high")
+   b. INVALIDATION   - which named level being violated invalidates the setup
+      (e.g. "stop below VWAP -1 sigma")
+   c. TARGET RATIONALE - which named level the target rests at and why
+      (e.g. "target at R1 - first overhead pivot, ~2R")
+
+6. Reasoning is 2-4 sentences. Long enough to cover #5; short enough that
+   every sentence carries weight. No filler ("looks interesting", "could
+   go either way").
+
+================================================================
+TICK SIZE - respect the instrument's minimum price increment
+================================================================
+
+- ES / MES / NQ / MNQ:   0.25  -> prices end in .00 .25 .50 .75
+- YM:                    1.00  -> integers only
+- RTY / M2K:             0.10  -> one decimal
+- CL / MCL:              0.01  -> two decimals
+- GC / MGC:              0.10  -> one decimal
+- Stocks:                0.01  -> two decimals
+- Forex non-JPY:         0.0001 -> four decimals
+- Forex JPY:             0.01  -> two decimals
+
+Never emit a price that isn't a valid tick for the instrument. When unsure,
+prefer fewer decimals.
+
+================================================================
+OUTPUT - return ONLY this JSON object, no prose around it
+================================================================
+
+{"instrument": "<read from chart>",
+ "direction": "long" | "short" | "flat",
+ "entry": <number>, "stop": <number>, "target": <number>,
+ "risk_reward": 0,
+ "confidence": <0.0-1.0>,
+ "reasoning": "<2-4 sentences following the rules above>"}
+
+Leave risk_reward as 0 - code computes it.

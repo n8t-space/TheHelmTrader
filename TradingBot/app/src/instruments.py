@@ -1,0 +1,259 @@
+"""Instrument tick-size lookup and price snapping.
+
+Reads instruments.json (futures explicit map + forex/stock fallback rules).
+Used post-parse to snap LLM-proposed prices to valid tick increments and to
+annotate any adjustments so the dashboard can surface model failures.
+"""
+import json
+import logging
+import re
+from decimal import ROUND_HALF_EVEN, Decimal
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+CONFIG_PATH = Path(__file__).parent.parent / "instruments.json"
+
+# Strip a futures contract suffix from the chart's instrument string.
+# Matches either single-letter month codes ("H26", "M26") or 3-letter month
+# abbreviations ("JUN26", "DEC25"), with or without a leading space.
+_CONTRACT_SUFFIX = re.compile(
+    r"\s*(?:[FGHJKMNQUVXZ]\d{2}|"
+    r"JAN\d{2}|FEB\d{2}|MAR\d{2}|APR\d{2}|MAY\d{2}|JUN\d{2}|"
+    r"JUL\d{2}|AUG\d{2}|SEP\d{2}|OCT\d{2}|NOV\d{2}|DEC\d{2})\s*$"
+)
+
+_FOREX_PATTERN = re.compile(r"^[A-Z]{6}$")
+_STOCK_PATTERN = re.compile(r"^[A-Z]{1,5}(?:\.[A-Z])?$")
+
+
+def load_config(path: Path = CONFIG_PATH) -> dict:
+    if not path.exists():
+        logger.warning("instruments.json not found at %s; using empty config", path)
+        return {"instruments": {}, "rules": {}}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def normalize_symbol(symbol: str) -> str:
+    """Normalize a chart's instrument string to a lookup root.
+
+    Examples:
+        "MES JUN26"  -> "MES"
+        "ESH26"      -> "ES"
+        "AAPL"       -> "AAPL"
+        "EUR/USD"    -> "EURUSD"
+    """
+    if not symbol:
+        return ""
+    s = symbol.strip().upper().replace("/", "").replace("-", "").replace("_", "")
+    s = _CONTRACT_SUFFIX.sub("", s).strip()
+    return s
+
+
+def lookup_tick_size(symbol: str, config: dict) -> tuple[float | None, str]:
+    """Return (tick_size, source). tick_size is None if symbol is unknown."""
+    root = normalize_symbol(symbol)
+    if not root:
+        return None, "empty"
+
+    instruments = config.get("instruments", {})
+    rules = config.get("rules", {})
+
+    if root in instruments:
+        return float(instruments[root]), "explicit"
+
+    if _FOREX_PATTERN.match(root):
+        if "JPY" in root and "forex_jpy_tick" in rules:
+            return float(rules["forex_jpy_tick"]), "forex_jpy"
+        if "forex_other_tick" in rules:
+            return float(rules["forex_other_tick"]), "forex_other"
+
+    if _STOCK_PATTERN.match(root) and "stock_default_tick" in rules:
+        return float(rules["stock_default_tick"]), "stock_default"
+
+    return None, "unknown"
+
+
+def lookup_point_value(symbol: str, config: dict) -> float | None:
+    """Return the dollar value of one full price point per contract/share.
+
+    None if unknown. Forex default assumes a standard lot (100,000 base);
+    user adjusts position_size for mini/micro lots.
+    """
+    root = normalize_symbol(symbol)
+    if not root:
+        return None
+
+    point_values = config.get("point_values", {})
+    rules = config.get("rules", {})
+
+    if root in point_values:
+        return float(point_values[root])
+
+    if _FOREX_PATTERN.match(root) and "forex_default_point_value" in rules:
+        return float(rules["forex_default_point_value"])
+
+    if _STOCK_PATTERN.match(root) and "stock_default_point_value" in rules:
+        return float(rules["stock_default_point_value"])
+
+    return None
+
+
+def compute_trade_metrics(rec: dict, config: dict) -> dict:
+    """Compute dollar amounts and (if applicable) realized P/L for a signal record.
+
+    Display unit: futures (anything in the explicit instruments map) → ticks.
+    Stocks/forex → points. The metrics dict carries both; templates branch on `display_mode`.
+
+    P/L logic: if outcome.closing_price is set, realized = direction × (close − entry) × pv × size.
+    Otherwise derive from outcome.result (target → +reward, stop → −risk, breakeven → 0).
+    """
+    proposal = rec.get("proposal") or {}
+    direction = proposal.get("direction")
+    instrument = proposal.get("instrument", "")
+    point_value = lookup_point_value(instrument, config)
+    tick_size, tick_source = lookup_tick_size(instrument, config)
+    is_futures = tick_source == "explicit"
+    try:
+        position_size = float(rec.get("position_size") or 0)
+    except (TypeError, ValueError):
+        position_size = 0.0
+    outcome = rec.get("outcome") or {}
+    outcome_result = outcome.get("result")
+    closing_price = outcome.get("closing_price")
+
+    base = {
+        "point_value": point_value,
+        "tick_size": tick_size,
+        "tick_value": (tick_size * point_value) if (tick_size and point_value) else None,
+        "display_mode": "ticks" if is_futures else "points",
+        "position_size": position_size,
+        "risk_points": 0.0,
+        "reward_points": 0.0,
+        "risk_ticks": 0.0,
+        "reward_ticks": 0.0,
+        "risk_per_contract": 0.0,
+        "reward_per_contract": 0.0,
+        "total_risk": 0.0,
+        "total_reward": 0.0,
+        "realized_pnl": None,
+        "realized_pnl_source": None,
+    }
+
+    if direction == "flat" or point_value is None:
+        return base
+
+    try:
+        entry = float(proposal.get("entry") or 0)
+        stop = float(proposal.get("stop") or 0)
+        target = float(proposal.get("target") or 0)
+    except (TypeError, ValueError):
+        return base
+
+    risk_points = abs(entry - stop)
+    reward_points = abs(target - entry)
+    risk_ticks = (risk_points / tick_size) if tick_size else 0.0
+    reward_ticks = (reward_points / tick_size) if tick_size else 0.0
+
+    risk_per_contract = risk_points * point_value
+    reward_per_contract = reward_points * point_value
+    total_risk = risk_per_contract * position_size
+    total_reward = reward_per_contract * position_size
+
+    realized_pnl = None
+    realized_pnl_source = None
+    # Closing price overrides the outcome-derived P/L.
+    if closing_price not in (None, "") and direction in ("long", "short") and position_size > 0:
+        try:
+            close = float(closing_price)
+            sign = 1 if direction == "long" else -1
+            realized_pnl = sign * (close - entry) * point_value * position_size
+            realized_pnl_source = "closing_price"
+        except (TypeError, ValueError):
+            pass
+
+    if realized_pnl is None and position_size > 0:
+        if outcome_result == "target":
+            realized_pnl = total_reward
+            realized_pnl_source = "target"
+        elif outcome_result == "stop":
+            realized_pnl = -total_risk
+            realized_pnl_source = "stop"
+        elif outcome_result == "breakeven":
+            realized_pnl = 0.0
+            realized_pnl_source = "breakeven"
+
+    return {
+        "point_value": point_value,
+        "tick_size": tick_size,
+        "tick_value": (tick_size * point_value) if tick_size else None,
+        "display_mode": "ticks" if is_futures else "points",
+        "position_size": position_size,
+        "risk_points": risk_points,
+        "reward_points": reward_points,
+        "risk_ticks": risk_ticks,
+        "reward_ticks": reward_ticks,
+        "risk_per_contract": risk_per_contract,
+        "reward_per_contract": reward_per_contract,
+        "total_risk": total_risk,
+        "total_reward": total_reward,
+        "realized_pnl": realized_pnl,
+        "realized_pnl_source": realized_pnl_source,
+    }
+
+
+def snap_to_tick(price: float, tick_size: float) -> float:
+    """Snap price to the nearest tick using banker's rounding (Decimal-precise)."""
+    if not tick_size or tick_size <= 0:
+        return price
+    p = Decimal(str(price))
+    t = Decimal(str(tick_size))
+    snapped = (p / t).quantize(Decimal("1"), rounding=ROUND_HALF_EVEN) * t
+    return float(snapped)
+
+
+def apply_tick_rounding(proposal: dict, config: dict) -> dict:
+    """Snap entry/stop/target to the instrument's tick size and annotate the proposal.
+
+    Mutates and returns `proposal`. Adds these fields:
+        tick_size_applied: float | None  -- what tick we used (None if unknown)
+        tick_source:       str           -- explicit / forex_jpy / forex_other / stock_default / unknown / empty
+        tick_adjustments:  list[dict]    -- one entry per field that was snapped: {field, from, to}
+    """
+    instrument = proposal.get("instrument", "")
+    tick_size, source = lookup_tick_size(instrument, config)
+
+    proposal["tick_size_applied"] = tick_size
+    proposal["tick_source"] = source
+
+    if tick_size is None:
+        logger.warning(
+            "Unknown instrument %r — no tick rounding applied. "
+            "Add it to instruments.json if you trade this regularly.",
+            instrument,
+        )
+        proposal["tick_adjustments"] = []
+        return proposal
+
+    if proposal.get("direction") == "flat":
+        # Sentinel zeros for flat; nothing to snap.
+        proposal["tick_adjustments"] = []
+        return proposal
+
+    adjustments = []
+    for field in ("entry", "stop", "target"):
+        original = proposal.get(field)
+        if original is None or not isinstance(original, (int, float)):
+            continue
+        snapped = snap_to_tick(float(original), tick_size)
+        if snapped != float(original):
+            adjustments.append({"field": field, "from": float(original), "to": snapped})
+            proposal[field] = snapped
+
+    proposal["tick_adjustments"] = adjustments
+    if adjustments:
+        logger.info(
+            "Tick-snapped %d field(s) for %s (tick=%s, source=%s)",
+            len(adjustments), instrument, tick_size, source,
+        )
+    return proposal
