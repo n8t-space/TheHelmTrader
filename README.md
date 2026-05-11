@@ -26,6 +26,141 @@ NinjaScript indicator on hotkey -> FastAPI on `:8000` -> bot opens snipping over
 
 NT fills are mirrored independently into `NT8_Trade_Perf/trades.db` via `recorder.py`. The dashboard joins both data sources at request time.
 
+## Installation
+
+Tested on Windows 11. The bot pipeline assumes NinjaTrader 8 on the same machine; the Ollama inference backend can be the same machine or a LAN peer.
+
+### Prerequisites
+
+Install once. Skip any line you already have.
+
+```powershell
+# From an elevated PowerShell
+winget install Python.Python.3.12          # python 3.12+ — NOT the Microsoft Store alias
+winget install OpenJS.NodeJS.LTS           # node for the React build (>=18)
+winget install Git.Git
+winget install NSSM.NSSM                   # service wrapper (install_service.ps1 will also auto-install if missing)
+```
+
+Also required, installed separately:
+
+- **NinjaTrader 8** (8.1.6.3+) — your brokerage connection lives here. https://ninjatrader.com/
+- **Ollama** with a vision model — runs on this machine or a LAN-reachable workstation. https://ollama.com/
+  ```bash
+  # On the Ollama host:
+  ollama pull qwen2.5vl:7b
+  # If exposing to LAN, set OLLAMA_HOST=0.0.0.0:11434 in the systemd override
+  # (Linux) or environment variable (Windows), and firewall the port to the
+  # bot host IP only.
+  ```
+
+### Clone
+
+```powershell
+cd $HOME\Documents\Projects
+git clone git@github.com:n8t-space/TheHelmTrader.git
+cd TheHelmTrader
+```
+
+### Python dependencies
+
+The dashboard runs on system Python. The bot pipeline shares the same interpreter — no virtualenv. Install the deps once:
+
+```powershell
+python -m pip install --upgrade pip
+python -m pip install fastapi "uvicorn[standard]" pydantic requests Pillow httpx
+```
+
+(`tomli`/`tomli-w` are NOT required — settings are JSON.)
+
+### Build the frontend
+
+```powershell
+cd NT8_Trade_Perf\dashboard\web
+npm install
+npm run build                  # produces dashboard/web/dist/ which FastAPI serves
+cd ..\..\..
+```
+
+### Install NinjaScript indicators
+
+The bot's NS bridge lives in `TradingBot\ninjascript\_Helm Locker\`. NT compiles from its own user folder, so the files must be copied:
+
+```powershell
+$src = ".\TradingBot\ninjascript\_Helm Locker"
+$dst = "$HOME\Documents\NinjaTrader 8\bin\Custom\Indicators\_Helm Locker"
+New-Item -ItemType Directory -Force -Path $dst | Out-Null
+Copy-Item -Recurse -Force "$src\*" $dst
+```
+
+Then in NinjaTrader: **NinjaScript Editor (F11) -> Compile (F5)**. Look for "Compile succeeded" in the bottom panel.
+
+Add `HelmAnalyzer` and `HelmFeed` to each chart you want to use them on (right-click chart -> Indicators).
+
+### Install the Windows service
+
+Brings the dashboard up automatically while NinjaTrader is running and tears it down on NT exit.
+
+```powershell
+# Elevated PowerShell
+cd NT8_Trade_Perf
+.\runtime\install_service.ps1
+```
+
+The script will:
+- Auto-install NSSM if missing
+- Prompt for your user credentials (the service runs as you, not LocalSystem, so the snipping overlay can reach your desktop)
+- Register the service as `HelmDashboardWatchdog`
+- Start it
+
+Verify:
+
+```powershell
+Get-Service HelmDashboardWatchdog                     # Status should be Running
+Invoke-WebRequest http://127.0.0.1:8000/api/health    # Status 200 once NT8 is up
+```
+
+### First-run configuration
+
+1. Start NinjaTrader 8 — the watchdog will spawn uvicorn within 5 seconds.
+2. Open the dashboard: http://127.0.0.1:8000/
+3. Navigate to **Settings**.
+4. Set:
+   - **AI Backend -> Ollama URL** — `http://<host>:11434/api/generate` (use `127.0.0.1` if Ollama is local).
+   - **AI Backend -> Model** — match what you pulled (`qwen2.5vl:7b` by default).
+   - **Accounts** — map your NT account IDs into Live / Evals / Simulation buckets so the cumulative-earnings card on Home aggregates correctly.
+5. Click **Test connection** on the AI Backend tab — green badge with latency + model present means you're good.
+6. Settings persist to `%USERPROFILE%\.helm\settings.json`.
+
+### Verify end-to-end
+
+- **Recorder:** make a paper trade in NT (or wait for one in Sim). Within ~5 seconds the dashboard's Trade Performance page should show the new fill.
+- **Manual snip pipeline:** focus an NT chart and press **Ctrl+Shift+F**. The snipping overlay should dim the screen. Drag a rectangle around the chart. Within 30 seconds (cold) or 1 second (warm), a new entry appears on the Signal Analysis page.
+- **Live feed:** if both `HelmAnalyzer` and `HelmFeed` are on charts, the Health page's log tail should show `[feed.bar]` POSTs every minute (or per your bar period).
+
+### Frontend dev mode (optional)
+
+When iterating on the dashboard UI without rebuilding:
+
+```powershell
+cd NT8_Trade_Perf\dashboard
+.\run_dev.ps1                  # Vite with HMR at http://localhost:5173/
+```
+
+### Uninstall
+
+```powershell
+# Elevated PowerShell
+cd NT8_Trade_Perf
+.\runtime\uninstall_service.ps1
+# Remove NinjaScript indicators
+Remove-Item -Recurse -Force "$HOME\Documents\NinjaTrader 8\bin\Custom\Indicators\_Helm Locker"
+# (optional) Remove settings + data
+Remove-Item -Recurse -Force "$HOME\.helm"
+```
+
+`trades.db`, `signals.jsonl`, and `feed.db` are left in place for safety — delete by hand if you want a clean wipe.
+
 ## Quick start (existing operator)
 
 - Open one of the two subprojects in your editor. Each has its own `CLAUDE.md` capturing the working agreement and conventions.
