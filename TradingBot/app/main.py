@@ -1,7 +1,7 @@
 """TradeBot v1 — manual-trigger chart-to-trade-proposal pipeline (terminal flow).
 
 For the web flow, launch the unified dashboard (run_dashboard.bat, which
-forwards to NT8_Trade_Perf/dashboard/run_dev.ps1) and click Snip & Analyze
+forwards to Trade_Perf/dashboard/run_dev.ps1) and click Snip & Analyze
 on the Signal Analysis page.
 """
 import json

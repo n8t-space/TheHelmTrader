@@ -12,7 +12,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# parents: api -> dashboard -> NT8_Trade_Perf -> Projects
+# parents: api -> dashboard -> Trade_Perf -> Projects
 TRADEBOT_APP = (Path(__file__).resolve().parents[3] / "TradingBot" / "app").resolve()
 
 if not TRADEBOT_APP.exists():

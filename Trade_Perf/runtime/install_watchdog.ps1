@@ -47,7 +47,7 @@ $task = New-ScheduledTask `
     -Trigger   $trigger `
     -Settings  $settings `
     -Principal $principal `
-    -Description 'Auto-starts the NT8_Trade_Perf dashboard while NinjaTrader is running.'
+    -Description 'Auto-starts the Trade_Perf dashboard while NinjaTrader is running.'
 
 # Replace any existing registration so re-running is safe.
 $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue

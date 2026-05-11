@@ -1,6 +1,6 @@
 """End-to-end capture → analyze → store pipeline. Headless — no input() prompts.
 
-Used by main.py (terminal flow) and NT8_Trade_Perf's FastAPI signals.py
+Used by main.py (terminal flow) and Trade_Perf's FastAPI signals.py
 routes (Snip & Analyze button + NinjaScript-triggered /api/capture-from-nt
 endpoint). When NinjaScript provides a market_context payload, it's
 prepended to the prompt as authoritative price data and stored on the

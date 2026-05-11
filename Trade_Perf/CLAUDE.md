@@ -1,4 +1,4 @@
-# NT8_Trade_Perf — The Helm dashboard
+# Trade_Perf — The Helm dashboard
 
 > Unified local-only NT8 dashboard by **Lodestone & Purser**. Brand = "The Helm" (same brand as the sibling [TradingBot](../TradingBot/) bot/pipeline; this is the dashboard surface).
 

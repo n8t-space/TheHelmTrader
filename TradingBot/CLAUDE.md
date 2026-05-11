@@ -10,9 +10,9 @@
 
 ## One-breath architecture
 
-NinjaScript indicator (`HelmAnalyzer.cs`) on hotkey → POSTs HTF context to FastAPI on `:8000` (hosted by `NT8_Trade_Perf/`) → bot opens snip overlay → snip + context → workstation Ollama (`<workstation-LAN-IP>:11434`) → proposal in `app/data/signals.jsonl` → unified React dashboard renders.
+NinjaScript indicator (`HelmAnalyzer.cs`) on hotkey → POSTs HTF context to FastAPI on `:8000` (hosted by `Trade_Perf/`) → bot opens snip overlay → snip + context → workstation Ollama (`<workstation-LAN-IP>:11434`) → proposal in `app/data/signals.jsonl` → unified React dashboard renders.
 
-NT fills are mirrored independently into `NT8_Trade_Perf/trades.db` via `recorder.py`.
+NT fills are mirrored independently into `Trade_Perf/trades.db` via `recorder.py`.
 
 ## Working agreement (durable)
 
@@ -31,7 +31,7 @@ NT fills are mirrored independently into `NT8_Trade_Perf/trades.db` via `recorde
 
 ## Python venv
 
-`app/trading_env/` exists. **Do NOT activate it** — call `app\trading_env\Scripts\python.exe` directly. Avoids cmd-vs-PS activation confusion. Note: the dashboard (NT8_Trade_Perf) actually runs on **system Python**, not this venv.
+`app/trading_env/` exists. **Do NOT activate it** — call `app\trading_env\Scripts\python.exe` directly. Avoids cmd-vs-PS activation confusion. Note: the dashboard (Trade_Perf) actually runs on **system Python**, not this venv.
 
 ## NinjaScript bridge
 

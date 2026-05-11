@@ -361,7 +361,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         /// <summary>
         ///   The The Helm bot's local endpoint. The bot binds to
         ///   127.0.0.1 only (loopback), so this never leaves your machine.
-        ///   Port 8000 = NT8_Trade_Perf FastAPI (unified dashboard, post-merge).
+        ///   Port 8000 = Trade_Perf FastAPI (unified dashboard, post-merge).
         /// </summary>
         private const string HELM_API_URL = "http://127.0.0.1:8000/api/capture-from-nt";
 

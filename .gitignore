@@ -1,5 +1,5 @@
 # Top-level catch-all. Per-subproject .gitignore files (TradingBot/.gitignore,
-# NT8_Trade_Perf/.gitignore) carry the project-specific rules.
+# Trade_Perf/.gitignore) carry the project-specific rules.
 
 # OS / editor noise
 .DS_Store

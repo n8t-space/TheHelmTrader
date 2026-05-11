@@ -1,6 +1,6 @@
 """Test bootstrap.
 
-Adds NT8_Trade_Perf/ to sys.path so tests can ``from dashboard.api.main
+Adds Trade_Perf/ to sys.path so tests can ``from dashboard.api.main
 import app``. The api package's _tradebot_bridge takes care of pulling
 TradingBot/app/ in for src.* imports.
 """

@@ -1,4 +1,4 @@
-# NT8_Trade_Perf watchdog
+# Trade_Perf watchdog
 #
 # Polls every 5s for NinjaTrader.exe. When NT is running, ensures the unified
 # dashboard (FastAPI on :8000, serving the built React frontend) is also
