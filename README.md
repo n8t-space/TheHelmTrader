@@ -30,31 +30,62 @@ NT fills are mirrored independently into `Trade_Perf/trades.db` via `recorder.py
 
 Tested on Windows 11. The bot pipeline assumes NinjaTrader 8 on the same machine; the Ollama inference backend can be the same machine or a LAN peer.
 
-### Prerequisites
+### Quick install (recommended)
+
+Two non-Helm prerequisites the installer can't grab for you:
+
+- **NinjaTrader 8** (8.1.6.3+) — your brokerage connection lives here. https://ninjatrader.com/
+- **Ollama** with a vision model — runs on this machine or a LAN-reachable workstation. https://ollama.com/
+  ```bash
+  ollama pull qwen2.5vl:7b
+  # If exposing to LAN: OLLAMA_HOST=0.0.0.0:11434 + firewall the port to your bot host.
+  ```
+
+Then, from an **elevated** PowerShell:
+
+```powershell
+cd $HOME\Documents\Projects
+git clone git@github.com:n8t-space/TheHelmTrader.git
+cd TheHelmTrader
+.\install.ps1
+```
+
+`install.ps1` will:
+
+1. Verify (or `winget install`) Python 3.12+, Node LTS, Git, NSSM
+2. `pip install` the dashboard's Python deps
+3. `npm install` + `npm run build` the React frontend
+4. Copy NinjaScript indicators into `Documents\NinjaTrader 8\bin\Custom\Indicators\_Helm Locker\`
+5. Register `recorder.py` as a Startup-folder shortcut + launch it now
+6. Register `HelmDashboardWatchdog` as an NSSM service (prompts for your Windows password once — NSSM stores it encrypted)
+
+Re-runnable. Each step skips work already done. Skip individual steps with `-SkipPrereqs`, `-SkipNsIndicators`, `-SkipRecorder`, `-SkipService`.
+
+When the script finishes:
+
+1. Start NinjaTrader 8 (the watchdog will spawn uvicorn within 5s)
+2. In NT: NinjaScript Editor (F11) -> Compile (F5)
+3. Add `HelmAnalyzer` and `HelmFeed` to each chart you want to use them on
+4. Open http://127.0.0.1:8000/ -> Settings -> set Ollama URL, model, and account categorization
+5. Click **Test connection** on the AI Backend tab
+
+---
+
+### Manual install (if `install.ps1` fails or you want fine control)
+
+#### Prerequisites
 
 Install once. Skip any line you already have.
 
 ```powershell
 # From an elevated PowerShell
-winget install Python.Python.3.12          # python 3.12+ — NOT the Microsoft Store alias
+winget install Python.Python.3.12          # python 3.12+ -- NOT the Microsoft Store alias
 winget install OpenJS.NodeJS.LTS           # node for the React build (>=18)
 winget install Git.Git
 winget install NSSM.NSSM                   # service wrapper (install_service.ps1 will also auto-install if missing)
 ```
 
-Also required, installed separately:
-
-- **NinjaTrader 8** (8.1.6.3+) — your brokerage connection lives here. https://ninjatrader.com/
-- **Ollama** with a vision model — runs on this machine or a LAN-reachable workstation. https://ollama.com/
-  ```bash
-  # On the Ollama host:
-  ollama pull qwen2.5vl:7b
-  # If exposing to LAN, set OLLAMA_HOST=0.0.0.0:11434 in the systemd override
-  # (Linux) or environment variable (Windows), and firewall the port to the
-  # bot host IP only.
-  ```
-
-### Clone
+#### Clone
 
 ```powershell
 cd $HOME\Documents\Projects
@@ -62,27 +93,23 @@ git clone git@github.com:n8t-space/TheHelmTrader.git
 cd TheHelmTrader
 ```
 
-### Python dependencies
-
-The dashboard runs on system Python. The bot pipeline shares the same interpreter — no virtualenv. Install the deps once:
+#### Python dependencies
 
 ```powershell
 python -m pip install --upgrade pip
 python -m pip install fastapi "uvicorn[standard]" pydantic requests Pillow httpx
 ```
 
-(`tomli`/`tomli-w` are NOT required — settings are JSON.)
-
-### Build the frontend
+#### Build the frontend
 
 ```powershell
 cd Trade_Perf\dashboard\web
 npm install
-npm run build                  # produces dashboard/web/dist/ which FastAPI serves
+npm run build
 cd ..\..\..
 ```
 
-### Install NinjaScript indicators
+#### Install NinjaScript indicators
 
 The bot's NS bridge lives in `TradingBot\ninjascript\_Helm Locker\`. NT compiles from its own user folder, so the files must be copied:
 

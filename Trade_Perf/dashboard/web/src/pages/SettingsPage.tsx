@@ -61,8 +61,23 @@ export function SettingsPage() {
   }, [draft])
 
   const save = useMutation({
-    mutationFn: (doc: SettingsDoc) => putJSON<{ settings: SettingsDoc; path: string }>('/api/settings', doc),
+    mutationFn: (doc: SettingsDoc) => {
+      // Strip empty / whitespace-only account entries before PUT.
+      const clean = (xs: string[]) => xs.map((s) => s.trim()).filter((s) => s !== '')
+      const cleaned: SettingsDoc = {
+        ...doc,
+        accounts: {
+          live:       clean(doc.accounts.live),
+          evals:      clean(doc.accounts.evals),
+          simulation: clean(doc.accounts.simulation),
+        },
+      }
+      return putJSON<{ settings: SettingsDoc; path: string }>('/api/settings', cleaned)
+    },
     onSuccess: (resp) => {
+      // Refresh draft from server's canonical (cleaned) response so the
+      // dirty-state comparison stays accurate.
+      setDraft(resp.settings)
       baselineRef.current = JSON.stringify(resp.settings)
       cacheAppearance(resp.settings.appearance)
       qc.invalidateQueries({ queryKey: ['settings'] })
@@ -449,16 +464,69 @@ function AccountList({ label, value, onChange }: {
   value: string[]
   onChange: (l: string[]) => void
 }) {
+  // Always render at least one row so the user can type into an empty bucket.
+  // The save handler upstream strips blank entries before PUT.
+  const rows = value.length === 0 ? [''] : value
+  const inputRefs = useRef<Array<HTMLInputElement | null>>([])
+  const focusIndex = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (focusIndex.current !== null) {
+      inputRefs.current[focusIndex.current]?.focus()
+      focusIndex.current = null
+    }
+  })
+
+  const updateAt = (i: number, v: string) => {
+    const next = [...rows]
+    next[i] = v
+    onChange(next)
+  }
+  const removeAt = (i: number) => {
+    const next = rows.filter((_, idx) => idx !== i)
+    onChange(next)
+  }
+  const appendBlank = () => {
+    focusIndex.current = rows.length  // focus the new row once it mounts
+    onChange([...rows, ''])
+  }
+
   return (
-    <label className="span-1">
-      <span>{label}</span>
-      <textarea
-        rows={6}
-        value={value.join('\n')}
-        onChange={(e) => onChange(
-          e.target.value.split('\n').map((s) => s.trim()).filter((s) => s !== ''),
-        )}
-      />
-    </label>
+    <div className="account-bucket">
+      <span className="account-bucket-label">{label}</span>
+      <div className="account-bucket-rows">
+        {rows.map((acc, i) => (
+          <div key={i} className="account-row">
+            <input
+              type="text"
+              ref={(el) => { inputRefs.current[i] = el }}
+              value={acc}
+              placeholder="account ID"
+              onChange={(e) => updateAt(i, e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); appendBlank() }
+              }}
+            />
+            <button
+              type="button"
+              className="account-row-remove"
+              onClick={() => removeAt(i)}
+              title="Remove this account"
+              aria-label={`remove ${acc || 'empty'}`}
+              disabled={rows.length === 1 && rows[0] === ''}
+            >
+              {'×'}
+            </button>
+          </div>
+        ))}
+      </div>
+      <button
+        type="button"
+        className="account-bucket-add"
+        onClick={appendBlank}
+      >
+        + Add account
+      </button>
+    </div>
   )
 }

@@ -474,6 +474,89 @@ tr.pending-suggestion td {
   color: var(--accent);
 }
 
+/* ---------- Accounts tab: list editor ---------- */
+
+.account-bucket {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.account-bucket-label {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+}
+
+.account-bucket-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.account-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.account-row input[type="text"] {
+  flex: 1;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.account-row input[type="text"]:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.account-row-remove {
+  background: var(--bg);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.account-row-remove:hover:not(:disabled) {
+  border-color: var(--neg);
+  color: var(--neg);
+}
+
+.account-row-remove:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.account-bucket-add {
+  align-self: flex-start;
+  background: transparent;
+  color: var(--accent);
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  margin-top: 2px;
+}
+
+.account-bucket-add:hover {
+  border-color: var(--accent);
+  border-style: solid;
+}
+
 /* ---------- Tables ---------- */
 
 .table-wrap {
