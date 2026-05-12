@@ -25,7 +25,8 @@ NT fills are mirrored independently into `Trade_Perf/trades.db` via `recorder.py
 
 ## Path discipline
 
-- Project root: `%USERPROFILE%\Documents\Projects\TradingBot\`. **Documents, not OneDrive.**
+- Canonical path (post 2026-05-11 wipe + reinstall): `%USERPROFILE%\Documents\Projects\TheHelmTrader\TradingBot\`. **Documents, not OneDrive.**
+- Sibling dashboard project at `../Trade_Perf/` (was `../NT8_Trade_Perf/` pre-rename).
 - Always use `pathlib`, never `os.path`. Build paths from a project-root anchor.
 - NT user folder: `%USERPROFILE%\Documents\NinjaTrader 8\` (also non-OneDrive).
 
@@ -75,7 +76,7 @@ The user's 5-minute charts use the **same indicator stack regardless of instrume
 
 ## AI inference offloaded to workstation
 
-`local_llm_analyzer.py` calls `http://<workstation-LAN-IP>:11434/api/generate`. Workstation = Ubuntu 24.04 + RTX 4060 Ti 16GB. Cold call ~30s, warm <1s. UFW restricts the port to GEEKOM IP only.
+`local_llm_analyzer.py` calls `http://<workstation-LAN-IP>:11434/api/generate` **by default**. The URL, model, timeout, num_ctx, confidence floor, and max attempts are all overridable via the Settings page (stored at `~/.helm/settings.json`). Source of truth is `runtime_config.py` — adds a knob = add a field there + a matching Pydantic field in `Trade_Perf/dashboard/api/settings.py`. Workstation = Ubuntu 24.04 + RTX 4060 Ti 16GB. Cold call ~30s, warm <1s. UFW restricts the port to GEEKOM IP only.
 
 ## Live feed pipeline (in flight)
 

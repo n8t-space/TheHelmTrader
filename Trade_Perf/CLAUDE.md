@@ -51,8 +51,8 @@ Trades CL / MCL / MES / ES futures through Tradovate.
 
 ## Conventions
 
-- **Loopback only.** FastAPI binds `127.0.0.1`. Workstation Ollama at `<workstation-LAN-IP>:11434` is the one external dep, firewalled to GEEKOM via UFW.
-- **System Python.** Uvicorn runs from `%USERPROFILE%\AppData\Local\Microsoft\WindowsApps\python.exe`. Bot pipeline deps (`requests`, `Pillow`, `httpx`, FastAPI/Pydantic) installed there. **Not** the TradingBot venv.
+- **Loopback only.** FastAPI binds `127.0.0.1`. Workstation Ollama at `<workstation-LAN-IP>:11434` (default) is the one external dep, firewalled to GEEKOM via UFW.
+- **System Python.** Uvicorn runs from `%USERPROFILE%\AppData\Local\Programs\Python\Python312\python.exe` (real winget install — NOT the `WindowsApps` alias, which is service-incompatible). The watchdog's `Resolve-PythonExe` enforces this. Bot pipeline deps (`fastapi`, `uvicorn[standard]`, `pydantic`, `requests`, `Pillow`, `httpx`) installed system-wide. **Not** the TradingBot venv.
 - **No auto-execution.** The bot proposes; the user decides. Forever.
 - **`signals.jsonl` is append-only.** Updates are new lines with the same timestamp; readers merge latest-wins. Soft-delete = a line with `deleted: true`.
 - **CORS dev mode:** `allow_methods=["GET","POST","PUT","DELETE"]` for `:5173`. PUT was added when the Auto Analysis config endpoint landed.
@@ -61,11 +61,12 @@ Trades CL / MCL / MES / ES futures through Tradovate.
 
 - `signals.py` — Signal Analysis page (LLM proposals, journal, outcome).
 - `trades.py` (helper module — actual route in `main.py`) — derives round-trip P&L from fills.
-- `home.py` — today's session card, action queue, equity curve.
+- `home.py` — today's session card, action queue, equity curve, cumulative-earnings by Live / Evals / Simulation / Signals bucket.
 - `health.py` — log tail + latency stats.
 - `feed.py` — `/api/feed/{bar,ticks,prune}` ingest from `HelmFeed.cs`. Includes session-gap warmup gate.
 - `auto_analysis.py` — `/api/auto-analysis/{config,status}` for the Auto Analysis dashboard panel.
-- `db.py` — `trades.db` connection + queries.
+- `settings.py` — `/api/settings` GET/PUT/reset + `/test/ollama`. Pydantic schema at `~/.helm/settings.json`. Consumed by `runtime_config.py` on the bot side.
+- `db.py` — `trades.db` connection + queries. Multi-account filter supports `?account=A&account=B`.
 - `_tradebot_bridge.py` — sys.path shim importing `TradingBot/app/src/` modules.
 
 ## NS bridge

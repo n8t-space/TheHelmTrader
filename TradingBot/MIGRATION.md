@@ -160,16 +160,25 @@ In order, after each phase:
 
 **Outstanding (next session pickup, priority order):**
 
-1. **Live Feed Pipeline — Phase 1 verification at market open.** Phases 1–4 all shipped, headless analyzer + auto-prune scheduling closed out 2026-05-09 evening. Only outstanding:
-   - **Live verification.** F5 `HelmAnalyzer.cs` in NS Editor (was edited — EMA pruning); apply HelmFeed to a chart; confirm `[HelmFeed] State → ...` Output progression and rows landing in `feed.db` once ticks flow. Trigger Ctrl+Shift+F to verify the manual analyze path still works with the trimmed context. Arm an Auto Analysis slot to verify the headless analyzer fires on a real bar close.
+1. **NSSM service won't start — wrong password.** Event 7038 `unable to log on as .\pilot ... user name or password is incorrect`. The watchdog never gets a chance to run, so the dashboard never comes up when NT runs, and HelmFeed POSTs all fail. **Blocker.** Fix: rerun `Trade_Perf\runtime\install_service.ps1` from elevated PS and type the correct Windows logon password (not a PIN; if Microsoft account, the MS account password).
 
-2. **SHARING — packaging The Helm for distribution to other users.** Two pieces:
-   - **Configuration page** in the dashboard exposing every key the user would need to change to deploy on a different machine: workstation Ollama URL, model name, port bindings, paths, instrument tick maps, confidence floor, retention days, etc. Anything currently hardcoded in `local_llm_analyzer.py`, `feed_store.py`, etc. that a deploying user would reasonably want to override. Treat it as the "deploy-to-customer" surface — read-and-write UI plus a backing settings store.
-   - **Installer packaging.** Ship The Helm as something a non-developer can install: bundle the FastAPI backend + built React frontend + watchdog + NS indicators + Python runtime, with a guided installer that handles the NS two-copy and the workstation Ollama configuration. Investigate options (PyInstaller / NSIS / WiX / Inno Setup) and document the dependency manifest, install paths, and post-install steps. Single zip + `install.ps1` is the minimum viable shape; a proper MSI is the stretch goal.
+2. **Restore operational data from backup.** Live data was preserved at `Projects\helm-backup-20260511_213210\` during the wipe. Once the service is up, copy back into the new tree paths so historical signals/trades carry forward:
+   - `helm-backup\signals.jsonl`    -> `TheHelmTrader\TradingBot\app\data\signals.jsonl`
+   - `helm-backup\feed.db`          -> `TheHelmTrader\TradingBot\app\data\feed.db`
+   - `helm-backup\trades.db`        -> `TheHelmTrader\Trade_Perf\trades.db`
+   - `helm-backup\screenshots\`     -> `TheHelmTrader\TradingBot\app\data\screenshots\`
+   - `helm-backup\settings.json`    -> `%USERPROFILE%\.helm\settings.json`
 
-3. **NS account-state indicator.** The Open Positions card on Home is a placeholder waiting for this — pushes balance / equity / open positions to a new bot endpoint.
+3. **Live Feed Pipeline — Phase 1 verification at market open.** Phases 1-4 all shipped. F5 `HelmAnalyzer.cs` in NS Editor; apply HelmFeed to a chart; confirm `[HelmFeed] State -> ...` Output progression and rows landing in `feed.db` once ticks flow. Trigger Ctrl+Shift+F to verify the manual analyze path. Arm an Auto Analysis slot to verify the headless analyzer fires on a real bar close.
 
-4. **Single venv / requirements consolidation.** `requests` and `Pillow` are currently installed system-wide so FastAPI can import TradingBot's pipeline. Long-term: relocate `app/src/` into NT8_Trade_Perf so there's one project / one venv, and drop the sys.path bridge in `_tradebot_bridge.py`. Becomes more important when (2) lands — the installer needs a single dependency surface.
+4. **SHARING -- packaging.** Major progress 2026-05-11:
+   - ✅ **Configuration page** shipped — `/settings` route, four tabs (Appearance / AI Backend / Strategy / Accounts), per-user `~/.helm/settings.json`, live-reload on PUT.
+   - ✅ **install.ps1** at the monorepo root drives a clean install end-to-end (prereqs via winget, pip, npm build, NS indicator copy, recorder shortcut, NSSM service).
+   - ⏳ **Packaging for non-developer users** still open: MSI, code signing, an actual one-click experience. Today's install.ps1 is the bridge.
+
+5. **NS account-state indicator.** The Open Positions card on Home was removed 2026-05-10. The data path (balance / equity / open positions pushed to bot) is still on the roadmap, lower priority than (1)-(4).
+
+6. **Single venv / requirements consolidation.** `_tradebot_bridge.py` still bridges `TradingBot/app/src/` into the dashboard. The reinstall didn't change this. Closing it lets the installer assume one project / one venv.
 
 5. **Reconciliation cap** in `pipeline.py` (currently 3) and confidence-floor `MAX_ATTEMPTS` (currently 2) can be raised — workstation latency makes the throttles over-conservative.
 
@@ -373,8 +382,46 @@ Long evening session covering: a sibling-project full lifecycle, a Claude-config
 
 ---
 
+### 2026-05-11 — Settings page, GitHub push, clean reinstall, install.ps1
+
+Long session covering Phase 1 of the SHARING initiative, monorepo creation + GitHub publish, a full wipe-and-reinstall validation of the installer, plus a handful of UX fixes.
+
+**Snip pipeline diagnostic (morning).** After NT had a rough startup, `Ctrl+Shift+F` triggered the bot end-to-end but the Snipping overlay never appeared. Localized to a broken `ms-screenclip:` URI handler — re-registered `Microsoft.ScreenSketch` AppxPackage + restarted the watchdog service and captures resumed. Cross-session bounce from Session-0 uvicorn to Session-N user desktop is fragile; flagged for future hardening.
+
+**UI fixes.**
+- Removed the "Reject this analysis & delete" button from `ChildrenSection` on Signal Detail (per-signal `DeleteButton` retained at page header).
+- Trade Performance times now render in `America/Chicago` (DST-aware) via `Intl.DateTimeFormat`; column headers say "(CT)". Trade and Fill exit/entry times + StatusPanel first/last fill all switched.
+
+**SHARING Phase 1 — Settings page (shipped).** Per-user runtime config:
+- New `Trade_Perf/dashboard/api/settings.py` — Pydantic schema with `appearance` / `ai_backend` / `strategy` / `accounts` sections; storage at `~/.helm/settings.json` (atomic temp+rename writes); `schema_version=1` for future migrations.
+- New routes: `GET/PUT /api/settings`, `POST /api/settings/reset`, `POST /api/settings/test/ollama` (probes `/api/tags` against the configured URL).
+- New `TradingBot/app/src/runtime_config.py` — accessor pattern with hardcoded `Defaults` fallback. Bot code (`local_llm_analyzer`, prune loop) calls e.g. `runtime_config.ollama_url()`; if dashboard package is importable (uvicorn process), delegates to live settings; otherwise uses defaults. Standalone CLI keeps working.
+- Frontend: `SettingsPage.tsx` with tabbed UI (Appearance / AI Backend / Strategy / Accounts), live color preview, beforeunload guard, click-capture nav guard (React Router 7's `useBlocker` only works with data routers — used DOM event capture instead). New `lib/theme.ts` for `applyAppearance` + localStorage cache. `App.tsx` pre-applies cached appearance before mount so the SPA never flashes the default palette.
+- Accounts tab was initially a textarea; replaced with a per-account list editor (input + X + Add, Enter-to-append) after the textarea stripped trailing empty lines mid-edit and made adding rows impossible. Empty rows stripped at save.
+
+**Monorepo + GitHub publish.**
+- Created `%USERPROFILE%\Documents\Projects\TheHelmTrader\` containing `TradingBot/` + `Trade_Perf/` (was `NT8_Trade_Perf/` — renamed). Private GitHub repo at `git@github.com:n8t-space/TheHelmTrader.git`, SSH ed25519 auth, branch `main`.
+- Fresh history (NAS bare repos retained at `G:/Git_Projects/` as untouched parallel mirrors).
+- Data-hygiene gates: `signals.jsonl` and `trades.db` removed from index, added to per-subproject .gitignore. Confirmed zero leak at first push.
+- README rewritten with installation steps; lead is now the one-shot installer, manual steps preserved as fallback.
+
+**install.ps1 (shipped).** One-shot installer at the monorepo root. Six steps: prereqs (winget-installs missing tools), pip deps, npm install + vite build, NS indicator copy, `recorder.py` startup-shortcut install + launch, NSSM `HelmDashboardWatchdog` service install. Idempotent, ASCII-only, runs from elevated PS. Caught a PS 5.1 pitfall mid-test: `2>&1` on native commands wraps stderr as `NativeCommandError` and trips `ErrorActionPreference = 'Stop'` even on successful builds (vite's `chunks > 500 kB` advisory was the canary). Added `Invoke-NativeCapture` helper that toggles EAP to `Continue` around the call and only throws on real non-zero exit codes.
+
+**Clean-slate reinstall validation.**
+- Wrote `helm-clean.ps1` to back up operational data + quarantine project trees + uninstall pip deps + remove the NSSM service + tear down the recorder startup shortcut.
+- User ran it on the canonical install + cloned fresh + ran `install.ps1`. End-to-end install completed except step 6 (NSSM service) failed with **Event 7038 logon failure** — password entered at the credential prompt didn't match. Watchdog logged "starting" once then SCM killed it; uvicorn never came up; HelmFeed flooded "POST failed". Open blocker for next session.
+- Operational data preserved at `%USERPROFILE%\Documents\Projects\helm-backup-20260511_213210\` (5 files: signals.jsonl, feed.db, trades.db, settings.json, screenshots/).
+- Two quarantine dirs `_helm-quarantine-20260511_{213210,214509}` hold the old canonical trees + NS indicators + ~/.helm. Restore is 5 `Move-Item` calls if needed.
+
+**Carry-forward observations.**
+- `helm-clean.ps1` has two bugs we hit live: (a) the kill-recorder filter searched for `pythonw.exe` but the live process name is `pythonw3.12.exe`; (b) on re-run after a rename, the backup phase looks at the old canonical paths and silently backs up nothing. Worth patching to read from `TheHelmTrader/{TradingBot,Trade_Perf}/...` going forward.
+- The two-working-trees structure (canonical `NT8_Trade_Perf/` + GitHub sync `TheHelmTrader/`) is now collapsed: after the wipe, the GitHub clone IS the canonical runtime. Memory entry updated.
+- Microsoft Store Python alias (anywhere under `WindowsApps/`) remains service-incompatible. `Resolve-PythonExe` in watchdog.ps1 prefers `py.exe` then `LOCALAPPDATA\Programs\Python\Python312\` over WindowsApps. Same rule as 2026-05-09.
+
+---
+
 ### Closure
 
 The original four-phase AI-offload migration is fully done; the eight-checkpoint dashboard merger is fully done; four post-merge improvement tiers are done; rebrand is done. The Live Feed Pipeline is functionally complete — Phases 1–4 all shipped (2026-05-08 → 2026-05-09); only live Phase 1 verification at market open remains. The 10-item improvement sweep closed the headless-analyzer + auto-prune carry-forwards from earlier in the day, plus added pytest, schema versioning, NSSM-service watchdog, project-local CLAUDE.md scaffolding, and an `ninjascript-reviewer` subagent. **Next major initiative: SHARING** (config page + installer). The list under "Outstanding (next session pickup)" near the top of this doc is the source of truth for what's next.
 
-If a future session picks this up cold, start by reading: this file's "Outstanding" list → [`PROJECT.md`](PROJECT.md) "Current state" block → [`NT8_Trade_Perf/PROJECT.md`](../NT8_Trade_Perf/PROJECT.md). Together those describe what's running and where the seams are.
+If a future session picks this up cold, start by reading: this file's "Outstanding" list → [`PROJECT.md`](PROJECT.md) "Current state" block → [`../Trade_Perf/PROJECT.md`](../Trade_Perf/PROJECT.md). Together those describe what's running and where the seams are.
