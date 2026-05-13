@@ -83,38 +83,70 @@ def analyze(image_path: Path, prompt: str) -> dict:
     return {"proposal": proposal, "raw_response": raw, "duration_s": duration_s}
 
 
+def analyze_text(prompt: str) -> dict:
+    """Text-only sibling of analyze(). Used by the headless analyzer when no
+    fresh chart screenshot is available. Same provider dispatch + same
+    return shape (raw_response, duration_s, model, provider).
+    """
+    provider = runtime_config.provider()
+    logger.info("Analyze (text-only) via %s", provider)
+    if provider == "claude":
+        raw, duration_s, model_used = _call_claude(None, prompt)
+    elif provider == "openai":
+        raw, duration_s, model_used = _call_openai(None, prompt)
+    else:
+        raw, duration_s, model_used = _call_ollama(None, prompt)
+    return {
+        "raw_response": raw,
+        "duration_s":   duration_s,
+        "model":        model_used,
+        "provider":     provider,
+    }
+
+
 # ------------------------------------------------------------------ providers
 
-def _call_ollama(image_b64: str, prompt: str) -> tuple[str, float, str]:
-    """Local Ollama HTTP API. Returns (raw_response_text, duration_s, model)."""
+def _call_ollama(image_b64: str | None, prompt: str) -> tuple[str, float, str]:
+    """Local Ollama HTTP API. image_b64=None for text-only headless calls.
+    Returns (raw_response_text, duration_s, model)."""
     url = runtime_config.ollama_url()
     model_name = runtime_config.model()
     timeout = runtime_config.request_timeout_s()
     num_ctx = runtime_config.num_ctx()
-    logger.info("POST %s (model=%s, num_ctx=%d)", url, model_name, num_ctx)
-    resp = requests.post(url, timeout=timeout, json={
-        "model": model_name,
-        "prompt": prompt,
-        "images": [image_b64],
-        "format": "json",
-        "stream": False,
+    logger.info("POST %s (model=%s, num_ctx=%d, image=%s)",
+                url, model_name, num_ctx, "yes" if image_b64 else "no")
+    payload: dict = {
+        "model":   model_name,
+        "prompt":  prompt,
+        "format":  "json",
+        "stream":  False,
         "options": {"num_ctx": num_ctx},
-    })
+    }
+    if image_b64:
+        payload["images"] = [image_b64]
+    resp = requests.post(url, timeout=timeout, json=payload)
     resp.raise_for_status()
     body = resp.json()
     duration_s = body.get("total_duration", 0) / 1e9
     return body["response"], duration_s, model_name
 
 
-def _call_claude(image_b64: str, prompt: str) -> tuple[str, float, str]:
-    """Anthropic Messages API. Vision via content blocks of type=image."""
+def _call_claude(image_b64: str | None, prompt: str) -> tuple[str, float, str]:
+    """Anthropic Messages API. image_b64=None for text-only headless calls."""
     api_key = runtime_config.claude_api_key()
     if not api_key:
         raise RuntimeError("Provider=claude but no claude_api_key in settings")
     model_name  = runtime_config.claude_model()
     max_tokens  = runtime_config.claude_max_tokens()
     timeout     = runtime_config.request_timeout_s()
-    logger.info("POST api.anthropic.com (model=%s, max_tokens=%d)", model_name, max_tokens)
+    logger.info("POST api.anthropic.com (model=%s, max_tokens=%d, image=%s)",
+                model_name, max_tokens, "yes" if image_b64 else "no")
+    content: list = []
+    if image_b64:
+        content.append({"type": "image", "source": {
+            "type": "base64", "media_type": "image/png", "data": image_b64,
+        }})
+    content.append({"type": "text", "text": prompt})
     import time as _t
     t0 = _t.monotonic()
     resp = requests.post(
@@ -128,17 +160,7 @@ def _call_claude(image_b64: str, prompt: str) -> tuple[str, float, str]:
         json={
             "model": model_name,
             "max_tokens": max_tokens,
-            "messages": [{
-                "role": "user",
-                "content": [
-                    {"type": "image", "source": {
-                        "type": "base64",
-                        "media_type": "image/png",
-                        "data": image_b64,
-                    }},
-                    {"type": "text", "text": prompt},
-                ],
-            }],
+            "messages": [{"role": "user", "content": content}],
         },
     )
     resp.raise_for_status()
@@ -149,15 +171,21 @@ def _call_claude(image_b64: str, prompt: str) -> tuple[str, float, str]:
     return raw, _t.monotonic() - t0, model_name
 
 
-def _call_openai(image_b64: str, prompt: str) -> tuple[str, float, str]:
-    """OpenAI Chat Completions with image_url content blocks (vision)."""
+def _call_openai(image_b64: str | None, prompt: str) -> tuple[str, float, str]:
+    """OpenAI Chat Completions. image_b64=None for text-only headless calls."""
     api_key = runtime_config.openai_api_key()
     if not api_key:
         raise RuntimeError("Provider=openai but no openai_api_key in settings")
     model_name = runtime_config.openai_model()
     max_tokens = runtime_config.openai_max_tokens()
     timeout    = runtime_config.request_timeout_s()
-    logger.info("POST api.openai.com (model=%s, max_tokens=%d)", model_name, max_tokens)
+    logger.info("POST api.openai.com (model=%s, max_tokens=%d, image=%s)",
+                model_name, max_tokens, "yes" if image_b64 else "no")
+    content: list = [{"type": "text", "text": prompt}]
+    if image_b64:
+        content.append({"type": "image_url", "image_url": {
+            "url": f"data:image/png;base64,{image_b64}",
+        }})
     import time as _t
     t0 = _t.monotonic()
     resp = requests.post(
@@ -171,15 +199,7 @@ def _call_openai(image_b64: str, prompt: str) -> tuple[str, float, str]:
             "model": model_name,
             "max_tokens": max_tokens,
             "response_format": {"type": "json_object"},
-            "messages": [{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {
-                        "url": f"data:image/png;base64,{image_b64}",
-                    }},
-                ],
-            }],
+            "messages": [{"role": "user", "content": content}],
         },
     )
     resp.raise_for_status()

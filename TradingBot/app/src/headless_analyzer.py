@@ -20,18 +20,13 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-import requests
-
 from . import instruments, proposal_sanity, signal_storage
 
 logger = logging.getLogger(__name__)
 
-# Reuse the same workstation endpoint as the screenshot analyzer so we
-# don't fan out config across modules. qwen2.5vl handles text-only input
-# fine (it's vision-language, not vision-only).
-OLLAMA_URL = "http://<workstation-LAN-IP>:11434/api/generate"
-MODEL      = "qwen2.5vl:7b"
-TIMEOUT    = 120
+# Fallback label for the persisted record's "model" field when the provider
+# response didn't include one. Real model name comes from local_llm_analyzer.
+FALLBACK_MODEL_LABEL = "unknown"
 
 # How many recent bars to include in the prompt context. 60 × 5m = 5h
 # of market data, which is a reasonable lookback for a 5m chart.
@@ -170,16 +165,26 @@ def _analyze_visual(instrument: str, period: str, bar_ts: int,
 
 def _analyze_text(instrument: str, period: str, bar_ts: int,
                   context: dict, bar_count: int) -> dict | None:
-    """Legacy text-only path. Used when no fresh HelmFeed screenshot exists
-    for the (instrument, period). Keeps the auto-analyzer alive on charts
-    that don't have HelmFeed attached, or when the chart isn't visible."""
+    """Text-only path. Used when no fresh HelmFeed screenshot exists for
+    the (instrument, period). Dispatches through local_llm_analyzer so it
+    honors the Settings provider (Ollama / Claude / OpenAI) like every
+    other analysis path."""
+    from . import local_llm_analyzer  # local import: avoids dep cycle in tests
+
     prompt = _render_prompt(instrument, period, context, bar_count)
 
     started = time.monotonic()
     try:
-        proposal, raw, model_duration_s = _call_ollama(prompt)
+        result = local_llm_analyzer.analyze_text(prompt)
     except Exception:
         logger.exception("[headless] LLM call failed for %s %s", instrument, period)
+        return None
+
+    raw = result["raw_response"]
+    try:
+        proposal = _parse_json(raw)
+    except Exception:
+        logger.exception("[headless] proposal JSON parse failed for %s %s", instrument, period)
         return None
 
     proposal["headless"]      = True
@@ -197,8 +202,9 @@ def _analyze_text(instrument: str, period: str, bar_ts: int,
         "proposal":         proposal,
         "raw_response":     raw,
         "duration_s":       round(time.monotonic() - started, 2),
-        "model_duration_s": round(model_duration_s, 2),
-        "model":            MODEL,
+        "model_duration_s": round(result.get("duration_s") or 0, 2),
+        "model":            result.get("model", FALLBACK_MODEL_LABEL),
+        "provider":         result.get("provider", "ollama"),
         "trigger":          "headless",
         "headless_period":  period,
         "headless_bar_ts":  bar_ts,
@@ -345,31 +351,9 @@ def _atr(highs: list[float], lows: list[float], closes: list[float],
 
 
 # ---------------------------------------------------------------------------
-# LLM call
+# Raw-response parsing -- providers normally honor format=json / response_format
+# but qwen and friends occasionally wrap in fences. Be defensive.
 # ---------------------------------------------------------------------------
-
-def _call_ollama(prompt: str) -> tuple[dict, str, float]:
-    """Returns (parsed_proposal, raw_response_str, model_duration_s).
-
-    num_ctx bumped to 8192 — default 2048 truncates our ~2k-token prompt
-    when format=json adds grammar overhead, causing HTTP 500. qwen2.5vl
-    supports up to 32k; 8k is comfortable headroom without bloating VRAM.
-    """
-    logger.info("[headless] POST %s (model=%s, prompt=%d chars)",
-                OLLAMA_URL, MODEL, len(prompt))
-    resp = requests.post(OLLAMA_URL, timeout=TIMEOUT, json={
-        "model":   MODEL,
-        "prompt":  prompt,
-        "format":  "json",
-        "stream":  False,
-        "options": {"num_ctx": 8192},
-    })
-    resp.raise_for_status()
-    body = resp.json()
-    raw  = body["response"]
-    duration_s = body.get("total_duration", 0) / 1e9
-    return _parse_json(raw), raw, duration_s
-
 
 def _parse_json(raw: str) -> dict:
     """Defensive parse — qwen sometimes wraps in fences even with format=json."""
