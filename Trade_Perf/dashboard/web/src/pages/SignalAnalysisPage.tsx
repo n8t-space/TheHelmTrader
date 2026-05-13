@@ -115,6 +115,38 @@ export function SignalAnalysisPage() {
     return sortBy(q.data.signals, sort, accessor)
   }, [q.data, sort])
 
+  // Today's-signals KPI: derive locally from the signal list so we don't
+  // need a separate API. "Today" is the same local-date semantics the
+  // server uses in home.py's today_pnl computation.
+  const todayKpi = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10)
+    const todays = (q.data?.signals ?? []).filter(
+      (s) => (s.timestamp || '').slice(0, 10) === today,
+    )
+    let pnl = 0
+    let wins = 0
+    let losses = 0
+    const instruments = new Set<string>()
+    for (const s of todays) {
+      const p = s.metrics?.realized_pnl
+      if (typeof p === 'number') {
+        pnl += p
+        if (p > 0) wins++
+        else if (p < 0) losses++
+      }
+      const ins = s.proposal?.instrument
+      if (ins) instruments.add(ins)
+    }
+    return {
+      date:        today,
+      count:       todays.length,
+      pnl:         Math.round(pnl * 100) / 100,
+      wins,
+      losses,
+      instruments: Array.from(instruments).sort(),
+    }
+  }, [q.data])
+
   const allVisibleTs = signals.map((s) => s.timestamp)
   const allSelected = allVisibleTs.length > 0 && allVisibleTs.every((ts) => selected.has(ts))
 
@@ -142,7 +174,22 @@ export function SignalAnalysisPage() {
     </th>
   )
 
+  const fmtMoney = (n: number) =>
+    `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  const pnlCls = (n: number) => (n > 0 ? 'pnl-pos' : n < 0 ? 'pnl-neg' : '')
+
   return (
+    <>
+      <div className="card">
+        <h2>Today's Signals · {todayKpi.date}</h2>
+        <div className="big">
+          <span className={pnlCls(todayKpi.pnl)}>{fmtMoney(todayKpi.pnl)}</span>
+          <span className="big-sub"> realized (signals)</span>
+        </div>
+        <div className="kv"><span>Signals captured</span><span>{todayKpi.count}</span></div>
+        <div className="kv"><span>Resolved (W/L)</span><span>{todayKpi.wins}W / {todayKpi.losses}L</span></div>
+        <div className="kv"><span>Instruments</span><span>{todayKpi.instruments.join(', ') || '—'}</span></div>
+      </div>
     <div className="card">
       <div className="signals-header">
         <h2>Signal Analysis {q.data && `(${q.data.count})`}</h2>
@@ -287,5 +334,6 @@ export function SignalAnalysisPage() {
         </div>
       )}
     </div>
+    </>
   )
 }

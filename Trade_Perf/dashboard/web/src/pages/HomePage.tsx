@@ -76,22 +76,15 @@ export function HomePage() {
 }
 
 function TodayCard({ t }: { t: HomeData['today'] }) {
+  // Trades-only on Home. Signal KPI lives on the Signal Analysis page.
   return (
     <div className="card">
-      <h2>Today · {t.date}</h2>
+      <h2>Today's Trades · {t.date}</h2>
       <div className="big">
-        <span className={pnlClass(t.realized_pnl)}>{fmtMoney(t.realized_pnl)}</span>
-        <span className="big-sub"> realized (signals)</span>
+        <span className={pnlClass(t.trade_pnl)}>{fmtMoney(t.trade_pnl)}</span>
+        <span className="big-sub"> net (NT fills)</span>
       </div>
-      <div className="kv"><span>Signals captured</span><span>{t.signal_count}</span></div>
-      <div className="kv"><span>Resolved (W/L)</span><span>{t.win_count}W / {t.loss_count}L</span></div>
-      <div className="kv"><span>Instruments</span><span>{t.instruments.join(', ') || '—'}</span></div>
-      <div className="kv">
-        <span>NT trades</span>
-        <span>
-          {t.trade_count} · <span className={pnlClass(t.trade_pnl)}>{fmtMoney(t.trade_pnl)}</span>
-        </span>
-      </div>
+      <div className="kv"><span>Trade count</span><span>{t.trade_count}</span></div>
     </div>
   )
 }
