@@ -80,7 +80,7 @@ def resolve_outcome(
         conn = sqlite3.connect(f"file:{FEED_DB_PATH}?mode=ro", uri=True)
 
     try:
-        period = _pick_finest_period(conn, instrument)
+        period = _pick_finest_period(conn, instrument, entry_ts)
         if period is None:
             return _outcome_neither()
 
@@ -126,14 +126,23 @@ def _outcome_neither() -> Outcome:
     return Outcome(outcome="neither", hit_ts=None, hit_price=None, method=None)
 
 
-def _pick_finest_period(conn: sqlite3.Connection, instrument: str) -> str | None:
-    rows = conn.execute(
-        "SELECT DISTINCT period FROM bars WHERE instrument = ?",
-        (instrument,),
-    ).fetchall()
-    available = {r[0] for r in rows}
+def _pick_finest_period(conn: sqlite3.Connection, instrument: str,
+                        entry_ts: int) -> str | None:
+    """Pick the finest period that has at least one bar AT-OR-AFTER entry_ts.
+
+    Originally this just took the finest period present in feed.db for the
+    instrument. That broke for instruments where a finer period (e.g. 1m)
+    had been published briefly and then stopped -- the resolver would pick
+    1m for a signal generated days later, find no bars in the forward
+    window, and return 'neither' forever. Filtering by entry_ts ensures
+    we pick the finest period whose data actually covers the trade."""
     for p in PERIOD_PREFERENCE:
-        if p in available:
+        row = conn.execute(
+            "SELECT 1 FROM bars WHERE instrument = ? AND period = ? "
+            "AND ts >= ? LIMIT 1",
+            (instrument, p, entry_ts),
+        ).fetchone()
+        if row:
             return p
     return None
 
