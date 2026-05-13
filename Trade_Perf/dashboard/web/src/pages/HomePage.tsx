@@ -352,9 +352,9 @@ function LastSignalCard({ signal }: { signal: Signal | null }) {
         <span>{p.risk_reward.toFixed(2)} · {(p.confidence * 100).toFixed(0)}%</span>
       </div>
       <div className="kv">
-        <span>Verdict · Outcome</span>
+        <span>Outcome · Notes</span>
         <span>
-          {signal.journal?.verdict ?? '—'} · {signal.outcome?.result ?? '—'}
+          {signal.outcome?.result ?? '—'}{signal.journal?.note ? ` · ${signal.journal.note}` : ''}
           {autoRes && ' (auto)'}
         </span>
       </div>

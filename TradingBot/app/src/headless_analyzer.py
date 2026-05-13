@@ -112,6 +112,7 @@ def _analyze_visual(instrument: str, period: str, bar_ts: int,
     snip pipeline uses. Reuses analyzer.txt (vocabulary + ATM menu + JSON
     schema) so visual headless proposals are shape-compatible with hotkey
     proposals downstream."""
+    import shutil
     from . import local_llm_analyzer  # local import: avoids dep cycle in tests
 
     market_ctx_block = _format_visual_context_block(instrument, period, context)
@@ -126,6 +127,23 @@ def _analyze_visual(instrument: str, period: str, bar_ts: int,
                          instrument, period)
         return None
 
+    # Snapshot the screenshot under a per-signal filename so the signal's
+    # record points at an immutable file. The 'auto_{instr}_{period}.png'
+    # latest-cache gets overwritten on every bar close; without this copy,
+    # every historical signal's screenshot_path would show whatever bar
+    # closed most recently. Stamp uses ms granularity since two armed
+    # combos can fire within the same second.
+    stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+    safe_i = _safe_seg(instrument)
+    safe_p = _safe_seg(period)
+    archived = SCREENSHOTS_DIR / f"headless_{safe_i}_{safe_p}_{stamp}.png"
+    try:
+        shutil.copy2(shot_path, archived)
+    except Exception:
+        logger.exception("[headless-vision] could not archive screenshot; "
+                         "falling back to the volatile auto_*.png path")
+        archived = shot_path  # less ideal but still resolves on-disk
+
     proposal = result["proposal"]
     proposal["headless"]   = True
     proposal["bar_ts"]     = bar_ts
@@ -135,8 +153,8 @@ def _analyze_visual(instrument: str, period: str, bar_ts: int,
 
     record = {
         "instrument":          instrument,
-        "screenshot_path":     str(shot_path),
-        "screenshot_filename": shot_path.name,
+        "screenshot_path":     str(archived),
+        "screenshot_filename": archived.name,
         "proposal":            proposal,
         "raw_response":        result.get("raw_response"),
         "duration_s":          round(time.monotonic() - started, 2),

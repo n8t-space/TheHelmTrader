@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
-import { deleteJSON, fetchJSON, postJSON, type Signal, type SignalListResp } from '../api'
+import { deleteJSON, fetchJSON, fmtPrice, postJSON, type Signal, type SignalListResp } from '../api'
 import { arrow, flip, sortBy, type Sort } from '../lib/sorting'
 
 type SignalKey =
@@ -14,9 +14,9 @@ type SignalKey =
   | 'atm_strategy'
   | 'risk_reward'
   | 'confidence'
-  | 'verdict'
   | 'outcome'
   | 'auto_resolved'
+  | 'notes'
 
 type EnteredState = 'hit' | 'no_entry' | 'pending'
 const FOUR_HOURS_MS = 4 * 3600 * 1000
@@ -52,9 +52,9 @@ const accessor = (s: Signal, k: SignalKey): unknown => {
     case 'atm_strategy':   return s.proposal?.atm_strategy ?? ''
     case 'risk_reward':    return s.proposal?.risk_reward
     case 'confidence':     return s.proposal?.confidence
-    case 'verdict':        return s.journal?.verdict ?? null
     case 'outcome':        return s.outcome?.result ?? null
     case 'auto_resolved':  return isAutoResolved(s)
+    case 'notes':          return s.journal?.note ?? null
   }
 }
 
@@ -241,9 +241,9 @@ export function SignalAnalysisPage() {
                 <Th k="atm_strategy">ATM Strategy</Th>
                 <Th k="risk_reward" num>R:R</Th>
                 <Th k="confidence" num>Conf</Th>
-                <Th k="verdict">Verdict</Th>
                 <Th k="outcome">Outcome</Th>
                 <Th k="auto_resolved">Auto-res</Th>
+                <Th k="notes">Notes</Th>
               </tr>
             </thead>
             <tbody>
@@ -270,7 +270,7 @@ export function SignalAnalysisPage() {
                     </td>
                     <td>{s.proposal?.instrument || '—'}</td>
                     <td>{s.proposal?.direction || '—'}</td>
-                    <td className="num">{fmtNum(s.proposal?.entry, 4)}</td>
+                    <td className="num">{fmtPrice(s.proposal?.entry, s.proposal?.instrument)}</td>
                     <td title={
                       s.entry_hit_ts
                         ? `Entry hit at ${new Date(s.entry_hit_ts).toLocaleString()}`
@@ -300,7 +300,6 @@ export function SignalAnalysisPage() {
                         ? `${(s.proposal.confidence * 100).toFixed(0)}%`
                         : ''}
                     </td>
-                    <td>{s.journal?.verdict || <span className="subtle">—</span>}</td>
                     <td title={s.outcome?.note ?? undefined}>
                       {s.outcome?.result
                         ? (s.outcome.auto_confirmed
@@ -310,6 +309,9 @@ export function SignalAnalysisPage() {
                     </td>
                     <td title={isAutoResolved(s) ? 'Outcome auto-resolved by feed.db walker' : 'Manually set or unresolved'}>
                       {isAutoResolved(s) ? '✓' : <span className="subtle">—</span>}
+                    </td>
+                    <td className="notes-cell" title={s.journal?.note ?? undefined}>
+                      {s.journal?.note || <span className="subtle">—</span>}
                     </td>
                   </tr>
                 )

@@ -40,12 +40,14 @@ def _load_visible_signals() -> dict[str, dict]:
     return visible
 
 
-JOURNAL_VERDICTS = ("agree", "disagree", "skip")
 OUTCOME_RESULTS = ("pending", "target", "stop", "breakeven", "partial", "no_fill", "not_watched", "other")
 
 
 class JournalUpdate(BaseModel):
-    verdict: str = Field(..., pattern=f"^({'|'.join(JOURNAL_VERDICTS)})$")
+    # The legacy agree/disagree/skip verdict was dropped 2026-05-13 -- the
+    # journal is now a free-form note field. Old records that carried a
+    # verdict still load (signal_storage stores dicts, not Pydantic), but
+    # the UI no longer shows or sets it.
     note: str | None = None
 
 
@@ -161,7 +163,7 @@ def update_journal(timestamp: str, update: JournalUpdate) -> dict[str, Any]:
     _require_signal(timestamp)
     signal_storage.append_update(
         bridge.SIGNALS_LOG, timestamp,
-        journal={"verdict": update.verdict, "note": update.note},
+        journal={"note": update.note},
     )
     return {"timestamp": timestamp, "journal": update.model_dump()}
 

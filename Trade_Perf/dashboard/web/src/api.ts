@@ -228,8 +228,24 @@ export interface Proposal {
 }
 
 export interface Journal {
-  verdict: 'agree' | 'disagree' | 'skip'
   note: string | null
+}
+
+// Display helper. Default 2 decimals; forex non-JPY pairs use 4 to preserve
+// pip precision (EURUSD 1.0851). Forex JPY pairs (USDJPY 154.32) stay at 2.
+// Anything not matching the 6-letter forex shape (futures, stocks) falls
+// through to 2 decimals -- the LLM already tick-rounds, so 2 is enough.
+export function fmtPrice(n: number | undefined | null, instrument?: string): string {
+  if (n === undefined || n === null || (typeof n === 'number' && isNaN(n))) return ''
+  const digits = _isForexNonJpy(instrument) ? 4 : 2
+  return n.toFixed(digits)
+}
+
+function _isForexNonJpy(instr?: string): boolean {
+  if (!instr) return false
+  const sym = instr.trim().toUpperCase()
+  if (!/^[A-Z]{6}$/.test(sym)) return false
+  return !sym.endsWith('JPY')
 }
 
 export interface Outcome {

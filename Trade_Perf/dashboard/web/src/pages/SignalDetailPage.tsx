@@ -4,15 +4,14 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   deleteJSON,
   fetchJSON,
+  fmtPrice,
   postJSON,
-  type Journal,
   type Outcome,
   type Signal,
   type SignalDetailResp,
   type TradeMetrics,
 } from '../api'
 
-const JOURNAL_VERDICTS: Journal['verdict'][] = ['agree', 'disagree', 'skip']
 const OUTCOME_RESULTS: Outcome['result'][] = [
   'pending', 'target', 'stop', 'breakeven', 'partial', 'no_fill', 'not_watched', 'other',
 ]
@@ -49,7 +48,6 @@ export function SignalDetailPage() {
   }
 
   // ---- Editable state lifted to page ----
-  const [journalVerdict, setJournalVerdict] = useState<Journal['verdict']>('skip')
   const [journalNote, setJournalNote] = useState('')
   const [positionSize, setPositionSize] = useState('')
   const [outcomeResult, setOutcomeResult] = useState<Outcome['result']>('pending')
@@ -59,7 +57,6 @@ export function SignalDetailPage() {
   const signal = q.data?.signal
   useEffect(() => {
     if (!signal) return
-    setJournalVerdict(signal.journal?.verdict ?? 'skip')
     setJournalNote(signal.journal?.note ?? '')
     setPositionSize(
       signal.metrics?.position_size && signal.metrics.position_size > 0
@@ -76,8 +73,7 @@ export function SignalDetailPage() {
   // ---- Dirty tracking ----
   const journalDirty =
     !!signal &&
-    (journalVerdict !== (signal.journal?.verdict ?? 'skip') ||
-      (journalNote.trim() || null) !== (signal.journal?.note ?? null))
+    ((journalNote.trim() || null) !== (signal.journal?.note ?? null))
 
   const positionDirty = (() => {
     if (!signal) return false
@@ -106,7 +102,6 @@ export function SignalDetailPage() {
       const ops: Promise<unknown>[] = []
       if (journalDirty) {
         ops.push(postJSON(`/api/signals/${tsEnc}/journal`, {
-          verdict: journalVerdict,
           note: journalNote.trim() || null,
         }))
       }
@@ -185,7 +180,6 @@ export function SignalDetailPage() {
 
       <div className="forms-grid">
         <JournalSection
-          verdict={journalVerdict} setVerdict={setJournalVerdict}
           note={journalNote} setNote={setJournalNote}
           saved={sig.journal} dirty={journalDirty}
         />
@@ -267,7 +261,7 @@ function ChildrenSection({
             <span className={`dir-${c.proposal.direction}`}>{c.proposal.direction.toUpperCase()}</span>
             <span>{c.proposal.instrument}</span>
             <span className="subtle">
-              entry {fmtNum(c.proposal.entry, 4)} · stop {fmtNum(c.proposal.stop, 4)} · target {fmtNum(c.proposal.target, 4)}
+              entry {fmtPrice(c.proposal.entry, c.proposal.instrument)} · stop {fmtPrice(c.proposal.stop, c.proposal.instrument)} · target {fmtPrice(c.proposal.target, c.proposal.instrument)}
             </span>
           </div>
           {c.outcome_suggestion && (
@@ -336,13 +330,23 @@ function ScreenshotSection({ filename }: { filename: string | null | undefined }
 // ---------- Proposal details ----------
 function ProposalDetails({ signal }: { signal: Signal }) {
   const p = signal.proposal
+  const enteredAt = signal.entry_hit_ts
+    ? new Date(signal.entry_hit_ts).toLocaleString()
+    : null
   return (
     <dl className="kv-grid">
       <dt>Instrument</dt><dd>{p.instrument || '—'}</dd>
       <dt>Direction</dt><dd className={`dir-${p.direction}`}>{p.direction || '—'}</dd>
-      <dt>Entry</dt><dd>{fmtNum(p.entry, 4)}</dd>
-      <dt>Stop</dt><dd>{fmtNum(p.stop, 4)}</dd>
-      <dt>Target</dt><dd>{fmtNum(p.target, 4)}</dd>
+      <dt>Entry</dt><dd>{fmtPrice(p.entry, p.instrument)}</dd>
+      <dt>Entered at</dt><dd>{
+        signal.entry_triggered === true && enteredAt
+          ? enteredAt
+          : signal.entry_triggered === false
+            ? <span className="subtle">no entry (4 h window expired)</span>
+            : <span className="subtle">pending</span>
+      }</dd>
+      <dt>Stop</dt><dd>{fmtPrice(p.stop, p.instrument)}</dd>
+      <dt>Target</dt><dd>{fmtPrice(p.target, p.instrument)}</dd>
       <dt>R:R</dt><dd>{fmtNum(p.risk_reward, 2)}</dd>
       <dt>Confidence</dt><dd>{fmtNum(p.confidence, 2)}</dd>
     </dl>
@@ -491,40 +495,23 @@ function TickAdjustmentsBlock({ signal }: { signal: Signal }) {
   return null
 }
 
-// ---------- Journal section (controlled) ----------
+// ---------- Notes section (controlled) ----------
 function JournalSection({
-  verdict, setVerdict, note, setNote, saved, dirty,
+  note, setNote, saved, dirty,
 }: {
-  verdict: Journal['verdict']
-  setVerdict: (v: Journal['verdict']) => void
   note: string
   setNote: (n: string) => void
-  saved: Journal | undefined
+  saved: { note: string | null } | undefined
   dirty: boolean
 }) {
   return (
     <div className="card form-block">
-      <h2>Journal {dirty && <span className="dirty-flag">unsaved</span>}</h2>
-      <p className="subtle">
-        Saved: <strong>{saved?.verdict ?? 'none'}</strong>
-        {saved?.note && ` — ${saved.note}`}
-      </p>
-      <fieldset>
-        {JOURNAL_VERDICTS.map((v) => (
-          <label key={v}>
-            <input
-              type="radio"
-              name="verdict"
-              value={v}
-              checked={verdict === v}
-              onChange={() => setVerdict(v)}
-            />
-            {' '}{v}
-          </label>
-        ))}
-      </fieldset>
+      <h2>Notes {dirty && <span className="dirty-flag">unsaved</span>}</h2>
+      {saved?.note && (
+        <p className="subtle">Saved: {saved.note}</p>
+      )}
       <textarea
-        placeholder="Why?"
+        placeholder="Notes on this signal -- what you saw, what you'd change, etc."
         value={note}
         onChange={(e) => setNote(e.target.value)}
       />
