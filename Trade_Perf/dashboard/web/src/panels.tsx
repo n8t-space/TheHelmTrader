@@ -193,6 +193,17 @@ export function TradesTable({ filters }: { filters: Filters }) {
     if (!q.data) return []
     return sortBy(q.data.trades, sort, (t, k) => t[k])
   }, [q.data, sort])
+  const totals = useMemo(() => {
+    return trades.reduce(
+      (acc, t) => ({
+        qty:      acc.qty      + t.qty,
+        net_pnl:  acc.net_pnl  + t.net_pnl,
+        fees:     acc.fees     + t.commission + t.fee,
+        duration: acc.duration + t.duration_seconds,
+      }),
+      { qty: 0, net_pnl: 0, fees: 0, duration: 0 },
+    )
+  }, [trades])
   const Th = ({ k, children, num }: { k: TradeKey; children: React.ReactNode; num?: boolean }) => (
     <th className={num ? 'num' : ''} onClick={() => setSort(flip(sort, k))}>{children}{arrow(sort, k)}</th>
   )
@@ -240,6 +251,20 @@ export function TradesTable({ filters }: { filters: Filters }) {
                 <tr><td colSpan={11} className="subtle" style={{ textAlign: 'center', padding: '20px' }}>No trades match these filters.</td></tr>
               )}
             </tbody>
+            {trades.length > 0 && (
+              <tfoot>
+                <tr className="totals-row">
+                  <td colSpan={4}>Totals ({trades.length} trades)</td>
+                  <td className="num">{totals.qty}</td>
+                  <td className="num"></td>
+                  <td className="num"></td>
+                  <td className={'num ' + (totals.net_pnl > 0 ? 'pnl-pos' : totals.net_pnl < 0 ? 'pnl-neg' : '')}>{fmtMoney(totals.net_pnl)}</td>
+                  <td className="num">{fmtMoney(totals.fees)}</td>
+                  <td className="num">{fmtDuration(totals.duration)}</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       )}
@@ -262,6 +287,15 @@ export function FillsTable({ filters }: { filters: Filters }) {
     if (!q.data) return []
     return sortBy(q.data.fills, sort, (f, k) => f[k])
   }, [q.data, sort])
+  const fillTotals = useMemo(() => {
+    return fills.reduce(
+      (acc, f) => ({
+        qty:        acc.qty        + (f.qty || 0),
+        commission: acc.commission + (f.commission || 0) + (f.fee || 0),
+      }),
+      { qty: 0, commission: 0 },
+    )
+  }, [fills])
   const Th = ({ k, children, num }: { k: FillKey; children: React.ReactNode; num?: boolean }) => (
     <th className={num ? 'num' : ''} onClick={() => setSort(flip(sort, k))}>{children}{arrow(sort, k)}</th>
   )
@@ -319,6 +353,18 @@ export function FillsTable({ filters }: { filters: Filters }) {
                 <tr><td colSpan={12} className="subtle" style={{ textAlign: 'center', padding: '20px' }}>No fills match these filters.</td></tr>
               )}
             </tbody>
+            {fills.length > 0 && (
+              <tfoot>
+                <tr className="totals-row">
+                  <td colSpan={7}>Totals ({fills.length} fills)</td>
+                  <td className="num">{fillTotals.qty}</td>
+                  <td className="num"></td>
+                  <td className="num">{fmtMoney(fillTotals.commission)}</td>
+                  <td className="num"></td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       )}

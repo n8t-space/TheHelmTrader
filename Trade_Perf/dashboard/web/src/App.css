@@ -565,6 +565,19 @@ tr.pending-suggestion td {
   font-style: italic;
 }
 
+/* Totals row at the foot of trades / fills tables. */
+tfoot .totals-row {
+  background: rgba(255, 255, 255, 0.02);
+  font-weight: 600;
+  border-top: 2px solid var(--border);
+}
+tfoot .totals-row td {
+  padding: 8px 10px;
+  border-bottom: none;
+  font-size: 13px;
+  color: var(--text);
+}
+
 /* ---------- Tables ---------- */
 
 .table-wrap {
