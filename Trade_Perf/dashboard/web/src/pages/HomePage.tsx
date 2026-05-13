@@ -2,9 +2,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
-} from 'recharts'
-import {
   AUTO_ANALYSIS_MAX_SLOTS,
   AUTO_ANALYSIS_PERIODS,
   fetchJSON,
@@ -48,7 +45,6 @@ interface HomeData {
     signals: number
   }
   last_signal: Signal | null
-  equity_curve: Array<{ date: string; daily_pnl: number; cumulative_pnl: number }>
 }
 
 const fmtMoney = (n: number) =>
@@ -74,7 +70,6 @@ export function HomePage() {
         <ActionQueueCard q={d.action_queue} />
         <AutoAnalysisCard />
       </div>
-      <EquityCurveCard data={d.equity_curve} />
       <LastSignalCard signal={d.last_signal} />
     </>
   )
@@ -320,42 +315,6 @@ function AutoAnalysisCard() {
   )
 }
 
-function EquityCurveCard({ data }: { data: HomeData['equity_curve'] }) {
-  const fmtDate = (d: string) => d.slice(5)
-  return (
-    <div className="card">
-      <h2>30-day Equity Curve</h2>
-      <ResponsiveContainer width="100%" height={220}>
-        <LineChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-          <XAxis dataKey="date" tickFormatter={fmtDate} stroke="#7d8590" fontSize={11} />
-          <YAxis
-            stroke="#7d8590"
-            fontSize={11}
-            tickFormatter={(v) => `$${v}`}
-            width={60}
-          />
-          <Tooltip
-            contentStyle={{
-              background: '#161b22',
-              border: '1px solid #30363d',
-              borderRadius: 4,
-              fontSize: 12,
-            }}
-            labelStyle={{ color: '#7d8590' }}
-            formatter={(v) => (typeof v === 'number' ? fmtMoney(v) : String(v))}
-          />
-          <Line
-            type="monotone"
-            dataKey="cumulative_pnl"
-            stroke="#58a6ff"
-            strokeWidth={2}
-            dot={false}
-          />
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
-  )
-}
 
 function LastSignalCard({ signal }: { signal: Signal | null }) {
   if (!signal) {

@@ -6,7 +6,7 @@ to build a single response the home page renders without extra round-trips.
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from datetime import date
 from typing import Any
 
 from fastapi import APIRouter
@@ -39,11 +39,6 @@ def _account_category(account_name: str) -> str | None:
 
 def _today_local_iso() -> str:
     return date.today().isoformat()
-
-
-def _last_n_days_iso(n: int) -> list[str]:
-    today = date.today()
-    return [(today - timedelta(days=i)).isoformat() for i in range(n - 1, -1, -1)]
 
 
 @router.get("")
@@ -135,29 +130,6 @@ def home() -> dict[str, Any]:
             cumulative_earnings["signals"] += pnl
     cumulative_earnings = {k: round(v, 2) for k, v in cumulative_earnings.items()}
 
-    # ---- Equity curve over 30 days ----
-    by_day: dict[str, float] = {}
-    for s in enriched:
-        pnl = s["metrics"].get("realized_pnl")
-        if pnl is None:
-            continue
-        d = (s.get("timestamp") or "")[:10]
-        if not d:
-            continue
-        by_day[d] = by_day.get(d, 0.0) + pnl
-
-    days = _last_n_days_iso(30)
-    cum = 0.0
-    equity_curve: list[dict] = []
-    for d in days:
-        daily = by_day.get(d, 0.0)
-        cum += daily
-        equity_curve.append({
-            "date": d,
-            "daily_pnl": round(daily, 2),
-            "cumulative_pnl": round(cum, 2),
-        })
-
     return {
         "today": {
             "date": today,
@@ -179,5 +151,4 @@ def home() -> dict[str, Any]:
         "open_positions": [],  # TODO: depends on NS account-state indicator
         "cumulative_earnings": cumulative_earnings,
         "last_signal": enriched[0] if enriched else None,
-        "equity_curve": equity_curve,
     }
