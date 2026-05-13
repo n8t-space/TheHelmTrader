@@ -45,7 +45,36 @@ ATR_PERIOD = 14
 DATA_DIR     = Path(__file__).resolve().parent.parent / "data"
 FEED_DB_PATH = DATA_DIR / "feed.db"
 SIGNALS_LOG  = DATA_DIR / "signals.jsonl"
+SCREENSHOTS_DIR = DATA_DIR / "screenshots"
 PROMPT_PATH  = Path(__file__).resolve().parent.parent / "prompts" / "headless_analyzer.txt"
+# Vision prompt is the same one the manual snipping pipeline uses -- includes
+# the chart vocabulary + ATM strategy menu. Used when a fresh HelmFeed
+# screenshot is available for the (instrument, period).
+VISION_PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "analyzer.txt"
+
+# Maximum age of an auto-screenshot to be considered "fresh enough" for the
+# bar we're analyzing. Two minutes covers any bar period from 1m up; older
+# than that and we fall back to text-only.
+SCREENSHOT_MAX_AGE_S = 120
+
+
+def _safe_seg(s: str) -> str:
+    return "".join(c if c.isalnum() or c in "_.-" else "_" for c in s)
+
+
+def _latest_auto_screenshot(instrument: str, period: str) -> Path | None:
+    """Return the auto_{instrument}_{period}.png that feed.py drops on each
+    fresh bar, or None if absent or too stale to trust."""
+    path = SCREENSHOTS_DIR / f"auto_{_safe_seg(instrument)}_{_safe_seg(period)}.png"
+    if not path.is_file():
+        return None
+    age = time.time() - path.stat().st_mtime
+    if age > SCREENSHOT_MAX_AGE_S:
+        logger.info("[headless] screenshot for %s @ %s is %.0fs old (>%.0fs); "
+                    "falling back to text-only", instrument, period, age,
+                    SCREENSHOT_MAX_AGE_S)
+        return None
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +83,15 @@ PROMPT_PATH  = Path(__file__).resolve().parent.parent / "prompts" / "headless_an
 
 def analyze(instrument: str, period: str, bar_ts: int,
             *, bar_count: int = DEFAULT_BAR_COUNT) -> dict | None:
-    """Build numeric context, call the LLM, persist the proposal.
+    """Build numeric context, pick the analysis path, persist the proposal.
+
+    Two paths:
+      - Visual: when HelmFeed has dropped a recent screenshot for this
+        (instrument, period), hand it + a brief context block to the
+        provider-dispatching analyzer (Ollama/Claude/OpenAI, includes
+        ATM strategy menu, applies tick rounding).
+      - Text-only: legacy fallback when no fresh screenshot is available.
+        Uses the headless_analyzer.txt prompt with the bar table.
 
     Returns the persisted signal record, or None if context was insufficient
     (e.g., fewer than 20 bars in feed.db — too thin to analyze).
@@ -67,7 +104,76 @@ def analyze(instrument: str, period: str, bar_ts: int,
         return None
 
     context = _build_context(instrument, period, bars)
-    prompt  = _render_prompt(instrument, period, context, len(bars))
+    shot_path = _latest_auto_screenshot(instrument, period)
+
+    if shot_path:
+        return _analyze_visual(instrument, period, bar_ts, context, shot_path)
+    return _analyze_text(instrument, period, bar_ts, context, len(bars))
+
+
+def _analyze_visual(instrument: str, period: str, bar_ts: int,
+                    context: dict, shot_path: Path) -> dict | None:
+    """Vision-LLM path: call the same provider-dispatched analyzer the manual
+    snip pipeline uses. Reuses analyzer.txt (vocabulary + ATM menu + JSON
+    schema) so visual headless proposals are shape-compatible with hotkey
+    proposals downstream."""
+    from . import local_llm_analyzer  # local import: avoids dep cycle in tests
+
+    market_ctx_block = _format_visual_context_block(instrument, period, context)
+    template = VISION_PROMPT_PATH.read_text(encoding="utf-8")
+    full_prompt = market_ctx_block + "\n\n---\n\n" + template
+
+    started = time.monotonic()
+    try:
+        result = local_llm_analyzer.analyze(shot_path, full_prompt)
+    except Exception:
+        logger.exception("[headless-vision] analyze() failed for %s %s",
+                         instrument, period)
+        return None
+
+    proposal = result["proposal"]
+    proposal["headless"]   = True
+    proposal["bar_ts"]     = bar_ts
+    proposal["instrument"] = instrument
+
+    is_valid, reason = proposal_sanity.sanity_check(proposal)
+
+    record = {
+        "instrument":          instrument,
+        "screenshot_path":     str(shot_path),
+        "screenshot_filename": shot_path.name,
+        "proposal":            proposal,
+        "raw_response":        result.get("raw_response"),
+        "duration_s":          round(time.monotonic() - started, 2),
+        "model_duration_s":    round(result.get("duration_s") or 0, 2),
+        "model":               proposal.get("model", MODEL),
+        "provider":            proposal.get("provider", "ollama"),
+        "trigger":             "headless",
+        "headless_period":     period,
+        "headless_bar_ts":     bar_ts,
+        "headless_vision":     True,
+        "market_context":      context,
+    }
+    if not is_valid:
+        record["deleted"]               = True
+        record["auto_dismissed"]        = True
+        record["auto_dismissed_reason"] = reason
+        logger.warning("[headless-vision] auto-dismissing %s @ %s — %s",
+                       instrument, period, reason)
+    persisted = signal_storage.append_signal(SIGNALS_LOG, record)
+    logger.info(
+        "[headless-vision] proposal stored: %s %s direction=%s confidence=%.2f atm=%s",
+        instrument, period, proposal.get("direction"),
+        proposal.get("confidence", 0), proposal.get("atm_strategy"))
+    return persisted
+
+
+def _analyze_text(instrument: str, period: str, bar_ts: int,
+                  context: dict, bar_count: int) -> dict | None:
+    """Legacy text-only path. Used when no fresh HelmFeed screenshot exists
+    for the (instrument, period). Keeps the auto-analyzer alive on charts
+    that don't have HelmFeed attached, or when the chart isn't visible."""
+    prompt = _render_prompt(instrument, period, context, bar_count)
 
     started = time.monotonic()
     try:
@@ -78,13 +184,10 @@ def analyze(instrument: str, period: str, bar_ts: int,
 
     proposal["headless"]      = True
     proposal["bar_ts"]        = bar_ts
-    proposal["instrument"]    = instrument  # trust caller, not whatever the model returned
+    proposal["instrument"]    = instrument
     instruments.apply_tick_rounding(proposal, instruments.load_config())
     proposal["risk_reward"]   = _compute_rr(proposal)
 
-    # Sanity-check the prices against feed.db's latest reference. Catches
-    # hallucinated proposals where entry/stop/target are dozens of percent
-    # off the instrument's actual range (e.g., MES at 5300, model emits 7400).
     is_valid, reason = proposal_sanity.sanity_check(proposal)
 
     record = {
@@ -114,6 +217,28 @@ def analyze(instrument: str, period: str, bar_ts: int,
         "[headless] proposal stored: %s %s direction=%s confidence=%.2f",
         instrument, period, proposal.get("direction"), proposal.get("confidence", 0))
     return persisted
+
+
+def _format_visual_context_block(instrument: str, period: str, context: dict) -> str:
+    """Brief authoritative-context block for the visual path. Mirrors what
+    pipeline._format_context_for_prompt produces for the manual snip flow,
+    but smaller -- the LLM has the chart bitmap so we don't need to dump
+    every level."""
+    lines = [
+        "## Authoritative Market Context (from HelmFeed bars)",
+        f"Instrument: {instrument}",
+        f"Period: {period}",
+        f"Current price (last close): {context.get('current_price')}",
+        f"Recent {context.get('bar_count')}-bar high: {context.get('period_high')}",
+        f"Recent {context.get('bar_count')}-bar low:  {context.get('period_low')}",
+        f"EMA({EMA_PERIOD}): {context.get('ema_value')}",
+        f"ATR({ATR_PERIOD}): {context.get('atr_value')}",
+        "",
+        "Use the prices above as authoritative -- do not re-read them from the chart axis. "
+        "Use the chart screenshot for structural interpretation (trend, pullbacks, "
+        "support/resistance) only.",
+    ]
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

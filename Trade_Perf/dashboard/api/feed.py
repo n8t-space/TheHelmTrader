@@ -19,14 +19,35 @@ Bar handler also runs:
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
+import re
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from . import _tradebot_bridge as bridge
 from src import auto_analyzer, feed_store, signal_storage  # type: ignore[import-not-found]  # via bridge
+
+# Latest-screenshot store for the headless / auto analyzer. One PNG per
+# (instrument, period); each fresh bar overwrites the previous in place.
+AUTO_SHOTS_DIR = bridge.SCREENSHOTS_DIR  # same dir snip screenshots land in
+_SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
+
+
+def _auto_screenshot_path(instrument: str, period: str) -> Path:
+    safe_i = _SAFE_NAME.sub("_", instrument)
+    safe_p = _SAFE_NAME.sub("_", period)
+    return AUTO_SHOTS_DIR / f"auto_{safe_i}_{safe_p}.png"
+
+
+def _save_auto_screenshot(instrument: str, period: str, b64: str) -> Path:
+    AUTO_SHOTS_DIR.mkdir(parents=True, exist_ok=True)
+    path = _auto_screenshot_path(instrument, period)
+    path.write_bytes(base64.b64decode(b64))
+    return path
 
 router = APIRouter(prefix="/api/feed", tags=["feed"])
 logger = logging.getLogger(__name__)
@@ -52,6 +73,10 @@ class Bar(BaseModel):
     l: float
     c: float
     v: int = Field(ge=0)
+    # HelmFeed attaches a chart bitmap on live bar close so the headless
+    # analyzer can see the chart, not just bar text. Absent on historical
+    # backfill (BackfillHistoricalBars publishes JSON without it).
+    screenshot_b64: str | None = None
 
 
 class Tick(BaseModel):
@@ -92,6 +117,17 @@ async def ingest_bar(bar: Bar) -> dict:
         return {"status": "ok", "armed": False, "reason": "post-gap warmup"}
     if is_stale:
         return {"status": "ok", "armed": False, "reason": "stale (backfill)"}
+
+    # Persist the latest screenshot per (instrument, period) so the headless
+    # analyzer can hand it to the vision LLM. One file per combo, overwritten
+    # in place -- storage stays bounded at ~200 KB * armed_combos. Only when
+    # the bar is fresh + post-warmup (NOT a backfill).
+    if bar.screenshot_b64:
+        try:
+            _save_auto_screenshot(bar.instrument, bar.period, bar.screenshot_b64)
+        except Exception:
+            logger.exception("failed to save auto screenshot for %s @ %s",
+                             bar.instrument, bar.period)
 
     armed = await asyncio.to_thread(feed_store.is_armed, bar.instrument, bar.period)
     if armed:

@@ -48,9 +48,14 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Net.Http;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Interop;
+using System.Windows.Media.Imaging;
 using NinjaTrader.Cbi;
 using NinjaTrader.Data;
 using NinjaTrader.NinjaScript;
@@ -86,6 +91,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         private List<Tick> tickBuffer = new List<Tick>(512);
         private readonly object tickBufferLock = new object();
         private System.Threading.Timer flushTimer;
+
+        // ChartControl ref captured in DataLoaded -- needed by the
+        // BitBlt-based chart-capture path used on Realtime bar close.
+        // Auto Analysis on the bot side reads the latest screenshot per
+        // (instrument, period) and feeds it to the vision LLM.
+        private NinjaTrader.Gui.Chart.ChartControl chartControl;
 
         // =================================================================
         //  HTTP — lazy singleton
@@ -134,6 +145,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                 // earlier than first tick is harmless (empty buffer = no-op).
                 flushTimer = new System.Threading.Timer(
                     _ => FlushTicks(), null, FLUSH_INTERVAL_MS, FLUSH_INTERVAL_MS);
+
+                // Capture the WPF ChartControl ref for later bitmap grabs.
+                // Same pattern HelmAnalyzer uses. Safe to access in DataLoaded.
+                try { chartControl = ChartControl; }
+                catch { /* unattached or non-chart context; capture stays null */ }
             }
             else if (State == State.Realtime)
             {
@@ -172,6 +188,18 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Print($"[HelmFeed] BuildBarJson failed: {ex.Message}");
                 return;
             }
+
+            // Attach a chart screenshot so the bot's headless / auto-analyzer
+            // has visual context, not just bar text. ~150-200 KB per closed
+            // bar; bot keeps only the latest per (instrument, period).
+            // Null on first call before DataLoaded -- caller path tolerates it.
+            string screenshotB64 = CaptureChartBase64();
+            if (!string.IsNullOrEmpty(screenshotB64))
+            {
+                json = json.Substring(0, json.Length - 1)
+                     + ",\"screenshot_b64\":\"" + screenshotB64 + "\"}";
+            }
+
             Task.Run(() => PostAsync(FEED_BAR_URL, json));
         }
 
@@ -340,6 +368,76 @@ namespace NinjaTrader.NinjaScript.Indicators
         private static long ToUnixMillis(DateTime t)
         {
             return (long)(t.ToUniversalTime() - UNIX_EPOCH).TotalMilliseconds;
+        }
+
+        // =================================================================
+        //  CHART CAPTURE — desktop framebuffer at the chart's screen rect,
+        //  via Win32 BitBlt + WPF PNG encode. Duplicated from HelmAnalyzer
+        //  because NS doesn't make cross-indicator helpers easy to share.
+        //  Returns null if the chart isn't ready / off-screen / fails.
+        // =================================================================
+        [DllImport("user32.dll")]  private static extern IntPtr GetDesktopWindow();
+        [DllImport("user32.dll")]  private static extern IntPtr GetWindowDC(IntPtr hWnd);
+        [DllImport("user32.dll")]  private static extern int    ReleaseDC(IntPtr hWnd, IntPtr hDC);
+        [DllImport("gdi32.dll")]   private static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+        [DllImport("gdi32.dll")]   private static extern IntPtr CreateCompatibleBitmap(IntPtr hdc, int w, int h);
+        [DllImport("gdi32.dll")]   private static extern IntPtr SelectObject(IntPtr hdc, IntPtr obj);
+        [DllImport("gdi32.dll", SetLastError = true)]
+                                   private static extern bool   BitBlt(IntPtr dst, int x, int y, int w, int h, IntPtr src, int sx, int sy, uint rop);
+        [DllImport("gdi32.dll")]   private static extern bool   DeleteObject(IntPtr obj);
+        [DllImport("gdi32.dll")]   private static extern bool   DeleteDC(IntPtr hdc);
+        private const uint SRCCOPY = 0x00CC0020;
+
+        private string CaptureChartBase64()
+        {
+            if (chartControl == null) return null;
+            try
+            {
+                return (string)chartControl.Dispatcher.Invoke(new Func<string>(() =>
+                {
+                    if (!chartControl.IsVisible) return null;
+                    int w = (int)chartControl.ActualWidth;
+                    int h = (int)chartControl.ActualHeight;
+                    if (w <= 0 || h <= 0) return null;
+
+                    var origin = chartControl.PointToScreen(new System.Windows.Point(0, 0));
+                    int sx = (int)origin.X;
+                    int sy = (int)origin.Y;
+
+                    IntPtr hwndDesk = GetDesktopWindow();
+                    IntPtr srcDc    = GetWindowDC(hwndDesk);
+                    IntPtr dstDc    = CreateCompatibleDC(srcDc);
+                    IntPtr dib      = CreateCompatibleBitmap(srcDc, w, h);
+                    IntPtr oldObj   = SelectObject(dstDc, dib);
+                    try
+                    {
+                        if (!BitBlt(dstDc, 0, 0, w, h, srcDc, sx, sy, SRCCOPY)) return null;
+
+                        var source = Imaging.CreateBitmapSourceFromHBitmap(
+                            dib, IntPtr.Zero, Int32Rect.Empty,
+                            BitmapSizeOptions.FromEmptyOptions());
+                        var encoder = new PngBitmapEncoder();
+                        encoder.Frames.Add(BitmapFrame.Create(source));
+                        using (var ms = new MemoryStream())
+                        {
+                            encoder.Save(ms);
+                            return Convert.ToBase64String(ms.ToArray());
+                        }
+                    }
+                    finally
+                    {
+                        SelectObject(dstDc, oldObj);
+                        DeleteObject(dib);
+                        DeleteDC(dstDc);
+                        ReleaseDC(hwndDesk, srcDc);
+                    }
+                }));
+            }
+            catch (Exception ex)
+            {
+                Print($"[HelmFeed] Chart capture failed: {ex.GetType().Name}: {ex.Message}");
+                return null;
+            }
         }
 
         // =================================================================
