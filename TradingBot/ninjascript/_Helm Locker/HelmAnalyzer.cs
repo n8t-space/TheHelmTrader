@@ -110,10 +110,12 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Net.Http;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
+using System.Windows;
 using System.Windows.Input;
-using System.Windows.Media;
+using System.Windows.Interop;
 using System.Windows.Media.Imaging;
 using NinjaTrader.Cbi;
 using NinjaTrader.Data;
@@ -642,19 +644,32 @@ namespace NinjaTrader.NinjaScript.Indicators
         }
 
         // =================================================================
-        //  CHART CAPTURE — grab from the screen via System.Drawing.
+        //  CHART CAPTURE — grab pixels from the desktop framebuffer via
+        //  Win32 BitBlt, hand the HBITMAP to WPF for PNG encoding.
         //  ----------------------------------------------------------------
-        //  We previously tried WPF's RenderTargetBitmap.Render(chartControl)
-        //  but it produces a 4-KB mostly-blank PNG -- NT8's chart paints
-        //  via DirectX (an HWND child of the WPF tree), so WPF's render
-        //  pipeline can't see the D3D surface beneath it.
+        //  RenderTargetBitmap.Render(chartControl) only sees the WPF visual
+        //  tree, missing the D3D surface NT8 uses for chart paint -- result
+        //  was a mostly-blank 4-KB PNG. System.Drawing.Bitmap would work
+        //  but the NS sandbox doesn't reference System.Drawing.Common
+        //  (CS0234 on Bitmap/Graphics/Imaging types).
         //
-        //  Graphics.CopyFromScreen reads the actual desktop framebuffer
-        //  at the chart's on-screen coordinates, which DOES include the
-        //  D3D content. Requires the chart to be on-screen at the moment
-        //  of capture -- enforced by the IsVisible check in the hotkey
-        //  handler that calls us.
+        //  This path uses only gdi32 + user32 P/Invoke (always available)
+        //  plus System.Windows.Interop.Imaging.CreateBitmapSourceFromHBitmap
+        //  (in PresentationCore, which NS already has). Captures EVERYTHING
+        //  drawn at the chart's screen rect, including D3D.
         // =================================================================
+        [DllImport("user32.dll")]  private static extern IntPtr GetDesktopWindow();
+        [DllImport("user32.dll")]  private static extern IntPtr GetWindowDC(IntPtr hWnd);
+        [DllImport("user32.dll")]  private static extern int    ReleaseDC(IntPtr hWnd, IntPtr hDC);
+        [DllImport("gdi32.dll")]   private static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+        [DllImport("gdi32.dll")]   private static extern IntPtr CreateCompatibleBitmap(IntPtr hdc, int w, int h);
+        [DllImport("gdi32.dll")]   private static extern IntPtr SelectObject(IntPtr hdc, IntPtr obj);
+        [DllImport("gdi32.dll", SetLastError = true)]
+                                   private static extern bool   BitBlt(IntPtr dst, int x, int y, int w, int h, IntPtr src, int sx, int sy, uint rop);
+        [DllImport("gdi32.dll")]   private static extern bool   DeleteObject(IntPtr obj);
+        [DllImport("gdi32.dll")]   private static extern bool   DeleteDC(IntPtr hdc);
+        private const uint SRCCOPY = 0x00CC0020;
+
         private string CaptureChartBase64()
         {
             if (chartControl == null) return null;
@@ -672,16 +687,37 @@ namespace NinjaTrader.NinjaScript.Indicators
                     int sx = (int)origin.X;
                     int sy = (int)origin.Y;
 
-                    using (var bmp = new System.Drawing.Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
-                    using (var g = System.Drawing.Graphics.FromImage(bmp))
+                    IntPtr hwndDesk = GetDesktopWindow();
+                    IntPtr srcDc    = GetWindowDC(hwndDesk);
+                    IntPtr dstDc    = CreateCompatibleDC(srcDc);
+                    IntPtr dib      = CreateCompatibleBitmap(srcDc, w, h);
+                    IntPtr oldObj   = SelectObject(dstDc, dib);
+                    try
                     {
-                        g.CopyFromScreen(sx, sy, 0, 0, new System.Drawing.Size(w, h),
-                                         System.Drawing.CopyPixelOperation.SourceCopy);
+                        if (!BitBlt(dstDc, 0, 0, w, h, srcDc, sx, sy, SRCCOPY))
+                        {
+                            Print("[Helm] BitBlt failed (capture returned no pixels)");
+                            return null;
+                        }
+
+                        // HBITMAP -> WPF BitmapSource -> PNG
+                        var source = Imaging.CreateBitmapSourceFromHBitmap(
+                            dib, IntPtr.Zero, Int32Rect.Empty,
+                            BitmapSizeOptions.FromEmptyOptions());
+                        var encoder = new PngBitmapEncoder();
+                        encoder.Frames.Add(BitmapFrame.Create(source));
                         using (var ms = new MemoryStream())
                         {
-                            bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+                            encoder.Save(ms);
                             return Convert.ToBase64String(ms.ToArray());
                         }
+                    }
+                    finally
+                    {
+                        SelectObject(dstDc, oldObj);
+                        DeleteObject(dib);
+                        DeleteDC(dstDc);
+                        ReleaseDC(hwndDesk, srcDc);
                     }
                 }));
             }
