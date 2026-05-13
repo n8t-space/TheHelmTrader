@@ -557,6 +557,14 @@ tr.pending-suggestion td {
   border-style: solid;
 }
 
+/* ATM-strategy column: signal proposals that suggested a custom (not in
+   the user's NT templates) bracket get highlighted so the user remembers
+   they'd need to create that strategy in NT to take the trade as proposed. */
+.atm-custom {
+  color: var(--accent);
+  font-style: italic;
+}
+
 /* ---------- Tables ---------- */
 
 .table-wrap {

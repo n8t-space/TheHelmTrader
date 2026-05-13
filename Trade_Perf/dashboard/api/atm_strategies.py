@@ -39,10 +39,10 @@ def _parse_one(xml_path: Path) -> dict[str, Any]:
         # first child uniformly.
         node = root if root.tag.lower().endswith("atmstrategy") else next(iter(root), root)
 
-        # Bracket structure: <Brackets><AtmStrategyBracket>...</></Brackets>
+        # NT8 schema: <NinjaTrader>/<AtmStrategy>/<Brackets>/<Bracket>
         # Each bracket carries Quantity, StopLoss, Target. Sum up the qty,
         # capture min stop ticks and max target ticks across brackets.
-        brackets = node.findall(".//AtmStrategyBracket")
+        brackets = node.findall(".//Brackets/Bracket")
         if brackets:
             total_qty   = 0
             stop_ticks  = []

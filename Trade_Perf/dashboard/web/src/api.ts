@@ -215,6 +215,16 @@ export interface Proposal {
   reassessed?: boolean
   attempt_confidences?: number[]
   confidence_floor?: number
+  // ATM strategy the LLM picked. Either an exact name from the user's NT
+  // templates, or the literal "custom" (in which case custom_stop_ticks /
+  // custom_target_ticks carry the LLM's suggested bracket; user would need
+  // to create that strategy in NT to take the trade as proposed).
+  atm_strategy?: string
+  atm_strategy_resolved?: boolean
+  atm_stop_ticks?: number
+  atm_target_ticks?: number
+  custom_stop_ticks?: number
+  custom_target_ticks?: number
 }
 
 export interface Journal {

@@ -10,8 +10,7 @@ type SignalKey =
   | 'instrument'
   | 'direction'
   | 'entry'
-  | 'stop'
-  | 'target'
+  | 'atm_strategy'
   | 'risk_reward'
   | 'confidence'
   | 'verdict'
@@ -32,8 +31,7 @@ const accessor = (s: Signal, k: SignalKey): unknown => {
     case 'instrument':     return s.proposal?.instrument
     case 'direction':      return s.proposal?.direction
     case 'entry':          return s.proposal?.entry
-    case 'stop':           return s.proposal?.stop
-    case 'target':         return s.proposal?.target
+    case 'atm_strategy':   return s.proposal?.atm_strategy ?? ''
     case 'risk_reward':    return s.proposal?.risk_reward
     case 'confidence':     return s.proposal?.confidence
     case 'verdict':        return s.journal?.verdict ?? null
@@ -193,8 +191,7 @@ export function SignalAnalysisPage() {
                 <Th k="instrument">Instrument</Th>
                 <Th k="direction">Direction</Th>
                 <Th k="entry" num>Entry</Th>
-                <Th k="stop" num>Stop</Th>
-                <Th k="target" num>Target</Th>
+                <Th k="atm_strategy">ATM Strategy</Th>
                 <Th k="risk_reward" num>R:R</Th>
                 <Th k="confidence" num>Conf</Th>
                 <Th k="verdict">Verdict</Th>
@@ -246,8 +243,17 @@ export function SignalAnalysisPage() {
                       />
                       {fmtNum(s.proposal?.entry, 4)}
                     </td>
-                    <td className="num">{fmtNum(s.proposal?.stop, 4)}</td>
-                    <td className="num">{fmtNum(s.proposal?.target, 4)}</td>
+                    <td title={
+                      s.proposal?.atm_strategy === 'custom'
+                        ? `Custom suggestion (not in your NT templates): stop=${s.proposal?.atm_stop_ticks ?? '?'}t target=${s.proposal?.atm_target_ticks ?? '?'}t`
+                        : s.proposal?.atm_strategy
+                          ? `stop=${s.proposal?.atm_stop_ticks ?? '?'}t target=${s.proposal?.atm_target_ticks ?? '?'}t`
+                          : 'No ATM strategy on this signal (older record or LLM omitted)'
+                    }>
+                      {s.proposal?.atm_strategy === 'custom'
+                        ? <span className="atm-custom">custom ({s.proposal?.atm_stop_ticks}t/{s.proposal?.atm_target_ticks}t)</span>
+                        : s.proposal?.atm_strategy || <span className="subtle">—</span>}
+                    </td>
                     <td className="num">{fmtNum(s.proposal?.risk_reward, 2)}</td>
                     <td className="num">
                       {s.proposal?.confidence !== undefined

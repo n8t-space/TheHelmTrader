@@ -178,9 +178,13 @@ In order, after each phase:
 
 5. **Refresh ATM strategies on each boot.** New ask. The bot needs to read NT's ATM strategy list (`Documents\NinjaTrader 8\db\NinjaTrader.sqlite` -> `AtmStrategyTemplates`, or `templates/AtmStrategy/*.xml`) every time uvicorn starts and expose it via the API. Catches user-created strategies without manual reconfiguration.
 
-6. **Signal proposals must reference an ATM strategy for TP/SL.** New ask. Currently the proposal carries raw entry/stop/target prices. The user wants the LLM (or a post-processing step) to pick an ATM strategy from the discovered list and emit that name in the proposal so when the user takes the trade in NT, the ATM applies its TP/SL pattern. Open design questions: does the LLM choose, or does code map (e.g. by R:R bucket)? Where does the strategy name persist on the signal record? Talk to user before building.
+6. **Signal proposals must reference an ATM strategy for TP/SL.** Shipped 2026-05-12 evening. LLM now picks `atm_strategy` from the user's NT templates (or "custom" with custom_stop_ticks / custom_target_ticks if no listed strategy fits). Bot derives stop/target prices from the chosen bracket + entry + direction + tick_size. Signal Analysis table now shows the strategy name column instead of Stop/Target. Follow-ups:
+   - `Tight 100` and `SL 10 - RUN` strategies have unusual bracket shapes -- one returns 0 ticks for stop or target and gets filtered out of the LLM menu. Investigate the XML and decide whether to include them.
+   - Backfill old signals: existing signals.jsonl entries have stop/target but no atm_strategy -- the table column shows `—` for them. Acceptable; user can ignore historical rows or we can reverse-map (e.g. round R:R to nearest known strategy).
 
 7. **"Automated signal updater" still doesn't work.** User-reported, term not yet defined. Could mean: outcome-watcher (logs show it IS suggesting outcomes -- working), auto-analyzer (logs show it IS firing -- 21:00:05 produced a proposal), or something else like a live-update pipeline that isn't named explicitly. Clarify scope with user before chasing.
+
+8. **Headless analyzer needs screenshots too.** New ask (2026-05-12). Auto Analysis fires on bar close from `feed.db` text data only -- no visual context. User wants the headless analyzer to also include a chart screenshot. Design open: NS-side push (HelmFeed captures bitmap on every bar close for armed instruments and POSTs alongside the bar)? Or bot-side request (auto-analyzer triggers NS to capture)? Storage and bandwidth need a plan (200-400 KB per bar adds up fast; gate to armed instruments only, prune aggressively). Talk through with user before building.
 
 8. **NS account-state indicator.** The Open Positions card on Home was removed 2026-05-10. The data path (balance / equity / open positions pushed to bot) is still on the roadmap, lower priority than (1)-(7).
 
