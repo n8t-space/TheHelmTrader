@@ -108,10 +108,13 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using NinjaTrader.Cbi;
 using NinjaTrader.Data;
 using NinjaTrader.Gui.Chart;
@@ -599,12 +602,19 @@ namespace NinjaTrader.NinjaScript.Indicators
         }
 
         // =================================================================
-        //  TRIGGER — build the JSON, POST it, log the result.
-        //  Errors are caught and printed to NT's Output window so a failed
-        //  bot connection doesn't kill the chart.
+        //  TRIGGER — capture the chart bitmap, build the JSON with the
+        //  screenshot embedded, POST it. Bot uses the embedded image
+        //  directly -- no Snipping overlay needed. Bypasses the Session-0
+        //  URI-handler issue that breaks ms-screenclip: when uvicorn runs
+        //  as a service.
         // =================================================================
         private void TriggerSnapshot()
         {
+            // Capture FIRST -- while the user's chart is still visible.
+            // Returns null on failure; bot will fall back to snip overlay
+            // (legacy path).
+            string screenshotB64 = CaptureChartBase64();
+
             string json;
             try
             {
@@ -612,17 +622,60 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             catch (Exception ex)
             {
-                // Most likely cause of a failure here is "indicator data
-                // not yet loaded" if you trigger immediately after attach.
                 Print($"[Helm] BuildContextJson failed: {ex.Message}");
                 return;
             }
 
-            // Fire-and-forget POST. We don't await it because the user is
-            // about to drag a rectangle on the screen and we don't want
-            // to block the chart's UI thread on network IO.
+            // Surgical insertion: the JSON ends in '}'; replace that with
+            // ',"screenshot_b64":"<b64>"}' so we don't touch BuildContextJson.
+            if (!string.IsNullOrEmpty(screenshotB64))
+            {
+                json = json.Substring(0, json.Length - 1)
+                     + ",\"screenshot_b64\":\"" + screenshotB64 + "\"}";
+            }
+
+            // Fire-and-forget POST. UI thread is free to do whatever.
             Task.Run(() => PostAsync(json));
-            Print("[Helm] Context POSTed → bot will open Snipping overlay shortly.");
+            Print(screenshotB64 != null
+                ? "[Helm] Context POSTed with embedded chart bitmap."
+                : "[Helm] Context POSTed (no screenshot; bot will fall back to snip overlay).");
+        }
+
+        // =================================================================
+        //  CHART CAPTURE — render ChartControl to a PNG, base64-encode.
+        //  Runs synchronously on the dispatcher so we capture exactly what
+        //  the user sees at hotkey time. Returns null on any failure --
+        //  callers should treat that as "no screenshot, fall back to snip".
+        // =================================================================
+        private string CaptureChartBase64()
+        {
+            if (chartControl == null) return null;
+            try
+            {
+                return (string)chartControl.Dispatcher.Invoke(new Func<string>(() =>
+                {
+                    int w = (int)chartControl.ActualWidth;
+                    int h = (int)chartControl.ActualHeight;
+                    if (w <= 0 || h <= 0) return null;
+
+                    var bmp = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
+                    bmp.Render(chartControl);
+
+                    var encoder = new PngBitmapEncoder();
+                    encoder.Frames.Add(BitmapFrame.Create(bmp));
+
+                    using (var ms = new MemoryStream())
+                    {
+                        encoder.Save(ms);
+                        return Convert.ToBase64String(ms.ToArray());
+                    }
+                }));
+            }
+            catch (Exception ex)
+            {
+                Print($"[Helm] Chart capture failed: {ex.GetType().Name}: {ex.Message}");
+                return null;
+            }
         }
 
         private async Task PostAsync(string json)

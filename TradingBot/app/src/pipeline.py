@@ -29,14 +29,27 @@ def run_pipeline(
     signals_log: Path,
     prompt: str,
     market_context: dict[str, Any] | None = None,
+    image_path: Path | None = None,
 ) -> dict:
-    """Capture from clipboard → optionally inject market context → call vision LLM → append to JSONL → reconcile.
+    """Optionally capture from clipboard → inject market context → call vision LLM → append to JSONL → reconcile.
+
+    If ``image_path`` is provided (e.g. NS embedded the chart bitmap in the
+    POST), the pipeline uses it verbatim and skips the Windows Snipping
+    overlay. This is the preferred path -- the Session-0 isolation of the
+    NSSM-hosted uvicorn breaks cross-session URI activation of the snip tool.
+
+    If ``image_path`` is None, falls back to ``capture_via_snip`` which opens
+    the Snipping overlay. Used by the standalone CLI (``main.py``) and as
+    legacy compatibility for older HelmAnalyzer builds.
 
     Returns the enriched signal record (with `timestamp` and `proposal`).
-    Raises RuntimeError if the clipboard does not contain an image.
+    Raises RuntimeError if no image arrives (snip cancelled / timed out).
     """
-    logger.info("Pipeline starting (context=%s)", "yes" if market_context else "no")
-    image_path = capture_via_snip(screenshots_dir)
+    src = "pre-captured" if image_path else "snip"
+    logger.info("Pipeline starting (context=%s, image=%s)",
+                "yes" if market_context else "no", src)
+    if image_path is None:
+        image_path = capture_via_snip(screenshots_dir)
 
     full_prompt = prompt
     if market_context:

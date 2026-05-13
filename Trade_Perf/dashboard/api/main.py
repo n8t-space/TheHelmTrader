@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from . import _tradebot_bridge as bridge, auto_analysis as auto_analysis_routes, db, feed as feed_routes, health as health_routes, home as home_routes, settings as settings_routes, signals as signals_routes, trades as tradelib
+from . import _tradebot_bridge as bridge, atm_strategies as atm_routes, auto_analysis as auto_analysis_routes, db, feed as feed_routes, health as health_routes, home as home_routes, settings as settings_routes, signals as signals_routes, trades as tradelib
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +136,7 @@ app.include_router(health_routes.router)
 app.include_router(feed_routes.router)
 app.include_router(auto_analysis_routes.router)
 app.include_router(settings_routes.router)
+app.include_router(atm_routes.router)
 
 
 @app.get("/api/health")
@@ -213,17 +214,23 @@ def stats(
     return tradelib.compute_stats(trades_rows)
 
 
-def _capture_with_context_async(ctx: dict) -> None:
-    """Background worker for /api/capture-from-nt. Opens the snipping overlay
-    via the same `capture_via_snip` path as /api/signals/capture, runs the
-    pipeline with the NS context injected, and logs success/failure. Errors
-    don't propagate to NS — the request already returned 202.
+def _capture_with_context_async(ctx: dict, image_path: Path | None) -> None:
+    """Background worker for /api/capture-from-nt.
+
+    If `image_path` is provided (NS captured the chart bitmap directly), the
+    pipeline uses it verbatim -- no Snipping overlay. This is the preferred
+    path post-2026-05-12 since it bypasses the Session-0 URI-handler issue
+    that breaks the snipping overlay when uvicorn is hosted as a service.
+
+    If `image_path` is None (legacy NS that doesn't send a screenshot), the
+    pipeline falls back to opening the Windows Snipping overlay via the
+    `ms-screenclip:` URI -- fragile under Session-0 isolation.
     """
     from src.pipeline import run_pipeline  # type: ignore[import-not-found]
     try:
         prompt = bridge.PROMPT_FILE.read_text(encoding="utf-8")
         record = run_pipeline(bridge.SCREENSHOTS_DIR, bridge.SIGNALS_LOG, prompt,
-                              market_context=ctx)
+                              market_context=ctx, image_path=image_path)
         logger.info("NT-triggered analysis complete: %s", record["timestamp"])
     except RuntimeError as e:
         logger.warning("NT-triggered capture aborted: %s", e)
@@ -231,22 +238,54 @@ def _capture_with_context_async(ctx: dict) -> None:
         logger.exception("NT-triggered pipeline failed")
 
 
+def _decode_screenshot(b64: str, screenshots_dir: Path) -> Path:
+    """Decode a base64-encoded PNG from the NS payload and persist it to the
+    screenshots dir under the standard timestamp filename. Returns the path."""
+    import base64
+    from datetime import datetime
+    screenshots_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = screenshots_dir / f"{stamp}.png"
+    path.write_bytes(base64.b64decode(b64))
+    return path
+
+
 @app.post("/api/capture-from-nt", status_code=202)
 def capture_from_nt(payload: dict):
-    """NinjaScript bridge endpoint — called by TradeBotTrigger on Ctrl+Shift+F.
+    """NinjaScript bridge endpoint -- called by HelmAnalyzer on Ctrl+Shift+F.
 
-    Persists the market-context payload for audit, then spawns a background
-    thread that opens the snipping overlay and runs the pipeline with the
-    context injected. Returns 202 immediately so NS isn't held on the HTTP
-    connection (the LLM call itself can take 5-30 s warm, longer cold).
+    Payload shape:
+        instrument:     str (required)
+        timeframes:     dict (optional)
+        daily_levels:   dict (optional)
+        current:        dict (optional)
+        screenshot_b64: str (optional)  -- if present, used directly;
+                       absent path falls back to the Snipping overlay flow.
+
+    Persists the market-context payload (minus screenshot_b64) for audit,
+    decodes the screenshot if provided, then spawns a background pipeline.
+    Returns 202 immediately so NS isn't held on the HTTP connection.
     """
     if not isinstance(payload, dict):
-        logger.warning("NT POST rejected — body did not parse as JSON dict.")
+        logger.warning("NT POST rejected -- body did not parse as JSON dict.")
         raise HTTPException(400, "body did not parse as JSON object")
     if "instrument" not in payload:
-        logger.warning("NT POST rejected — no 'instrument' key. keys=%s",
+        logger.warning("NT POST rejected -- no 'instrument' key. keys=%s",
                        list(payload.keys()))
         raise HTTPException(400, "expected an 'instrument' key")
+
+    # Pull the screenshot out of the payload so market_context.json doesn't
+    # bloat with a 200-400 KB base64 blob on every trigger.
+    screenshot_b64 = payload.pop("screenshot_b64", None)
+    image_path: Path | None = None
+    if screenshot_b64:
+        try:
+            image_path = _decode_screenshot(screenshot_b64, bridge.SCREENSHOTS_DIR)
+            logger.info("NT screenshot decoded: %s (%d bytes)",
+                        image_path.name, image_path.stat().st_size)
+        except Exception:
+            logger.exception("NT screenshot decode failed -- falling back to snip overlay")
+            image_path = None
 
     try:
         bridge.MARKET_CONTEXT_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -255,14 +294,16 @@ def capture_from_nt(payload: dict):
     except OSError as e:
         logger.warning("Could not persist market_context.json: %s", e)
 
-    logger.info("NT trigger received for %s — spawning background pipeline",
-                payload.get("instrument"))
+    src = "embedded screenshot" if image_path else "snip overlay (legacy NS)"
+    logger.info("NT trigger received for %s via %s -- spawning background pipeline",
+                payload.get("instrument"), src)
     threading.Thread(
         target=_capture_with_context_async,
-        args=(payload,),
+        args=(payload, image_path),
         daemon=True,
     ).start()
-    return {"status": "accepted", "instrument": payload.get("instrument")}
+    return {"status": "accepted", "instrument": payload.get("instrument"),
+            "source": "embedded" if image_path else "snip"}
 
 
 @app.get("/api/screenshots/{filename}")
