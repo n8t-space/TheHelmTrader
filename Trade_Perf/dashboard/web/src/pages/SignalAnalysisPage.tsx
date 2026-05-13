@@ -43,6 +43,13 @@ const accessor = (s: Signal, k: SignalKey): unknown => {
 const fmtTs = (ts: string) => ts.replace('T', ' ').slice(0, 19)
 const fmtNum = (n: number | undefined, digits = 2) =>
   n === undefined || n === null ? '' : n.toFixed(digits)
+// Compact R:R display. 1.0 -> "1:1", 2.5 -> "1:2.5", 10.0 -> "1:10".
+// Avoids the wide '10.00' column that 1:10 strategies produced.
+const fmtRR = (n: number | undefined): string => {
+  if (n === undefined || n === null) return ''
+  if (!isFinite(n) || n <= 0) return '—'
+  return n >= 10 ? `1:${Math.round(n)}` : `1:${n.toFixed(1)}`
+}
 
 export function SignalAnalysisPage() {
   const [sort, setSort] = useState<Sort<SignalKey>>({ key: 'timestamp', dir: 'desc' })
@@ -254,7 +261,7 @@ export function SignalAnalysisPage() {
                         ? <span className="atm-custom">custom ({s.proposal?.atm_stop_ticks}t/{s.proposal?.atm_target_ticks}t)</span>
                         : s.proposal?.atm_strategy || <span className="subtle">—</span>}
                     </td>
-                    <td className="num">{fmtNum(s.proposal?.risk_reward, 2)}</td>
+                    <td className="num">{fmtRR(s.proposal?.risk_reward)}</td>
                     <td className="num">
                       {s.proposal?.confidence !== undefined
                         ? `${(s.proposal.confidence * 100).toFixed(0)}%`

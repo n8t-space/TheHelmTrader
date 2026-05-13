@@ -50,31 +50,29 @@ Reply with ONLY this JSON:
 
 
 def analyze(image_path: Path, prompt: str) -> dict:
-    """Returns {proposal, raw_response, duration_s}. Raises on HTTP or parse error."""
+    """Returns {proposal, raw_response, duration_s}. Raises on HTTP or parse error.
+    Dispatches to the configured provider (ollama / claude / openai)."""
     image_b64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
-    url, model_name, timeout = runtime_config.ollama_url(), runtime_config.model(), runtime_config.request_timeout_s()
 
     # Inject the ATM strategy menu the LLM must pick from. Prepended to the
     # prompt so it's visible BEFORE the schema instructions at the bottom.
     atm_strategies = _load_atm_strategies()
     full_prompt = _format_atm_block(atm_strategies) + "\n\n---\n\n" + prompt
 
-    logger.info("POST %s (model=%s, image=%s, atm_strategies=%d)",
-                url, model_name, image_path.name, len(atm_strategies))
-    resp = requests.post(url, timeout=timeout, json={
-        "model": model_name,
-        "prompt": full_prompt,
-        "images": [image_b64],
-        "format": "json",
-        "stream": False,
-    })
-    resp.raise_for_status()
-    body = resp.json()
-    duration_s = body.get("total_duration", 0) / 1e9
-    logger.info("Model responded in %.1fs", duration_s)
+    provider = runtime_config.provider()
+    logger.info("Analyze via %s (image=%s, atm_strategies=%d)",
+                provider, image_path.name, len(atm_strategies))
 
-    raw = body["response"]
+    if provider == "claude":
+        raw, duration_s, model_used = _call_claude(image_b64, full_prompt)
+    elif provider == "openai":
+        raw, duration_s, model_used = _call_openai(image_b64, full_prompt)
+    else:  # ollama
+        raw, duration_s, model_used = _call_ollama(image_b64, full_prompt)
+
     proposal = _parse_json(raw)
+    proposal["model"] = model_used
+    proposal["provider"] = provider
 
     # Derive stop/target from the picked ATM strategy. Must happen BEFORE
     # tick rounding so the snap respects the chosen brackets.
@@ -83,6 +81,111 @@ def analyze(image_path: Path, prompt: str) -> dict:
     instruments.apply_tick_rounding(proposal, instruments.load_config())
     proposal["risk_reward"] = _compute_rr(proposal)
     return {"proposal": proposal, "raw_response": raw, "duration_s": duration_s}
+
+
+# ------------------------------------------------------------------ providers
+
+def _call_ollama(image_b64: str, prompt: str) -> tuple[str, float, str]:
+    """Local Ollama HTTP API. Returns (raw_response_text, duration_s, model)."""
+    url = runtime_config.ollama_url()
+    model_name = runtime_config.model()
+    timeout = runtime_config.request_timeout_s()
+    num_ctx = runtime_config.num_ctx()
+    logger.info("POST %s (model=%s, num_ctx=%d)", url, model_name, num_ctx)
+    resp = requests.post(url, timeout=timeout, json={
+        "model": model_name,
+        "prompt": prompt,
+        "images": [image_b64],
+        "format": "json",
+        "stream": False,
+        "options": {"num_ctx": num_ctx},
+    })
+    resp.raise_for_status()
+    body = resp.json()
+    duration_s = body.get("total_duration", 0) / 1e9
+    return body["response"], duration_s, model_name
+
+
+def _call_claude(image_b64: str, prompt: str) -> tuple[str, float, str]:
+    """Anthropic Messages API. Vision via content blocks of type=image."""
+    api_key = runtime_config.claude_api_key()
+    if not api_key:
+        raise RuntimeError("Provider=claude but no claude_api_key in settings")
+    model_name  = runtime_config.claude_model()
+    max_tokens  = runtime_config.claude_max_tokens()
+    timeout     = runtime_config.request_timeout_s()
+    logger.info("POST api.anthropic.com (model=%s, max_tokens=%d)", model_name, max_tokens)
+    import time as _t
+    t0 = _t.monotonic()
+    resp = requests.post(
+        "https://api.anthropic.com/v1/messages",
+        timeout=timeout,
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        json={
+            "model": model_name,
+            "max_tokens": max_tokens,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": image_b64,
+                    }},
+                    {"type": "text", "text": prompt},
+                ],
+            }],
+        },
+    )
+    resp.raise_for_status()
+    body = resp.json()
+    # content is an array of blocks; concatenate text blocks.
+    parts = [b.get("text", "") for b in body.get("content", []) if b.get("type") == "text"]
+    raw = "".join(parts)
+    return raw, _t.monotonic() - t0, model_name
+
+
+def _call_openai(image_b64: str, prompt: str) -> tuple[str, float, str]:
+    """OpenAI Chat Completions with image_url content blocks (vision)."""
+    api_key = runtime_config.openai_api_key()
+    if not api_key:
+        raise RuntimeError("Provider=openai but no openai_api_key in settings")
+    model_name = runtime_config.openai_model()
+    max_tokens = runtime_config.openai_max_tokens()
+    timeout    = runtime_config.request_timeout_s()
+    logger.info("POST api.openai.com (model=%s, max_tokens=%d)", model_name, max_tokens)
+    import time as _t
+    t0 = _t.monotonic()
+    resp = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        timeout=timeout,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model_name,
+            "max_tokens": max_tokens,
+            "response_format": {"type": "json_object"},
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {
+                        "url": f"data:image/png;base64,{image_b64}",
+                    }},
+                ],
+            }],
+        },
+    )
+    resp.raise_for_status()
+    body = resp.json()
+    raw = body["choices"][0]["message"]["content"]
+    return raw, _t.monotonic() - t0, model_name
 
 
 def analyze_with_floor(
@@ -128,10 +231,10 @@ def analyze_with_floor(
 
 
 def reconcile(image_path: Path, prior_proposal: dict) -> dict:
-    """Ask the model whether a prior trade has resolved, given a NEW chart of the same instrument.
+    """Ask the model whether a prior trade has resolved, given a NEW chart of
+    the same instrument. Returns {result, confidence, reasoning}.
 
-    Returns {result, confidence, reasoning}. Raises on HTTP or parse error.
-    """
+    Dispatches to the configured provider (ollama / claude / openai)."""
     image_b64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
     prompt = RECONCILE_PROMPT.format(
         instrument=prior_proposal.get("instrument", ""),
@@ -140,20 +243,16 @@ def reconcile(image_path: Path, prior_proposal: dict) -> dict:
         stop=prior_proposal.get("stop", ""),
         target=prior_proposal.get("target", ""),
     )
-    url, model_name, timeout = runtime_config.ollama_url(), runtime_config.model(), runtime_config.request_timeout_s()
-    logger.info("Reconciliation POST (model=%s, image=%s)", model_name, image_path.name)
-    resp = requests.post(url, timeout=timeout, json={
-        "model": model_name,
-        "prompt": prompt,
-        "images": [image_b64],
-        "format": "json",
-        "stream": False,
-    })
-    resp.raise_for_status()
-    body = resp.json()
-    duration_s = body.get("total_duration", 0) / 1e9
-    logger.info("Reconcile responded in %.1fs", duration_s)
-    return _parse_json(body["response"])
+    provider = runtime_config.provider()
+    logger.info("Reconcile via %s (image=%s)", provider, image_path.name)
+    if provider == "claude":
+        raw, dt, _ = _call_claude(image_b64, prompt)
+    elif provider == "openai":
+        raw, dt, _ = _call_openai(image_b64, prompt)
+    else:
+        raw, dt, _ = _call_ollama(image_b64, prompt)
+    logger.info("Reconcile responded in %.1fs", dt)
+    return _parse_json(raw)
 
 
 def _parse_json(raw: str) -> dict:

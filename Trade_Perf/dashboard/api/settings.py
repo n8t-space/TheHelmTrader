@@ -45,11 +45,26 @@ class Appearance(BaseModel):
 
 
 class AiBackend(BaseModel):
-    ollama_url: str = Field(default="http://<workstation-LAN-IP>:11434/api/generate")
-    model: str = Field(default="qwen2.5vl:7b")
-    fallback_model: str = Field(default="minicpm-v:latest")
+    # Provider selector. Picks which vendor's vision API the analyzer hits.
+    provider: str = Field(default="ollama", pattern="^(ollama|claude|openai)$")
+    # Shared
     request_timeout_s: int = Field(default=300, ge=10, le=1800)
-    num_ctx: int = Field(default=8192, ge=2048, le=131072)
+
+    # Ollama (local / LAN)
+    ollama_url:     str = Field(default="http://<workstation-LAN-IP>:11434/api/generate")
+    model:          str = Field(default="qwen2.5vl:7b")     # the Ollama model
+    fallback_model: str = Field(default="minicpm-v:latest")
+    num_ctx:        int = Field(default=8192, ge=2048, le=131072)
+
+    # Anthropic Claude (cloud). Vision via the Messages API.
+    claude_api_key:    str = Field(default="")
+    claude_model:      str = Field(default="claude-sonnet-4-6")
+    claude_max_tokens: int = Field(default=2048, ge=256, le=16384)
+
+    # OpenAI ChatGPT / GPT-4o (cloud). Vision via Chat Completions.
+    openai_api_key:    str = Field(default="")
+    openai_model:      str = Field(default="gpt-4o")
+    openai_max_tokens: int = Field(default=2048, ge=256, le=16384)
 
 
 class Strategy(BaseModel):
@@ -166,34 +181,79 @@ def reset_settings() -> dict[str, Any]:
 
 
 @router.post("/test/ollama")
-def test_ollama() -> dict[str, Any]:
-    """Ping the configured Ollama URL with a tiny request. Returns latency +
-    available models, or an error string. UI surfaces this in a green/red badge."""
+def test_provider() -> dict[str, Any]:
+    """Probe the currently-selected AI provider with a cheap, no-credit call.
+    UI surfaces this in a green/red badge.
+
+    Route name is historical ('/test/ollama'); kept so the frontend doesn't
+    have to learn a new path. Dispatches based on settings.ai_backend.provider.
+    """
     import requests
-    s = get_settings()
-    url = s.ai_backend.ollama_url
-    # Convert /api/generate -> /api/tags for a cheap GET
-    if url.endswith("/api/generate"):
-        probe = url[: -len("/api/generate")] + "/api/tags"
-    else:
-        probe = url
+    s = get_settings().ai_backend
+    provider = s.provider
     t0 = time.monotonic()
-    try:
-        r = requests.get(probe, timeout=5)
-        r.raise_for_status()
-    except Exception as e:
-        return {"ok": False, "error": str(e), "probed": probe}
-    dt = time.monotonic() - t0
-    try:
-        tags = [m["name"] for m in r.json().get("models", [])]
-    except Exception:
-        tags = []
-    configured = s.ai_backend.model
-    return {
-        "ok": True,
-        "probed": probe,
-        "latency_s": round(dt, 3),
-        "models": tags,
-        "configured_model_present": configured in tags,
-        "configured_model": configured,
-    }
+
+    if provider == "ollama":
+        url = s.ollama_url
+        probe = (url[: -len("/api/generate")] + "/api/tags") if url.endswith("/api/generate") else url
+        try:
+            r = requests.get(probe, timeout=5)
+            r.raise_for_status()
+        except Exception as e:
+            return {"ok": False, "provider": provider, "error": str(e), "probed": probe}
+        try:
+            tags = [m["name"] for m in r.json().get("models", [])]
+        except Exception:
+            tags = []
+        return {
+            "ok": True, "provider": provider, "probed": probe,
+            "latency_s": round(time.monotonic() - t0, 3),
+            "models": tags,
+            "configured_model_present": s.model in tags,
+            "configured_model": s.model,
+        }
+
+    if provider == "claude":
+        if not s.claude_api_key:
+            return {"ok": False, "provider": provider, "error": "No Claude API key configured."}
+        try:
+            # Cheapest probe: list available models (Messages-API metadata endpoint).
+            r = requests.get(
+                "https://api.anthropic.com/v1/models",
+                headers={"x-api-key": s.claude_api_key, "anthropic-version": "2023-06-01"},
+                timeout=10,
+            )
+            r.raise_for_status()
+        except Exception as e:
+            return {"ok": False, "provider": provider, "error": str(e)}
+        tags = [m["id"] for m in r.json().get("data", [])]
+        return {
+            "ok": True, "provider": provider, "probed": "api.anthropic.com/v1/models",
+            "latency_s": round(time.monotonic() - t0, 3),
+            "models": tags,
+            "configured_model_present": s.claude_model in tags,
+            "configured_model": s.claude_model,
+        }
+
+    if provider == "openai":
+        if not s.openai_api_key:
+            return {"ok": False, "provider": provider, "error": "No OpenAI API key configured."}
+        try:
+            r = requests.get(
+                "https://api.openai.com/v1/models",
+                headers={"Authorization": f"Bearer {s.openai_api_key}"},
+                timeout=10,
+            )
+            r.raise_for_status()
+        except Exception as e:
+            return {"ok": False, "provider": provider, "error": str(e)}
+        tags = [m["id"] for m in r.json().get("data", [])]
+        return {
+            "ok": True, "provider": provider, "probed": "api.openai.com/v1/models",
+            "latency_s": round(time.monotonic() - t0, 3),
+            "models": tags,
+            "configured_model_present": s.openai_model in tags,
+            "configured_model": s.openai_model,
+        }
+
+    return {"ok": False, "error": f"unknown provider: {provider}"}

@@ -289,61 +289,153 @@ function AiTab({ value, onChange }: {
       setTesting(false)
     }
   }
+  const provider = value.provider
   return (
     <>
       <h3 style={{ marginTop: 0 }}>AI Backend</h3>
       <p className="subtle">The vision LLM endpoint that turns chart screenshots into proposals.</p>
       <div className="settings-row">
-        <label className="span-2">
-          <span>Ollama URL</span>
-          <input
-            type="text"
-            value={value.ollama_url}
-            onChange={(e) => onChange({ ...value, ollama_url: e.target.value })}
-            placeholder="http://<workstation-LAN-IP>:11434/api/generate"
-          />
-        </label>
         <label>
-          <span>Model</span>
-          <input
-            type="text"
-            value={value.model}
-            onChange={(e) => onChange({ ...value, model: e.target.value })}
-          />
-        </label>
-        <label>
-          <span>Fallback model</span>
-          <input
-            type="text"
-            value={value.fallback_model}
-            onChange={(e) => onChange({ ...value, fallback_model: e.target.value })}
-          />
+          <span>Provider</span>
+          <select
+            value={provider}
+            onChange={(e) => onChange({ ...value, provider: e.target.value as SettingsAiBackend['provider'] })}
+          >
+            <option value="ollama">Ollama (local / LAN)</option>
+            <option value="claude">Anthropic Claude (cloud)</option>
+            <option value="openai">OpenAI ChatGPT (cloud)</option>
+          </select>
         </label>
         <label>
           <span>Request timeout (s)</span>
           <input
-            type="number"
-            min={10}
-            max={1800}
+            type="number" min={10} max={1800}
             value={value.request_timeout_s}
             onChange={(e) => onChange({ ...value, request_timeout_s: Number(e.target.value) })}
           />
         </label>
-        <label>
-          <span>num_ctx (tokens)</span>
-          <input
-            type="number"
-            min={2048}
-            max={131072}
-            step={1024}
-            value={value.num_ctx}
-            onChange={(e) => onChange({ ...value, num_ctx: Number(e.target.value) })}
-          />
-        </label>
       </div>
+
+      {provider === 'ollama' && (
+        <>
+          <h4>Ollama config</h4>
+          <div className="settings-row">
+            <label className="span-2">
+              <span>Ollama URL</span>
+              <input
+                type="text"
+                value={value.ollama_url}
+                onChange={(e) => onChange({ ...value, ollama_url: e.target.value })}
+                placeholder="http://<workstation-LAN-IP>:11434/api/generate"
+              />
+            </label>
+            <label>
+              <span>Model</span>
+              <input
+                type="text"
+                value={value.model}
+                onChange={(e) => onChange({ ...value, model: e.target.value })}
+              />
+            </label>
+            <label>
+              <span>Fallback model</span>
+              <input
+                type="text"
+                value={value.fallback_model}
+                onChange={(e) => onChange({ ...value, fallback_model: e.target.value })}
+              />
+            </label>
+            <label>
+              <span>num_ctx (tokens)</span>
+              <input
+                type="number" min={2048} max={131072} step={1024}
+                value={value.num_ctx}
+                onChange={(e) => onChange({ ...value, num_ctx: Number(e.target.value) })}
+              />
+            </label>
+          </div>
+        </>
+      )}
+
+      {provider === 'claude' && (
+        <>
+          <h4>Anthropic Claude config</h4>
+          <p className="subtle">
+            API key from <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">console.anthropic.com</a>.
+            Cloud call — chart screenshots leave this machine.
+          </p>
+          <div className="settings-row">
+            <label className="span-2">
+              <span>API key</span>
+              <input
+                type="password"
+                value={value.claude_api_key}
+                onChange={(e) => onChange({ ...value, claude_api_key: e.target.value })}
+                placeholder="sk-ant-..."
+              />
+            </label>
+            <label>
+              <span>Model</span>
+              <input
+                type="text"
+                value={value.claude_model}
+                onChange={(e) => onChange({ ...value, claude_model: e.target.value })}
+                placeholder="claude-sonnet-4-6"
+              />
+            </label>
+            <label>
+              <span>Max tokens</span>
+              <input
+                type="number" min={256} max={16384} step={128}
+                value={value.claude_max_tokens}
+                onChange={(e) => onChange({ ...value, claude_max_tokens: Number(e.target.value) })}
+              />
+            </label>
+          </div>
+        </>
+      )}
+
+      {provider === 'openai' && (
+        <>
+          <h4>OpenAI / ChatGPT config</h4>
+          <p className="subtle">
+            API key from <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">platform.openai.com</a>.
+            Cloud call — chart screenshots leave this machine.
+          </p>
+          <div className="settings-row">
+            <label className="span-2">
+              <span>API key</span>
+              <input
+                type="password"
+                value={value.openai_api_key}
+                onChange={(e) => onChange({ ...value, openai_api_key: e.target.value })}
+                placeholder="sk-proj-..."
+              />
+            </label>
+            <label>
+              <span>Model</span>
+              <input
+                type="text"
+                value={value.openai_model}
+                onChange={(e) => onChange({ ...value, openai_model: e.target.value })}
+                placeholder="gpt-4o"
+              />
+            </label>
+            <label>
+              <span>Max tokens</span>
+              <input
+                type="number" min={256} max={16384} step={128}
+                value={value.openai_max_tokens}
+                onChange={(e) => onChange({ ...value, openai_max_tokens: Number(e.target.value) })}
+              />
+            </label>
+          </div>
+        </>
+      )}
+
       <div className="settings-test">
         <button onClick={runTest} disabled={testing}>
-          {testing ? 'Testing…' : 'Test connection'}
+          {testing ? 'Testing…' : `Test ${provider} connection`}
         </button>
         {test && (
           <span className={test.ok ? 'pnl-pos' : 'pnl-neg'}>

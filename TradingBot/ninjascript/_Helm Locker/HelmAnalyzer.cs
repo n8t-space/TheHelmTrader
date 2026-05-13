@@ -971,13 +971,16 @@ namespace NinjaTrader.NinjaScript.Indicators
                 double pp = (yh + yl + yc) / 3.0;
                 double range = yh - yl;
 
-                WriteKv(sb, "pivot_p",  pp,                       leading: false);
-                WriteKv(sb, "pivot_r1", 2 * pp - yl);
-                WriteKv(sb, "pivot_s1", 2 * pp - yh);
-                WriteKv(sb, "pivot_r2", pp + range);
-                WriteKv(sb, "pivot_s2", pp - range);
-                WriteKv(sb, "pivot_r3", yh + 2 * (pp - yl));
-                WriteKv(sb, "pivot_s3", yl - 2 * (yh - pp));
+                // Pivots are computed from y H/L/C and end up with float noise
+                // out to many decimals -- the prompt cites them as "named levels"
+                // so the LLM doesn't need more than 2 decimals of precision.
+                WriteKv(sb, "pivot_p",  Math.Round(pp,                  2), leading: false);
+                WriteKv(sb, "pivot_r1", Math.Round(2 * pp - yl,         2));
+                WriteKv(sb, "pivot_s1", Math.Round(2 * pp - yh,         2));
+                WriteKv(sb, "pivot_r2", Math.Round(pp + range,          2));
+                WriteKv(sb, "pivot_s2", Math.Round(pp - range,          2));
+                WriteKv(sb, "pivot_r3", Math.Round(yh + 2 * (pp - yl),  2));
+                WriteKv(sb, "pivot_s3", Math.Round(yl - 2 * (yh - pp),  2));
             }
             catch (Exception ex)
             {

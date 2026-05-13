@@ -350,11 +350,21 @@ export interface SettingsAppearance {
 }
 
 export interface SettingsAiBackend {
+  provider: 'ollama' | 'claude' | 'openai'
+  request_timeout_s: number
+  // Ollama
   ollama_url: string
   model: string
   fallback_model: string
-  request_timeout_s: number
   num_ctx: number
+  // Claude
+  claude_api_key: string
+  claude_model: string
+  claude_max_tokens: number
+  // OpenAI
+  openai_api_key: string
+  openai_model: string
+  openai_max_tokens: number
 }
 
 export interface SettingsStrategy {
