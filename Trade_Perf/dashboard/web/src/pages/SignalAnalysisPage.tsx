@@ -315,7 +315,13 @@ export function SignalAnalysisPage() {
                         : ''}
                     </td>
                     <td>{s.journal?.verdict || <span className="subtle">—</span>}</td>
-                    <td>{s.outcome?.result || <span className="subtle">—</span>}</td>
+                    <td title={s.outcome?.note ?? undefined}>
+                      {s.outcome?.result
+                        ? (s.outcome.auto_confirmed
+                            ? <><span>{s.outcome.result}</span> <span className="subtle">(auto)</span></>
+                            : s.outcome.result)
+                        : <span className="subtle">—</span>}
+                    </td>
                     <td title={isAutoResolved(s) ? 'Outcome auto-resolved by feed.db walker' : 'Manually set or unresolved'}>
                       {isAutoResolved(s) ? '✓' : <span className="subtle">—</span>}
                     </td>

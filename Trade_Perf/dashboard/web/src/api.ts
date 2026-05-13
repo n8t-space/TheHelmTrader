@@ -236,6 +236,10 @@ export interface Outcome {
   result: 'pending' | 'target' | 'stop' | 'breakeven' | 'partial' | 'no_fill' | 'not_watched' | 'other'
   note: string | null
   closing_price: number | null
+  // Set to true when outcome_watcher auto-applied the resolved outcome for
+  // a headless signal (no user-in-the-loop on creation, so no Confirm step).
+  // Manual signals never get this; they require the dashboard Confirm click.
+  auto_confirmed?: boolean
 }
 
 export interface OutcomeSuggestion {
