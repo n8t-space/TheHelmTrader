@@ -57,6 +57,48 @@ def provider() -> str:
     return s.ai_backend.provider if s else _D.provider
 
 
+def is_provider_configured() -> tuple[bool, str]:
+    """Is the selected AI provider configured enough to call?
+
+    Returns (ok, reason). ok=False means the analyzer should NOT make a call
+    -- show a useful message instead. ok=True means we have what we need to
+    attempt the request (the actual call may still fail with a transport
+    error, but that's a separate concern from configuration).
+
+    - ollama: URL must be non-empty (default LAN URL counts as configured).
+    - claude/openai: API key must be non-empty.
+    """
+    s = _live()
+    if s is None:
+        # Standalone CLI without dashboard settings -- assume defaults
+        # (Ollama URL is set in Defaults). User can override via env if needed.
+        return True, ""
+
+    backend = s.ai_backend
+    p = backend.provider
+    if p == "ollama":
+        url = (backend.ollama_url or "").strip()
+        if not url:
+            return False, ("AI provider 'ollama' selected but no URL configured. "
+                           "Set the Ollama URL in Settings -> AI Backend.")
+        return True, ""
+    if p == "claude":
+        key = (backend.claude_api_key or "").strip()
+        if not key:
+            return False, ("AI provider 'claude' selected but no API key set. "
+                           "Add a Claude API key in Settings -> AI Backend, or "
+                           "switch the provider.")
+        return True, ""
+    if p == "openai":
+        key = (backend.openai_api_key or "").strip()
+        if not key:
+            return False, ("AI provider 'openai' selected but no API key set. "
+                           "Add an OpenAI API key in Settings -> AI Backend, or "
+                           "switch the provider.")
+        return True, ""
+    return False, f"Unknown AI provider: {p!r}"
+
+
 def ollama_url() -> str:
     s = _live()
     return s.ai_backend.ollama_url if s else _D.ollama_url

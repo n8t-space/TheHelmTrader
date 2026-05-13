@@ -20,7 +20,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import instruments, proposal_sanity, signal_storage
+from . import instruments, proposal_sanity, runtime_config, signal_storage
 
 logger = logging.getLogger(__name__)
 
@@ -89,8 +89,18 @@ def analyze(instrument: str, period: str, bar_ts: int,
         Uses the headless_analyzer.txt prompt with the bar table.
 
     Returns the persisted signal record, or None if context was insufficient
-    (e.g., fewer than 20 bars in feed.db — too thin to analyze).
+    (e.g., fewer than 20 bars in feed.db — too thin to analyze) or if no AI
+    provider is configured.
     """
+    # No provider configured -> skip silently with a single log line. Avoids
+    # a flood of HTTP errors against api.anthropic.com / api.openai.com /
+    # localhost-without-Ollama, and avoids burning resources building the
+    # prompt + reading the screenshot for a call that can't happen.
+    ok, why = runtime_config.is_provider_configured()
+    if not ok:
+        logger.info("[headless] %s @ %s: %s -- skipping", instrument, period, why)
+        return None
+
     bars = _recent_bars(instrument, period, bar_ts, bar_count)
     if len(bars) < 20:
         logger.warning(

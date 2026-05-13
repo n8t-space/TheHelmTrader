@@ -274,6 +274,15 @@ def capture_from_nt(payload: dict):
                        list(payload.keys()))
         raise HTTPException(400, "expected an 'instrument' key")
 
+    # Refuse the trigger up-front if no AI provider is configured. NS sees
+    # a 503 + reason; user gets a clear "configure a provider in Settings"
+    # message instead of a silent failure or a half-completed pipeline.
+    from src import runtime_config  # type: ignore[import-not-found]  # via bridge
+    ok, why = runtime_config.is_provider_configured()
+    if not ok:
+        logger.warning("NT trigger rejected -- AI provider not configured: %s", why)
+        raise HTTPException(503, why)
+
     # Pull the screenshot out of the payload so market_context.json doesn't
     # bloat with a 200-400 KB base64 blob on every trigger.
     screenshot_b64 = payload.pop("screenshot_b64", None)
