@@ -642,10 +642,18 @@ namespace NinjaTrader.NinjaScript.Indicators
         }
 
         // =================================================================
-        //  CHART CAPTURE — render ChartControl to a PNG, base64-encode.
-        //  Runs synchronously on the dispatcher so we capture exactly what
-        //  the user sees at hotkey time. Returns null on any failure --
-        //  callers should treat that as "no screenshot, fall back to snip".
+        //  CHART CAPTURE — grab from the screen via System.Drawing.
+        //  ----------------------------------------------------------------
+        //  We previously tried WPF's RenderTargetBitmap.Render(chartControl)
+        //  but it produces a 4-KB mostly-blank PNG -- NT8's chart paints
+        //  via DirectX (an HWND child of the WPF tree), so WPF's render
+        //  pipeline can't see the D3D surface beneath it.
+        //
+        //  Graphics.CopyFromScreen reads the actual desktop framebuffer
+        //  at the chart's on-screen coordinates, which DOES include the
+        //  D3D content. Requires the chart to be on-screen at the moment
+        //  of capture -- enforced by the IsVisible check in the hotkey
+        //  handler that calls us.
         // =================================================================
         private string CaptureChartBase64()
         {
@@ -658,16 +666,22 @@ namespace NinjaTrader.NinjaScript.Indicators
                     int h = (int)chartControl.ActualHeight;
                     if (w <= 0 || h <= 0) return null;
 
-                    var bmp = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
-                    bmp.Render(chartControl);
+                    // WPF point (chart-local 0,0) -> screen coords. Honors
+                    // DPI scaling, multi-monitor offsets, and window position.
+                    var origin = chartControl.PointToScreen(new System.Windows.Point(0, 0));
+                    int sx = (int)origin.X;
+                    int sy = (int)origin.Y;
 
-                    var encoder = new PngBitmapEncoder();
-                    encoder.Frames.Add(BitmapFrame.Create(bmp));
-
-                    using (var ms = new MemoryStream())
+                    using (var bmp = new System.Drawing.Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+                    using (var g = System.Drawing.Graphics.FromImage(bmp))
                     {
-                        encoder.Save(ms);
-                        return Convert.ToBase64String(ms.ToArray());
+                        g.CopyFromScreen(sx, sy, 0, 0, new System.Drawing.Size(w, h),
+                                         System.Drawing.CopyPixelOperation.SourceCopy);
+                        using (var ms = new MemoryStream())
+                        {
+                            bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+                            return Convert.ToBase64String(ms.ToArray());
+                        }
                     }
                 }));
             }
