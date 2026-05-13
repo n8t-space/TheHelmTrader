@@ -56,6 +56,7 @@ MERGEABLE_FIELDS = (
     "outcome_suggestion",
     "outcome_suggestion_dismissed",
     "entry_triggered",
+    "entry_hit_ts",
 )
 
 

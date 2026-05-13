@@ -40,7 +40,7 @@ async def watcher_loop(signals_path: Path) -> None:
     try/except so a bad signal record can't crash the watcher."""
     # Local imports keep main.py's lifespan startup tolerant of partial
     # codebases (e.g., during a refactor where outcome_resolver is missing).
-    from . import outcome_resolver, signal_storage
+    from . import entry_resolver, outcome_resolver, signal_storage
     from . import instruments as _instruments
 
     logger.info("[outcome-watcher] starting (interval=%ds)", CHECK_INTERVAL_S)
@@ -49,7 +49,7 @@ async def watcher_loop(signals_path: Path) -> None:
             await asyncio.sleep(CHECK_INTERVAL_S)
             await asyncio.to_thread(
                 _one_pass, signals_path,
-                signal_storage, outcome_resolver, _instruments,
+                signal_storage, entry_resolver, outcome_resolver, _instruments,
             )
         except asyncio.CancelledError:
             logger.info("[outcome-watcher] shutdown")
@@ -58,7 +58,8 @@ async def watcher_loop(signals_path: Path) -> None:
             logger.exception("[outcome-watcher] iteration failed")
 
 
-def _one_pass(signals_path, signal_storage, outcome_resolver, instruments_mod) -> None:
+def _one_pass(signals_path, signal_storage, entry_resolver, outcome_resolver,
+              instruments_mod) -> None:
     sigs = signal_storage.load_all(signals_path)
 
     # Identify candidates: not deleted, no final outcome, no prior suggestion
@@ -103,6 +104,53 @@ def _one_pass(signals_path, signal_storage, outcome_resolver, instruments_mod) -
         inst_full = str(p.get("instrument") or "")
         inst_clean = instruments_mod.normalize_symbol(inst_full)
 
+        # --- Step 1: was the entry actually touched? --------------------
+        # Skip if we've already resolved this (entry_triggered is bool).
+        # Otherwise call the entry resolver. Three outcomes:
+        #   hit       -> mark entry_triggered=True + hit_ts
+        #   no_entry  -> mark entry_triggered=False (and STOP -- no point
+        #                checking stop/target on a trade that never opened)
+        #   pending   -> leave alone, try next pass
+        if rec.get("entry_triggered") is None:
+            try:
+                er = entry_resolver.resolve_entry(
+                    instrument=inst_clean,
+                    entry_ts=entry_ts,
+                    entry=float(p["entry"]),
+                )
+            except Exception:
+                logger.exception("[outcome-watcher] resolve_entry failed for %s", ts)
+                er = None
+
+            if er is not None:
+                if er["state"] == "hit":
+                    signal_storage.append_update(
+                        signals_path, ts,
+                        entry_triggered=True,
+                        entry_hit_ts=er["hit_ts"],
+                    )
+                    rec["entry_triggered"] = True
+                    logger.info(
+                        "[outcome-watcher] entry HIT for %s (method=%s, ts_ms=%s)",
+                        ts, er["method"], er["hit_ts"],
+                    )
+                elif er["state"] == "no_entry":
+                    signal_storage.append_update(
+                        signals_path, ts, entry_triggered=False)
+                    logger.info(
+                        "[outcome-watcher] NO ENTRY for %s (4h window expired)", ts)
+                    # Trade never opened -- don't even try stop/target.
+                    continue
+                # state=="pending" -> fall through; entry may still get hit,
+                # but it also could resolve stop/target on the same pass if
+                # bars happen to span the entry already.
+
+        # If user (or this watcher) previously flagged entry_triggered=False,
+        # skip the stop/target resolution entirely.
+        if rec.get("entry_triggered") is False:
+            continue
+
+        # --- Step 2: did stop or target get hit? ------------------------
         try:
             result = outcome_resolver.resolve_outcome(
                 instrument=inst_clean,

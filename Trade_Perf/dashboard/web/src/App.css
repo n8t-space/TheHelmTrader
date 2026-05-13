@@ -1086,13 +1086,10 @@ th.select-col, td.select-col { padding: 6px; }
   color:      rgba(120, 220, 130, 0.95);
 }
 
-/* ---------- Entry-triggered checkbox in Signal Analysis table ---------- */
-
-.entry-cell {
-  white-space: nowrap;
-}
-.entry-triggered-check {
-  margin-right: 6px;
-  vertical-align: middle;
-  cursor: pointer;
-}
+/* ---------- "Entered" column in Signal Analysis table ----------
+   Auto-resolved by the bot's entry_resolver:
+     hit       -> price touched the entry level after the signal
+     no_entry  -> 4h window elapsed without a touch
+     pending   -> within the window, may still resolve either way */
+.entered-hit { color: var(--pos); }
+.entered-no  { color: var(--muted); font-style: italic; }
