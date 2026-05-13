@@ -160,7 +160,7 @@ In order, after each phase:
 
 **Outstanding (next session pickup, priority order):**
 
-1. **Confirm snip overlay is unblocked.** End-of-day 2026-05-11 hit the same Session-0 URI-handler issue as the morning. Bot side fine (Capture log shows `Opening Snipping overlay` -> 30s timeout, three attempts). Fix: from a **user-session** PS run `Start-Process 'ms-screenclip:'` (Esc to dismiss), then **elevated** `nssm restart HelmDashboardWatchdog`. If the user-session probe doesn't dim the screen, re-register Microsoft.ScreenSketch via `Get-AppxPackage Microsoft.ScreenSketch | ... Add-AppxPackage -DisableDevelopmentMode -Register`. Captured as recurring memory `feedback_snip_uri_session0.md` -- don't go hunting in `screenshot_capturer.py`.
+1. **Hotkey -> `/api/capture-from-nt` POST never arrives.** Snipping Tool itself is fine (user confirmed; `Win+Shift+S` works). Bot side healthy: 2026-05-12 21:00 log shows headless analyzer producing proposals + outcome-watcher running. NS log shows `[Helm] Hotkey caught` + `Context POSTed` but tradebot.log has **zero `NT trigger received` lines**. So the POST is failing somewhere between NS HttpClient and `:8000`. Investigate: `HelmAnalyzer.cs` target URL (`BackendUrl` property), whether the NS HttpClient hits an actual error after logging `Context POSTed`, and whether the URL host/port still match. HelmFeed POSTs were also failing in the same NS log window -- correlated failure, not a snip-side issue. The Session-0 URI-handler workaround from this morning is NOT the right fix this time -- the issue is upstream of the bot.
 
 2. **Restore operational data from backup.** ~~Once the service is up~~ -- service is up; only step left is data restore. Backup at `Projects\helm-backup-20260511_213210\`:
    - `helm-backup\signals.jsonl`    -> `TheHelmTrader\TradingBot\app\data\signals.jsonl`
@@ -176,7 +176,13 @@ In order, after each phase:
    - ✅ **install.ps1** at the monorepo root drives a clean install end-to-end (prereqs via winget, pip, npm build, NS indicator copy, recorder shortcut, NSSM service).
    - ⏳ **Packaging for non-developer users** still open: MSI, code signing, an actual one-click experience. Today's install.ps1 is the bridge.
 
-5. **NS account-state indicator.** The Open Positions card on Home was removed 2026-05-10. The data path (balance / equity / open positions pushed to bot) is still on the roadmap, lower priority than (1)-(4).
+5. **Refresh ATM strategies on each boot.** New ask. The bot needs to read NT's ATM strategy list (`Documents\NinjaTrader 8\db\NinjaTrader.sqlite` -> `AtmStrategyTemplates`, or `templates/AtmStrategy/*.xml`) every time uvicorn starts and expose it via the API. Catches user-created strategies without manual reconfiguration.
+
+6. **Signal proposals must reference an ATM strategy for TP/SL.** New ask. Currently the proposal carries raw entry/stop/target prices. The user wants the LLM (or a post-processing step) to pick an ATM strategy from the discovered list and emit that name in the proposal so when the user takes the trade in NT, the ATM applies its TP/SL pattern. Open design questions: does the LLM choose, or does code map (e.g. by R:R bucket)? Where does the strategy name persist on the signal record? Talk to user before building.
+
+7. **"Automated signal updater" still doesn't work.** User-reported, term not yet defined. Could mean: outcome-watcher (logs show it IS suggesting outcomes -- working), auto-analyzer (logs show it IS firing -- 21:00:05 produced a proposal), or something else like a live-update pipeline that isn't named explicitly. Clarify scope with user before chasing.
+
+8. **NS account-state indicator.** The Open Positions card on Home was removed 2026-05-10. The data path (balance / equity / open positions pushed to bot) is still on the roadmap, lower priority than (1)-(7).
 
 6. **Single venv / requirements consolidation.** `_tradebot_bridge.py` still bridges `TradingBot/app/src/` into the dashboard. The reinstall didn't change this. Closing it lets the installer assume one project / one venv.
 
@@ -433,6 +439,20 @@ Snip overlay then didn't appear on Ctrl+Shift+F — bot logged `Opening Snipping
 Memory entry `feedback_snip_uri_session0.md` added so future sessions skip the bot-side debugging when this pattern recurs. Expected after every reboot or service reinstall.
 
 **No code changes.** Outstanding-list item #1 (NSSM logon failure) is closed; remaining items renumbered.
+
+---
+
+### 2026-05-12 (evening) — Hotkey still broken; new ATM-strategy asks
+
+Bot pipeline is healthy: tradebot.log at 21:00:05 shows headless analyzer storing a MES 5m proposal and outcome-watcher suggesting stops on two prior signals. Service Running, `:8000` listening (PID 19420). But user reports hotkey "still broken" — NS log shows `[Helm] Hotkey caught` + `Context POSTed` followed by no bot-side `NT trigger received` line. POST is failing between NS HttpClient and `/api/capture-from-nt`. Same NS log window has HelmFeed POST failures (`HttpRequestException`) — correlated. **Not** the Session-0 URI handler this time; the request isn't reaching the bot at all.
+
+User also called out: snipping tool itself works (don't waste time there), and surfaced two new feature asks for the install flow:
+- Refresh available ATM strategies on each boot
+- Signal proposals must reference an ATM strategy for TP/SL rather than raw prices
+
+Plus an unclear "Automated signal updater still doesn't work" — needs clarification before debugging.
+
+No code changes this session. Outstanding list restructured around the new top blockers; HTTP plumbing investigation is item #1.
 
 ---
 
