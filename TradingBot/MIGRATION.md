@@ -160,14 +160,14 @@ In order, after each phase:
 
 **Outstanding (next session pickup, priority order):**
 
-1. **NSSM service won't start — wrong password.** Event 7038 `unable to log on as .\pilot ... user name or password is incorrect`. The watchdog never gets a chance to run, so the dashboard never comes up when NT runs, and HelmFeed POSTs all fail. **Blocker.** Fix: rerun `Trade_Perf\runtime\install_service.ps1` from elevated PS and type the correct Windows logon password (not a PIN; if Microsoft account, the MS account password).
+1. **Confirm snip overlay is unblocked.** End-of-day 2026-05-11 hit the same Session-0 URI-handler issue as the morning. Bot side fine (Capture log shows `Opening Snipping overlay` -> 30s timeout, three attempts). Fix: from a **user-session** PS run `Start-Process 'ms-screenclip:'` (Esc to dismiss), then **elevated** `nssm restart HelmDashboardWatchdog`. If the user-session probe doesn't dim the screen, re-register Microsoft.ScreenSketch via `Get-AppxPackage Microsoft.ScreenSketch | ... Add-AppxPackage -DisableDevelopmentMode -Register`. Captured as recurring memory `feedback_snip_uri_session0.md` -- don't go hunting in `screenshot_capturer.py`.
 
-2. **Restore operational data from backup.** Live data was preserved at `Projects\helm-backup-20260511_213210\` during the wipe. Once the service is up, copy back into the new tree paths so historical signals/trades carry forward:
+2. **Restore operational data from backup.** ~~Once the service is up~~ -- service is up; only step left is data restore. Backup at `Projects\helm-backup-20260511_213210\`:
    - `helm-backup\signals.jsonl`    -> `TheHelmTrader\TradingBot\app\data\signals.jsonl`
    - `helm-backup\feed.db`          -> `TheHelmTrader\TradingBot\app\data\feed.db`
-   - `helm-backup\trades.db`        -> `TheHelmTrader\Trade_Perf\trades.db`
    - `helm-backup\screenshots\`     -> `TheHelmTrader\TradingBot\app\data\screenshots\`
-   - `helm-backup\settings.json`    -> `%USERPROFILE%\.helm\settings.json`
+   - `helm-backup\settings.json`    -> `%USERPROFILE%\.helm\settings.json` (skip if you re-configured via Settings page since)
+   - `trades.db` already has 459 fills as of last health probe -- recorder is repopulating from NT's own SQLite; may not need restoring. Diff against `helm-backup\trades.db` if you want to recover anything pre-wipe that NT no longer has.
 
 3. **Live Feed Pipeline — Phase 1 verification at market open.** Phases 1-4 all shipped. F5 `HelmAnalyzer.cs` in NS Editor; apply HelmFeed to a chart; confirm `[HelmFeed] State -> ...` Output progression and rows landing in `feed.db` once ticks flow. Trigger Ctrl+Shift+F to verify the manual analyze path. Arm an Auto Analysis slot to verify the headless analyzer fires on a real bar close.
 
@@ -417,6 +417,22 @@ Long session covering Phase 1 of the SHARING initiative, monorepo creation + Git
 - `helm-clean.ps1` has two bugs we hit live: (a) the kill-recorder filter searched for `pythonw.exe` but the live process name is `pythonw3.12.exe`; (b) on re-run after a rename, the backup phase looks at the old canonical paths and silently backs up nothing. Worth patching to read from `TheHelmTrader/{TradingBot,Trade_Perf}/...` going forward.
 - The two-working-trees structure (canonical `NT8_Trade_Perf/` + GitHub sync `TheHelmTrader/`) is now collapsed: after the wipe, the GitHub clone IS the canonical runtime. Memory entry updated.
 - Microsoft Store Python alias (anywhere under `WindowsApps/`) remains service-incompatible. `Resolve-PythonExe` in watchdog.ps1 prefers `py.exe` then `LOCALAPPDATA\Programs\Python\Python312\` over WindowsApps. Same rule as 2026-05-09.
+
+---
+
+### 2026-05-11 (evening) — Post-install: snip URI handler bit again
+
+Service came up clean after the user re-entered the correct Windows password (resolved item #1 from earlier today). Health probe returned 200, `trades.db` populated with 459 fills, recorder + watchdog both running.
+
+Snip overlay then didn't appear on Ctrl+Shift+F — bot logged `Opening Snipping overlay` then aborted three times at the 30s no-snip timeout. **Same Session-0 cross-session bounce issue we hit this morning** — `explorer.exe ms-screenclip:` from the NSSM-spawned uvicorn isn't reaching the user desktop until the URI handler is warmed from a user-session invocation.
+
+**Two-step fix (captured as recurring memory):**
+1. User-session PS: `Start-Process 'ms-screenclip:'` (Esc to dismiss)
+2. Elevated PS: `nssm restart HelmDashboardWatchdog`
+
+Memory entry `feedback_snip_uri_session0.md` added so future sessions skip the bot-side debugging when this pattern recurs. Expected after every reboot or service reinstall.
+
+**No code changes.** Outstanding-list item #1 (NSSM logon failure) is closed; remaining items renumbered.
 
 ---
 
