@@ -27,7 +27,7 @@ GEEKOM GT1 Mega, 32 GB RAM, integrated Intel Arc iGPU, no CUDA. Hosts NT8 v8.1.6
 |---|---|
 | Distro | Ubuntu 24.04.4 LTS Desktop |
 | Hostname | `<workstation-hostname>` (kept; not renamed) |
-| Primary user | `<workstation-user>` (lowercase) |
+| Primary user | `<workstation-user>` |
 | GPU | NVIDIA RTX 4060 Ti, 16 GB VRAM |
 | NVIDIA driver | 595.58.03 (CUDA 13.2 visible via `nvidia-smi`) |
 | Disks | NVMe (931 GB) — OS + Ollama models on `/`. SDA (3.6 TB SSD, exFAT) — preserved as-is at `/media/<workstation-user>/Untitled` (258 GB existing data, deferred decision). |
@@ -115,7 +115,7 @@ In order, after each phase:
 | Item | Decision |
 |---|---|
 | `sda` reformat exFAT → ext4 | **Deferred.** 258 GB of existing data preserved as-is. Revisit when bulk storage actually needed (LoRA datasets, screenshot archive sync). |
-| Stray `mel` user account on workstation | **Deferred.** Confirm whether it's a legacy identity of the same user; `/home/<workstation-user>` and `/media/<workstation-user>/` left untouched until then. |
+| Stray legacy user account on workstation | **Deferred.** Confirm whether it's a legacy identity of the same user; `/home/<workstation-user>` and `/media/<workstation-user>/` left untouched until then. |
 | Hostname rename (`<workstation-hostname>` → something cleaner) | **Declined** by user. Keep as-is; no NS-bridge config impact since IP is the bridge target. |
 | Wired Ethernet (`enp9s0` currently DOWN) | **Deferred.** Wi-Fi is sufficient for current latency targets. Plug in if jitter ever becomes an issue. |
 | SSH key auth from GEEKOM → workstation | **Deferred.** Password auth works; keys are quality-of-life, not blocking. |

@@ -224,7 +224,7 @@ Vision LLMs read **structure** (trend, pullback, S/R) much better than they read
 ## 7. Project Layout
 
 ```
-%USERPROFILE%\Documents\Projects\TradingBot\app\
+%USERPROFILE%\Documents\Projects\TheHelmTrader\TradingBot\app\
 ├── trading_env\              ← Python virtual environment (do not commit)
 ├── src\
 │   ├── screenshot_capturer.py
@@ -243,7 +243,7 @@ Vision LLMs read **structure** (trend, pullback, S/R) much better than they read
 
 Path discipline:
 
-- App root is `%USERPROFILE%\Documents\Projects\TradingBot\app\`. Verified that `Documents\` is **not** OneDrive-redirected on this machine (resolves to the literal disk path), so JSONL/SQLite are safe here.
+- App root is `%USERPROFILE%\Documents\Projects\TheHelmTrader\TradingBot\app\`. Keep `Documents\` non-OneDrive-redirected (resolves to the literal disk path), so JSONL/SQLite are safe.
 - **Never** move it under `Program Files` (UAC headaches) or into any cloud-synced folder (OneDrive, iCloud, Dropbox) — sync conflicts will corrupt files.
 - In Python, use `pathlib.Path` everywhere. Never hardcode `\\` or `/`.
 

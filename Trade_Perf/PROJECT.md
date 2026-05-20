@@ -76,7 +76,7 @@ The **two-copy gotcha** applies to both: project canonicals live in `TradingBot/
 
 - **Loopback only.** FastAPI binds to `127.0.0.1`. Ollama is the one external dependency (default `127.0.0.1:11434`, configurable). If pointed at a LAN host, firewall the inference port to your bot machine.
 - **No auto-execution.** The bot proposes; the user decides. Forever.
-- **System Python.** Uvicorn runs from system Python at `%USERPROFILE%\AppData\Local\Microsoft\WindowsApps\python.exe`. Bot pipeline deps (`requests`, `Pillow`, `httpx`, plus all the FastAPI/Pydantic stack) are installed there. Single-venv consolidation is on the deferred list — see MIGRATION.md.
+- **System Python.** Uvicorn runs from system Python at `%LOCALAPPDATA%\Programs\Python\Python312\python.exe` (winget-installed; NOT the `WindowsApps` alias which is service-incompatible). Bot pipeline deps (`requests`, `Pillow`, `httpx`, plus all the FastAPI/Pydantic stack) are installed there. Single-venv consolidation is on the deferred list — see MIGRATION.md.
 - **`signals.jsonl` is append-only.** Updates are new lines with the same timestamp; readers merge latest-wins. Soft-delete = a line with `deleted: true`. Recoverable by hand-editing the JSONL.
 
 ## 7. Status & open work

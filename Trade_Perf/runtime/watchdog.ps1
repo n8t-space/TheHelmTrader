@@ -38,7 +38,7 @@ function Test-PortInUse([int]$port) {
 
 # Resolve a real python.exe usable from a Windows Service context. The
 # bare 'python' command on PATH typically points at a WindowsApps app
-# execution alias (e.g. %USERPROFILE%\AppData\Local\Microsoft\WindowsApps\python.exe)
+# execution alias (e.g. %LOCALAPPDATA%\Microsoft\WindowsApps\python.exe)
 # which fails with 'Access is denied' when invoked from a non-interactive
 # session. Prefer concrete .exe paths in this order:
 #   1. py launcher (C:\Windows\py.exe) -- always available, works from

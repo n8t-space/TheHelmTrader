@@ -96,10 +96,11 @@ def home() -> dict[str, Any]:
 
     # ---- Cumulative earnings by account category ----
     # All-time totals across four buckets:
-    #   live        - real brokerage (<live-account-id>)
-    #   evals       - prop firm eval accounts (<eval-account-id> = Tradify)
+    #   live        - real brokerage account(s)
+    #   evals       - prop firm eval accounts (Tradify, Topstep, etc.)
     #   simulation  - sim/demo/playback/backtest accounts
     #   signals     - realized P/L from the LLM-proposed trades in signals.jsonl
+    # Bucket membership is user-configured via the Settings page.
     cumulative_earnings = {"live": 0.0, "evals": 0.0, "simulation": 0.0, "signals": 0.0}
     try:
         all_fills = db.fetch_fills_for_derivation()

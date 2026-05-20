@@ -25,8 +25,8 @@ NT fills are mirrored independently into `Trade_Perf/trades.db` via `recorder.py
 
 ## Path discipline
 
-- Canonical path (post 2026-05-11 wipe + reinstall): `%USERPROFILE%\Documents\Projects\TheHelmTrader\TradingBot\`. **Documents, not OneDrive.**
-- Sibling dashboard project at `../Trade_Perf/` (was `../NT8_Trade_Perf/` pre-rename).
+- Canonical path: `%USERPROFILE%\Documents\Projects\TheHelmTrader\TradingBot\`. **Documents, not OneDrive** — OneDrive-redirected paths break NT8 + watchdog runtimes.
+- Sibling dashboard project at `../Trade_Perf/`.
 - Always use `pathlib`, never `os.path`. Build paths from a project-root anchor.
 - NT user folder: `%USERPROFILE%\Documents\NinjaTrader 8\` (also non-OneDrive).
 
