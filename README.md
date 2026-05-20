@@ -169,6 +169,15 @@ Invoke-WebRequest http://127.0.0.1:8000/api/health    # Status 200 once NT8 is u
 5. Click **Test connection** on the AI Backend tab — green badge with latency + model present means you're good.
 6. Settings persist to `%USERPROFILE%\.helm\settings.json`.
 
+### Daily use
+
+Two ways analyses get into `signals.jsonl`:
+
+- **Manual snip (hotkey-driven).** Focus any NT chart and press **Ctrl+Shift+F**. The snipping overlay dims the screen — drag a rectangle around the chart area you want analyzed. The selection plus current market context posts to `/api/capture-from-nt`, the configured AI backend produces a proposal, and a new card appears on the Signal Analysis page. Cold: ~30s; warm: ~1s.
+- **Auto Analysis (headless).** Configure cadence and instrument scope on the Settings page (Auto Analysis tab). `HelmFeed` publishes live bars + ticks, the bot polls them, and produces proposals on its own schedule. No hotkey needed.
+
+Trade fills are mirrored independently — `recorder.py` polls NT8's SQLite every few seconds, so executions show up on the Trade Performance page without any operator action.
+
 ### Verify end-to-end
 
 - **Recorder:** make a paper trade in NT (or wait for one in Sim). Within ~5 seconds the dashboard's Trade Performance page should show the new fill.
