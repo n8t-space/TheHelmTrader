@@ -22,24 +22,23 @@ TheHelmTrader/
 
 ## Architecture in one breath
 
-NinjaScript indicator on hotkey -> FastAPI on `:8000` -> bot opens snipping overlay -> snip + market context -> Ollama (local or LAN, configured via the Settings page) -> proposal in `signals.jsonl` -> React dashboard renders.
+NinjaScript indicator on hotkey -> FastAPI on `:8000` -> bot opens snipping overlay -> snip + market context -> vision LLM backend (Ollama local/LAN, Anthropic Claude, or OpenAI — selected on the Settings page) -> proposal in `signals.jsonl` -> React dashboard renders.
 
 NT fills are mirrored independently into `Trade_Perf/trades.db` via `recorder.py`. The dashboard joins both data sources at request time.
 
 ## Installation
 
-Tested on Windows 11. The bot pipeline assumes NinjaTrader 8 on the same machine; the Ollama inference backend can be the same machine or a LAN peer.
+Tested on Windows 11. The bot pipeline assumes NinjaTrader 8 on the same machine. The vision LLM backend is configurable on the Settings page — pick one:
+
+- **Ollama** (local or LAN — free, runs your own model). https://ollama.com/ — `ollama pull qwen2.5vl:7b` after install.
+- **Anthropic Claude** (cloud, paid — vision via the Messages API). Needs an API key.
+- **OpenAI** (cloud, paid — vision via Chat Completions). Needs an API key.
 
 ### Quick install (recommended)
 
-Two non-Helm prerequisites the installer can't grab for you:
+One non-Helm prerequisite the installer can't grab for you:
 
 - **NinjaTrader 8** (8.1.6.3+) — your brokerage connection lives here. https://ninjatrader.com/
-- **Ollama** with a vision model — runs on this machine or a LAN-reachable workstation. https://ollama.com/
-  ```bash
-  ollama pull qwen2.5vl:7b
-  # If exposing to LAN: OLLAMA_HOST=0.0.0.0:11434 + firewall the port to your bot host.
-  ```
 
 Then, from an **elevated** PowerShell. Either clone the repo (requires SSH access):
 
@@ -75,7 +74,7 @@ When the script finishes:
 1. Start NinjaTrader 8 (the watchdog will spawn uvicorn within 5s)
 2. In NT: NinjaScript Editor (F11) -> Compile (F5)
 3. Add `HelmAnalyzer` and `HelmFeed` to each chart you want to use them on
-4. Open http://127.0.0.1:8000/ -> Settings -> set Ollama URL, model, and account categorization
+4. Open http://127.0.0.1:8000/ -> Settings -> AI Backend (pick a provider and configure) and account categorization
 5. Click **Test connection** on the AI Backend tab
 
 ---
@@ -162,8 +161,10 @@ Invoke-WebRequest http://127.0.0.1:8000/api/health    # Status 200 once NT8 is u
 2. Open the dashboard: http://127.0.0.1:8000/
 3. Navigate to **Settings**.
 4. Set:
-   - **AI Backend -> Ollama URL** — `http://<host>:11434/api/generate` (use `127.0.0.1` if Ollama is local).
-   - **AI Backend -> Model** — match what you pulled (`qwen2.5vl:7b` by default).
+   - **AI Backend -> Provider** — `ollama`, `claude`, or `openai`.
+     - **Ollama** — set the URL (`http://127.0.0.1:11434/api/generate` if local, or `http://<host>:11434/api/generate` if LAN) and the model name (default `qwen2.5vl:7b`).
+     - **Claude** — paste your API key; default model is `claude-sonnet-4-6`.
+     - **OpenAI** — paste your API key; default model is `gpt-4o`.
    - **Accounts** — map your NT account IDs into Live / Evals / Simulation buckets so the cumulative-earnings card on Home aggregates correctly.
 5. Click **Test connection** on the AI Backend tab — green badge with latency + model present means you're good.
 6. Settings persist to `%USERPROFILE%\.helm\settings.json`.
@@ -205,7 +206,7 @@ Remove-Item -Recurse -Force "$HOME\.helm"
 
 ## Conventions
 
-- Loopback only. FastAPI binds `127.0.0.1`. The one external dependency is the workstation Ollama, firewalled to the GEEKOM IP via UFW.
+- Loopback only. FastAPI binds `127.0.0.1`. The only external dependency is whichever AI backend you select on the Settings page — Ollama (local or LAN; firewall the inference port if LAN), Anthropic Claude (cloud), or OpenAI (cloud).
 - No auto-execution. The bot proposes; the user decides. Forever.
 - Trade data lives in three files that are git-ignored and never push:
   - `TradingBot/app/data/signals.jsonl` (LLM proposals + journal updates)
