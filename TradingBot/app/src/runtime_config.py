@@ -19,7 +19,10 @@ from dataclasses import dataclass
 class Defaults:
     # AI backend
     provider:          str = "ollama"   # ollama | claude | openai
-    ollama_url:        str = "http://<workstation-LAN-IP>:11434/api/generate"
+    # Defaults assume Ollama on the same machine. Point at a LAN host
+    # via the Settings page if you've offloaded inference (e.g. a beefier
+    # workstation with a GPU).
+    ollama_url:        str = "http://127.0.0.1:11434/api/generate"
     model:             str = "qwen2.5vl:7b"
     fallback_model:    str = "minicpm-v:latest"
     request_timeout_s: int = 300

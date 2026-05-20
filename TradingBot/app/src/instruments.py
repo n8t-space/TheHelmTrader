@@ -114,10 +114,15 @@ def compute_trade_metrics(rec: dict, config: dict) -> dict:
     point_value = lookup_point_value(instrument, config)
     tick_size, tick_source = lookup_tick_size(instrument, config)
     is_futures = tick_source == "explicit"
+    # Default to 1 contract when missing/zero so signals show realized
+    # P&L and feed the W/L rollup without explicit sizing. Users can still
+    # override via the Signal detail "Contracts / Shares" field.
     try:
         position_size = float(rec.get("position_size") or 0)
     except (TypeError, ValueError):
         position_size = 0.0
+    if position_size <= 0:
+        position_size = 1.0
     outcome = rec.get("outcome") or {}
     outcome_result = outcome.get("result")
     closing_price = outcome.get("closing_price")

@@ -22,7 +22,7 @@ TheHelmTrader/
 
 ## Architecture in one breath
 
-NinjaScript indicator on hotkey -> FastAPI on `:8000` -> bot opens snipping overlay -> snip + market context -> workstation Ollama (`<workstation-LAN-IP>:11434`) -> proposal in `signals.jsonl` -> React dashboard renders.
+NinjaScript indicator on hotkey -> FastAPI on `:8000` -> bot opens snipping overlay -> snip + market context -> Ollama (local or LAN, configured via the Settings page) -> proposal in `signals.jsonl` -> React dashboard renders.
 
 NT fills are mirrored independently into `Trade_Perf/trades.db` via `recorder.py`. The dashboard joins both data sources at request time.
 
@@ -41,11 +41,20 @@ Two non-Helm prerequisites the installer can't grab for you:
   # If exposing to LAN: OLLAMA_HOST=0.0.0.0:11434 + firewall the port to your bot host.
   ```
 
-Then, from an **elevated** PowerShell:
+Then, from an **elevated** PowerShell. Either clone the repo (requires SSH access):
 
 ```powershell
 cd $HOME\Documents\Projects
 git clone git@github.com:n8t-space/TheHelmTrader.git
+cd TheHelmTrader
+.\install.ps1
+```
+
+Or unzip the bundle you were given:
+
+```powershell
+cd $HOME\Documents\Projects
+Expand-Archive TheHelmTrader.zip -DestinationPath .
 cd TheHelmTrader
 .\install.ps1
 ```

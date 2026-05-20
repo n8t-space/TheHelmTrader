@@ -8,7 +8,7 @@
 
 The body of this document captures the **original v1 design** from the build sessions of 2026-05-05 → 2026-05-08. Several cross-cutting decisions have shifted since; the source of truth for what's actually running today is [`MIGRATION.md`](MIGRATION.md) and [`NT8_Trade_Perf/PROJECT.md`](../NT8_Trade_Perf/PROJECT.md).
 
-- **AI inference moved off the GEEKOM iGPU** to a workstation (RTX 4060 Ti, 16 GB VRAM) at `<workstation-LAN-IP>:11434`. Latency went from 15–45 s/call → 0.7–5 s/call. Anything in §3 about ≥1-minute cadence is now wrong; sub-second turnaround is the norm. LoRA is back on the maturity path.
+- **AI inference is offloaded to Ollama.** Default localhost; can be pointed at a LAN GPU host via the Settings page. A 7B Q4 vision model on a 4060 Ti turns calls around in 0.7–5 s; an iGPU host runs 15–45 s/call. Anything in §3 about ≥1-minute cadence assumes the slow path.
 - **The Flask dashboard described in §4–§5 is retired.** A unified FastAPI + React app at `NT8_Trade_Perf/` now serves all three pages (Home / Trade Performance / Signal Analysis) from `:8000`. Both apps read/write the same `signals.jsonl` via a sys.path bridge, so this project's `app/src/` (`pipeline.py`, `local_llm_analyzer.py`, `signal_storage.py`, `instruments.py`, `screenshot_capturer.py`) is still the engine.
 - **NS indicator renamed.** `ninjascript/TradeBotTrigger.cs` → `ninjascript/_Helm Locker/HelmAnalyzer.cs`. POSTs to `:8000/api/capture-from-nt`. Multi-tab guard added.
 - **Autostart in place.** A watchdog (PowerShell + Task Scheduler at user logon) brings the dashboard up while NinjaTrader is running and stops it when NT exits. See `NT8_Trade_Perf/runtime/`.
@@ -184,19 +184,16 @@ The proposal is annotated with:
 
 Detail page surfaces a small `↻ N attempts` badge and the confidence trail; if the final confidence is still below the floor, a `below floor` flag appears next to it.
 
-### Open-Trade Reconciliation (added 2026-05-05)
+### Open-Trade Reconciliation (REMOVED 2026-05-19)
 
-Each new capture triggers a reconciliation pass for any **open** trades on the same instrument:
+The LLM-driven cross-signal reconciliation feature was retired. Each new capture used to fire a separate `reconcile()` call per open trade on the same instrument, storing verdicts as `outcome_suggestion` updates that the user confirmed (and soft-deleted) from the dashboard. In practice the confirm-and-delete flow distorted the W/L + P&L tallies (resolved prior signals disappeared from the visible list) and the LLM's reconciliations were often less accurate than the deterministic feed.db bar walker.
 
-- "Open" = no `outcome.result` set, not deleted, direction not `flat`.
-- Same-instrument match uses `normalize_symbol()` on both records.
-- The pipeline calls `local_llm_analyzer.reconcile()` per open trade — sends the prior proposal (entry/stop/target) plus the new chart. The prompt walks the model through a 3-step trace: **(1) did price reach the entry level? if no → `no_fill`. (2) if yes, was target or stop hit first? (3) neither or uncertain.** The entry-check first is critical — without it, the model defaults to assuming the trade was opened and hallucinates target/stop hits.
-- Verdicts that resolve (`target`/`stop`/`no_fill`/`breakeven`) are stored as `outcome_suggestion` updates on the open trade. The user **confirms or rejects** in the dashboard — the model never silently sets an outcome.
-- **Action buttons live on the NEW analysis page**, not on each prior open trade. Per-child **Confirm & remove previous** applies the outcome and soft-deletes that prior signal. One section-level **Reject this analysis & delete** at the bottom soft-deletes the entire current analysis (prior trades untouched) — used when the model's reconciliation is fundamentally wrong. Old open trades show a small informational banner pointing back to the analysis where the suggestion came from.
-- **Both actions soft-delete** (recoverable by editing the JSONL). Confirm preserves the outcome data on the prior signal before hiding it; reject doesn't.
-- Capped at the 3 most recent open trades per pipeline run (browser timeout protection).
+Outcomes are now managed per-signal:
+- The **outcome_watcher** walks feed.db ticks/bars and auto-stamps `outcome.result` + `entry_triggered` on any signal where the entry was hit and a stop or target was subsequently touched. Works for both manual (Ctrl+Shift+F) and headless (auto-bar-close) signals.
+- The user can override via the Signal Detail page's Outcome editor at any time.
+- An **entry/outcome invariant** is enforced everywhere: `outcome=no_fill` ⇔ `entry_triggered=False`; any other outcome implies `entry_triggered=True`. The dashboard write endpoints coerce the pair so they can't drift.
 
-UI: pending suggestions surface as a yellow row tint on the index plus a red banner with Confirm/Reject buttons on the open trade's detail page. Confirming applies the suggested result; rejecting marks `outcome_suggestion_dismissed=true`.
+Code references retained in [`local_llm_analyzer.py`](app/src/local_llm_analyzer.py) (the `reconcile` function is still defined but has no caller) and the `outcome_suggestion` field on signal records (now produced only by the bar walker as an audit trail, `engine: "resolver"`).
 
 ### Trade Sizing & P/L
 
@@ -380,7 +377,7 @@ Built the NinjaScript bridge end-to-end and added a Smart-Money-Concepts market-
 - **Storage:** append-only `data/signals.jsonl` with merge-on-read for journal/outcome/position_size/outcome_suggestion/deleted updates. `data/tradebot.log` shared by `main.py` and `dashboard.py`.
 - **Tick-size snapping:** `instruments.json` (CME futures + crypto explicit map + forex/stock fallback rules); UI surfaces adjustments + unknown-instrument warnings.
 - **Trade Recap:** futures show ticks × $/tick (not points); closing-price-driven realized P/L; per-contract risk/reward + totals. Index columns include Entry, Stop, Target, R:R, Conf, Size, P/L.
-- **Open-trade reconciliation:** entry-first verdict (no_fill if entry never reached); suggestions surface only on the NEW analysis page; per-child **Confirm & remove previous** + section-level **Reject this analysis & delete**. Stale-pending cleanup when the source analysis is deleted.
+- **Open-trade reconciliation:** retired 2026-05-19. Outcomes now auto-resolve via the deterministic feed.db bar walker; the user overrides on the Signal Detail page if needed. See the "Open-Trade Reconciliation (REMOVED)" section above.
 - **Confidence floor 0.75** with auto-reassessment (max 2 attempts); proposal annotated with `attempts`, `reassessed`, `attempt_confidences`.
 - **UI rebrand:** FYF Analysis (VQR Ventures LLC working title); dark/cyan theme; Inter + JetBrains Mono with system fallbacks (no CDN — stays offline).
 

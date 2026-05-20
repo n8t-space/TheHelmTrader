@@ -3,7 +3,7 @@
 Each fill in the NT8 trace looks like:
 
     2026-05-08 06:36:20:995 (Simulation) Cbi.Account.OrderUpdateCallback: \
-        realOrderState=Filled orderId='<sample-order-id>' account='<demo-account-id>' \
+        realOrderState=Filled orderId='1234567890' account='Sim101' \
         name='Entry' orderState=Filled instrument='CL JUN26' orderAction=Buy \
         limitPrice=94.93 stopPrice=0 quantity=1 orderType='Limit' filled=1 \
         averageFillPrice=94.93 time='2026-05-08 06:36:22' \

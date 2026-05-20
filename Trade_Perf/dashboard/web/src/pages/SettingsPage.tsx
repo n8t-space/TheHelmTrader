@@ -326,7 +326,7 @@ function AiTab({ value, onChange }: {
                 type="text"
                 value={value.ollama_url}
                 onChange={(e) => onChange({ ...value, ollama_url: e.target.value })}
-                placeholder="http://<workstation-LAN-IP>:11434/api/generate"
+                placeholder="http://127.0.0.1:11434/api/generate"
               />
             </label>
             <label>

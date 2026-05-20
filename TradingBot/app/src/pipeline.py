@@ -6,22 +6,22 @@ endpoint). When NinjaScript provides a market_context payload, it's
 prepended to the prompt as authoritative price data and stored on the
 resulting signal record.
 
+The cross-signal LLM reconciliation step ("Reconciliations from this
+analysis" card in the dashboard) was removed 2026-05-19; outcomes are
+managed per-signal via the outcome_watcher and the Signal Detail UI.
+
 Returns the enriched record (with timestamp) so callers can route to it.
 """
 import logging
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from . import proposal_sanity
-from .instruments import normalize_symbol
-from .local_llm_analyzer import MODEL, analyze_with_floor, reconcile
+from .local_llm_analyzer import MODEL, analyze_with_floor
 from .screenshot_capturer import capture_via_snip
-from .signal_storage import append_signal, append_update, load_all
+from .signal_storage import append_signal
 
 logger = logging.getLogger(__name__)
-
-MAX_RECONCILE_TARGETS = 3  # most recent N open trades on same instrument
 
 
 def run_pipeline(
@@ -84,12 +84,6 @@ def run_pipeline(
     logger.info("Capture complete: timestamp=%s%s",
                 record["timestamp"], " (auto-dismissed)" if not is_valid else "")
 
-    if is_valid:
-        try:
-            _reconcile_open_trades(signals_log, image_path, record)
-        except Exception:
-            logger.exception("Reconciliation step failed (non-fatal)")
-
     return record
 
 
@@ -146,71 +140,3 @@ def _format_context_for_prompt(ctx: dict) -> str:
     return "\n".join(lines)
 
 
-def _reconcile_open_trades(signals_log: Path, image_path: Path, new_record: dict) -> None:
-    """For each open trade on the same instrument, ask the LLM if it resolved.
-
-    Stores verdicts as `outcome_suggestion` updates on the prior signals.
-    Does not modify outcome directly — user confirms/rejects in the dashboard.
-    """
-    new_root = normalize_symbol(new_record.get("proposal", {}).get("instrument", ""))
-    if not new_root:
-        return
-
-    open_trades = _find_open_trades(signals_log, new_root, exclude_ts=new_record["timestamp"])
-    if not open_trades:
-        logger.info("No open trades on %s to reconcile", new_root)
-        return
-
-    logger.info("Reconciling %d open trade(s) on %s", len(open_trades), new_root)
-    for prior in open_trades[:MAX_RECONCILE_TARGETS]:
-        try:
-            verdict = reconcile(image_path, prior["proposal"])
-        except Exception:
-            logger.exception("Reconciliation call failed for %s", prior["timestamp"])
-            continue
-
-        result = verdict.get("result")
-        if result not in ("target", "stop", "no_fill", "breakeven"):
-            logger.info(
-                "Reconciliation for %s = %s (no suggestion stored)",
-                prior["timestamp"], result,
-            )
-            continue
-
-        suggestion = {
-            "result": result,
-            "confidence": verdict.get("confidence", 0.0),
-            "reasoning": verdict.get("reasoning", ""),
-            "suggested_at": datetime.now().isoformat(timespec="seconds"),
-            "source_signal_ts": new_record["timestamp"],
-        }
-        append_update(signals_log, prior["timestamp"], outcome_suggestion=suggestion)
-        # Clear any prior dismissal so the new suggestion is visible
-        append_update(signals_log, prior["timestamp"], outcome_suggestion_dismissed=False)
-        logger.info(
-            "Suggested %s for %s (conf=%.2f)",
-            result, prior["timestamp"], suggestion["confidence"],
-        )
-
-
-def _find_open_trades(signals_log: Path, instrument_root: str, exclude_ts: str) -> list[dict]:
-    """Return signals on this instrument with no outcome.result, sorted newest-first."""
-    signals = load_all(signals_log)
-    open_trades = []
-    for ts, rec in signals.items():
-        if ts == exclude_ts:
-            continue
-        if rec.get("deleted"):
-            continue
-        # 'pending' is the new default — still treat as open for reconciliation.
-        _result = (rec.get("outcome") or {}).get("result")
-        if _result and _result != "pending":
-            continue
-        prop = rec.get("proposal") or {}
-        if normalize_symbol(prop.get("instrument", "")) != instrument_root:
-            continue
-        if prop.get("direction") == "flat":
-            continue  # nothing to reconcile against
-        open_trades.append(rec)
-    open_trades.sort(key=lambda r: r.get("timestamp", ""), reverse=True)
-    return open_trades

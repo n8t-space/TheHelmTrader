@@ -26,7 +26,7 @@ This file orients a fresh conversation in *current state*. For history, see [`..
 │   (TradingBot/app/data/signals.jsonl, via sys.path bridge)
 └─────────────────────────────────────────────────────────┘
 
-           Workstation (<workstation-LAN-IP>)
+           Ollama backend (local or LAN)
            ↑ HTTP / Ollama qwen2.5vl:7b
            │
        FastAPI background pipeline
@@ -35,7 +35,7 @@ This file orients a fresh conversation in *current state*. For history, see [`..
 
 - **One process at runtime.** Uvicorn serves both the API and the built React bundle. Vite dev server (`run_dev.ps1`) only used for active frontend development.
 - **Two data sources, both file-local.** `trades.db` (SQLite, fed by `recorder.py`) for actual NT fills. `TradingBot/app/data/signals.jsonl` (append-only) for LLM proposals + journal/outcome updates. The dashboard joins them at read time. *(2026-05-08: a third source, `TradingBot/app/data/feed.db`, holds NS-published live bars + trade ticks for the in-flight Independent Confirmation / Auto Analysis project — see MIGRATION.md.)*
-- **AI inference on the workstation.** Bot calls Ollama at `<workstation-LAN-IP>:11434` via the URL hardcoded in [`TradingBot/app/src/local_llm_analyzer.py`](../TradingBot/app/src/local_llm_analyzer.py).
+- **AI inference via Ollama.** Default is `127.0.0.1:11434` (same machine). Point at a LAN host (e.g. a workstation with a GPU) via the Settings page — the URL is read at request time from `~/.helm/settings.json` through `runtime_config.py`.
 
 ## 2. Where things live
 
@@ -74,7 +74,7 @@ The **two-copy gotcha** applies to both: project canonicals live in `TradingBot/
 
 ## 6. Conventions worth knowing
 
-- **Loopback only.** FastAPI binds to `127.0.0.1`. Workstation Ollama at `<workstation-LAN-IP>:11434` is the one external dependency, firewalled to the GEEKOM via UFW.
+- **Loopback only.** FastAPI binds to `127.0.0.1`. Ollama is the one external dependency (default `127.0.0.1:11434`, configurable). If pointed at a LAN host, firewall the inference port to your bot machine.
 - **No auto-execution.** The bot proposes; the user decides. Forever.
 - **System Python.** Uvicorn runs from system Python at `%USERPROFILE%\AppData\Local\Microsoft\WindowsApps\python.exe`. Bot pipeline deps (`requests`, `Pillow`, `httpx`, plus all the FastAPI/Pydantic stack) are installed there. Single-venv consolidation is on the deferred list — see MIGRATION.md.
 - **`signals.jsonl` is append-only.** Updates are new lines with the same timestamp; readers merge latest-wins. Soft-delete = a line with `deleted: true`. Recoverable by hand-editing the JSONL.

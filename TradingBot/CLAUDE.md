@@ -10,7 +10,7 @@
 
 ## One-breath architecture
 
-NinjaScript indicator (`HelmAnalyzer.cs`) on hotkey → POSTs HTF context to FastAPI on `:8000` (hosted by `Trade_Perf/`) → bot opens snip overlay → snip + context → workstation Ollama (`<workstation-LAN-IP>:11434`) → proposal in `app/data/signals.jsonl` → unified React dashboard renders.
+NinjaScript indicator (`HelmAnalyzer.cs`) on hotkey → POSTs HTF context to FastAPI on `:8000` (hosted by `Trade_Perf/`) → bot opens snip overlay → snip + context → Ollama (local or LAN, per Settings) → proposal in `app/data/signals.jsonl` → unified React dashboard renders.
 
 NT fills are mirrored independently into `Trade_Perf/trades.db` via `recorder.py`.
 
@@ -76,7 +76,7 @@ The user's 5-minute charts use the **same indicator stack regardless of instrume
 
 ## AI inference offloaded to workstation
 
-`local_llm_analyzer.py` calls `http://<workstation-LAN-IP>:11434/api/generate` **by default**. The URL, model, timeout, num_ctx, confidence floor, and max attempts are all overridable via the Settings page (stored at `~/.helm/settings.json`). Source of truth is `runtime_config.py` — adds a knob = add a field there + a matching Pydantic field in `Trade_Perf/dashboard/api/settings.py`. Workstation = Ubuntu 24.04 + RTX 4060 Ti 16GB. Cold call ~30s, warm <1s. UFW restricts the port to GEEKOM IP only.
+`local_llm_analyzer.py` calls Ollama via `runtime_config.ollama_url()`, default `http://127.0.0.1:11434/api/generate`. The URL, model, timeout, num_ctx, confidence floor, and max attempts are all overridable via the Settings page (stored at `~/.helm/settings.json`). Source of truth is `runtime_config.py` — adds a knob = add a field there + a matching Pydantic field in `Trade_Perf/dashboard/api/settings.py`. If pointing at a LAN GPU host, firewall the inference port to the bot machine.
 
 ## Live feed pipeline (in flight)
 
@@ -87,3 +87,4 @@ NS-driven publish of bars + ticks → bot ingestion at `/api/feed/{bar,ticks}` �
 - Cloud/SaaS endpoints. Not negotiable.
 - Re-litigating the v1 scope. If a request implies adding scheduler/dashboard/auto-execution back into v1, treat it as a v2 conversation.
 - The vendor-DLL distribution path for NT8 AddOns (separate Helm Copier project — deleted 2026-05-09, but pattern was: trigger files don't auto-add Reference; pivot to source-compile if it ever comes up).
+- Re-introducing the cross-signal LLM reconciliation pipeline (`_reconcile_open_trades` + `outcome_suggestion` + the "Confirm & remove previous" UI). Removed 2026-05-19 — distorted W/L stats via confirm-and-soft-delete, less accurate than the deterministic bar walker. `local_llm_analyzer.reconcile()` still exists with no caller. Outcomes auto-resolve via `outcome_watcher` walking `feed.db` ticks/bars for BOTH manual and headless signals; the user overrides on the Signal Detail page if needed.

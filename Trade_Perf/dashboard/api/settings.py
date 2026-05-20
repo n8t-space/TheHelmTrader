@@ -50,8 +50,9 @@ class AiBackend(BaseModel):
     # Shared
     request_timeout_s: int = Field(default=300, ge=10, le=1800)
 
-    # Ollama (local / LAN)
-    ollama_url:     str = Field(default="http://<workstation-LAN-IP>:11434/api/generate")
+    # Ollama (local / LAN). Defaults to localhost; point at a LAN host
+    # via the Settings page if you've offloaded inference to a workstation.
+    ollama_url:     str = Field(default="http://127.0.0.1:11434/api/generate")
     model:          str = Field(default="qwen2.5vl:7b")     # the Ollama model
     fallback_model: str = Field(default="minicpm-v:latest")
     num_ctx:        int = Field(default=8192, ge=2048, le=131072)
@@ -76,10 +77,15 @@ class Strategy(BaseModel):
 
 
 class Accounts(BaseModel):
-    live: list[str] = Field(default_factory=lambda: ["<live-account-id>"])
-    evals: list[str] = Field(default_factory=lambda: ["<eval-account-id>"])
+    # Bucket your NT account IDs so the Home page's cumulative-earnings card
+    # aggregates correctly. Set these via the Settings page after first run.
+    # NT's default sim accounts (Sim101, Playback101, Backtest, SimBetaSIM) are
+    # pre-listed under 'simulation' because every NT install has them; the
+    # other buckets start empty.
+    live: list[str] = Field(default_factory=list)
+    evals: list[str] = Field(default_factory=list)
     simulation: list[str] = Field(default_factory=lambda: [
-        "<demo-account-id>", "SimBetaSIM", "Sim101", "Playback101", "Backtest",
+        "Sim101", "Playback101", "Backtest", "SimBetaSIM",
     ])
 
 

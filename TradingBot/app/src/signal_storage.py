@@ -19,13 +19,19 @@ logger = logging.getLogger(__name__)
 SCHEMA_VERSION = 1
 
 
+DEFAULT_POSITION_SIZE = 1.0
+
+
 def append_signal(jsonl_path: Path, record: dict[str, Any]) -> dict:
     """Append one signal record. Adds timestamp + schema_version.
+    Defaults `position_size` to 1 contract when not supplied so realized
+    P&L and per-signal W/L tally without the user needing to set it.
     Returns the enriched record."""
     jsonl_path.parent.mkdir(parents=True, exist_ok=True)
     enriched = {
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "schema_version": SCHEMA_VERSION,
+        "position_size": DEFAULT_POSITION_SIZE,
         **record,
     }
     with jsonl_path.open("a", encoding="utf-8") as f:

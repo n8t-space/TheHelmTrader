@@ -10,13 +10,14 @@ export const EMPTY_FILTERS: Filters = {
   account: [], symbol: '', strategy: '', date_from: '', date_to: '',
 }
 
-// Quick-select presets for the Trade Performance filter bar. Source of truth
-// for category -> account-id mapping lives backend-side in home.py; keep this
-// in sync if you change one.
+// Quick-select presets for the Trade Performance filter bar. Empty by
+// default -- the user populates the backend Settings page with their NT
+// account IDs, and the SPA reads them via /api/settings. This constant
+// is kept as a fallback for tests / standalone preview only.
 export const ACCOUNT_GROUPS: Record<string, string[]> = {
-  Live:       ['<live-account-id>'],
-  Eval:       ['<eval-account-id>'],
-  'Sim-Demo': ['<demo-account-id>', 'SimBetaSIM', 'Sim101', 'Playback101', 'Backtest'],
+  Live:       [],
+  Eval:       [],
+  'Sim-Demo': ['Sim101', 'Playback101', 'Backtest', 'SimBetaSIM'],
 }
 
 export function buildQuery(f: Filters, extras: Record<string, string | number> = {}): string {
@@ -325,7 +326,6 @@ export interface SignalListResp {
 
 export interface SignalDetailResp {
   signal: Signal
-  children: Signal[]
 }
 
 // ---------- Auto Analysis ----------

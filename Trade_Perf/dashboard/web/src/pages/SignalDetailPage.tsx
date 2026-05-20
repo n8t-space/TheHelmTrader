@@ -21,8 +21,6 @@ const fmtMoney = (n: number) =>
   `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const fmtNum = (n: number | null | undefined, digits = 2) =>
   n === undefined || n === null ? '—' : n.toFixed(digits)
-const fmtPct = (n: number | null | undefined) =>
-  n === undefined || n === null ? '—' : `${(n * 100).toFixed(0)}%`
 
 // ---------- Page ----------
 export function SignalDetailPage() {
@@ -131,7 +129,6 @@ export function SignalDetailPage() {
   if (q.isLoading) return <div className="card">Loading…</div>
   if (q.error || !q.data) return <div className="card error">{String(q.error ?? 'no data')}</div>
 
-  const { children } = q.data
   const sig = q.data.signal
   const m = sig.metrics
 
@@ -144,14 +141,6 @@ export function SignalDetailPage() {
         </div>
         <DeleteButton ts={ts} onDeleted={onDeleted} />
       </div>
-
-      {children.length > 0 && (
-        <ChildrenSection children={children} onChanged={refresh} />
-      )}
-
-      {sig.outcome_suggestion && !sig.outcome?.result && !sig.outcome_suggestion_dismissed && (
-        <PendingSuggestionBanner suggestion={sig.outcome_suggestion} />
-      )}
 
       <div className="card">
         <h2>Proposal</h2>
@@ -189,6 +178,7 @@ export function SignalDetailPage() {
           closingPrice={outcomeClose} setClosingPrice={setOutcomeClose}
           suggestedClose={sig.proposal.target}
           saved={sig.outcome} dirty={outcomeDirty}
+          locked={sig.entry_triggered === false}
         />
       </div>
 
@@ -230,83 +220,6 @@ function JsonSnippetSection({ signal }: { signal: Signal }) {
           {JSON.stringify(rest, null, 2)}
         </pre>
       </details>
-    </div>
-  )
-}
-
-// ---------- Children (reconciliations) ----------
-function ChildrenSection({
-  children, onChanged,
-}: {
-  children: Signal[]
-  onChanged: () => void
-}) {
-  const confirmM = useMutation({
-    mutationFn: (childTs: string) =>
-      postJSON(`/api/signals/${encodeURIComponent(childTs)}/suggestion/confirm`),
-    onSuccess: onChanged,
-  })
-
-  return (
-    <div className="card">
-      <h2>Reconciliations from this analysis</h2>
-      <p className="subtle">
-        The model reviewed {children.length} prior open trade(s) on this instrument against the new
-        chart. <strong>Confirm</strong> to apply the suggested outcome and remove the previous signal.
-      </p>
-      {children.map((c) => (
-        <div key={c.timestamp} className="child-suggestion">
-          <div className="child-header">
-            <Link to={`/signals/${encodeURIComponent(c.timestamp)}`}>{c.timestamp}</Link>
-            <span className={`dir-${c.proposal.direction}`}>{c.proposal.direction.toUpperCase()}</span>
-            <span>{c.proposal.instrument}</span>
-            <span className="subtle">
-              entry {fmtPrice(c.proposal.entry, c.proposal.instrument)} · stop {fmtPrice(c.proposal.stop, c.proposal.instrument)} · target {fmtPrice(c.proposal.target, c.proposal.instrument)}
-            </span>
-          </div>
-          {c.outcome_suggestion && (
-            <>
-              <div className="child-verdict">
-                <span className="subtle">Suggested:</span>{' '}
-                <span className={`dir-${c.outcome_suggestion.result}`}>
-                  {c.outcome_suggestion.result.toUpperCase()}
-                </span>
-                {' '}
-                <span className="subtle">conf {fmtPct(c.outcome_suggestion.confidence)}</span>
-              </div>
-              {c.outcome_suggestion.reasoning && (
-                <p className="child-reasoning">{c.outcome_suggestion.reasoning}</p>
-              )}
-            </>
-          )}
-          <button
-            type="button"
-            className="primary"
-            onClick={() => confirmM.mutate(c.timestamp)}
-            disabled={confirmM.isPending}
-          >
-            {confirmM.isPending ? 'Applying…' : 'Confirm & remove previous'}
-          </button>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-// ---------- Pending suggestion (informational) ----------
-function PendingSuggestionBanner({ suggestion }: { suggestion: NonNullable<Signal['outcome_suggestion']> }) {
-  return (
-    <div className="card suggestion-info">
-      <p>
-        <strong>Pending reconciliation:</strong>{' '}
-        Model suggested{' '}
-        <span className={`dir-${suggestion.result}`}>{suggestion.result.toUpperCase()}</span>
-        {suggestion.confidence !== undefined && ` at ${fmtPct(suggestion.confidence)} confidence`}.
-        Confirm or reject on the{' '}
-        <Link to={`/signals/${encodeURIComponent(suggestion.source_signal_ts)}`}>
-          analysis from {suggestion.source_signal_ts}
-        </Link>.
-      </p>
     </div>
   )
 }
@@ -522,7 +435,7 @@ function JournalSection({
 // ---------- Outcome section (controlled) ----------
 function OutcomeSection({
   result, setResult, note, setNote, closingPrice, setClosingPrice,
-  suggestedClose, saved, dirty,
+  suggestedClose, saved, dirty, locked,
 }: {
   result: Outcome['result']
   setResult: (r: Outcome['result']) => void
@@ -533,16 +446,23 @@ function OutcomeSection({
   suggestedClose: number
   saved: Outcome | undefined
   dirty: boolean
+  locked: boolean
 }) {
   return (
     <div className="card form-block">
       <h2>Outcome {dirty && <span className="dirty-flag">unsaved</span>}</h2>
+      {locked && (
+        <p className="subtle">
+          <strong>Locked:</strong> signal was not entered (4 h window expired or marked
+          no-entry). Outcome stays <code>no_fill</code>.
+        </p>
+      )}
       <p className="subtle">
         Saved: <strong>{saved?.result ?? 'none'}</strong>
         {saved?.note && ` — ${saved.note}`}
         {saved?.closing_price != null && ` • close @ ${saved.closing_price}`}
       </p>
-      <fieldset>
+      <fieldset disabled={locked}>
         {OUTCOME_RESULTS.map((r) => (
           <label key={r}>
             <input
@@ -564,12 +484,14 @@ function OutcomeSection({
           value={closingPrice}
           onChange={(e) => setClosingPrice(e.target.value)}
           placeholder={`e.g. ${suggestedClose}`}
+          disabled={locked}
         />
       </label>
       <textarea
         placeholder="What happened?"
         value={note}
         onChange={(e) => setNote(e.target.value)}
+        disabled={locked}
       />
     </div>
   )

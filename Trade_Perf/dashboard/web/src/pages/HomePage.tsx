@@ -15,8 +15,6 @@ import {
 interface ActionItem {
   timestamp: string
   instrument: string
-  result?: string
-  source_signal_ts?: string
   confidence?: number
   floor?: number
 }
@@ -33,7 +31,6 @@ interface HomeData {
     trade_pnl: number
   }
   action_queue: {
-    pending_suggestions: ActionItem[]
     below_floor: ActionItem[]
     missing_journal: ActionItem[]
     total: number
@@ -101,17 +98,6 @@ function ActionQueueCard({ q }: { q: HomeData['action_queue'] }) {
   return (
     <div className="card">
       <h2>Action Queue ({q.total})</h2>
-      {q.pending_suggestions.length > 0 && (
-        <ActionGroup
-          title="Pending reconciliations"
-          items={q.pending_suggestions}
-          render={(s) => (
-            <Link to={`/signals/${encodeURIComponent(s.source_signal_ts || s.timestamp)}`}>
-              {s.timestamp.slice(0, 10)} {s.instrument} → {s.result}
-            </Link>
-          )}
-        />
-      )}
       {q.below_floor.length > 0 && (
         <ActionGroup
           title="Below confidence floor"

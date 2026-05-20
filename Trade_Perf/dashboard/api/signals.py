@@ -23,21 +23,12 @@ logger = logging.getLogger(__name__)
 
 
 def _load_visible_signals() -> dict[str, dict]:
-    """Mirror TradingBot dashboard.py's load_signals(include_deleted=False).
-
-    Loads + merges signals.jsonl (latest-wins), filters out soft-deleted entries,
-    then strips stale outcome_suggestion entries whose source analysis was
-    deleted (so prior trades don't show 'pending' banners pointing nowhere).
-    """
+    """Loads + merges signals.jsonl (latest-wins), filters out soft-deleted
+    entries. The cross-signal LLM reconciliation feature was removed
+    2026-05-19; outcome_suggestion still exists on records (audit trail
+    from the outcome_resolver bar-walker) but no UI surfaces it."""
     raw = signal_storage.load_all(bridge.SIGNALS_LOG)
-    visible = {ts: rec for ts, rec in raw.items() if not rec.get("deleted")}
-    for rec in visible.values():
-        sug = rec.get("outcome_suggestion")
-        if sug:
-            source_ts = sug.get("source_signal_ts")
-            if not source_ts or source_ts not in visible:
-                rec.pop("outcome_suggestion", None)
-    return visible
+    return {ts: rec for ts, rec in raw.items() if not rec.get("deleted")}
 
 
 OUTCOME_RESULTS = ("pending", "target", "stop", "breakeven", "partial", "no_fill", "not_watched", "other")
@@ -89,31 +80,12 @@ def list_signals(include_deleted: bool = False) -> dict[str, Any]:
 
 @router.get("/{timestamp}")
 def get_signal(timestamp: str) -> dict[str, Any]:
-    """Return one signal plus its reconciliation children.
-
-    Children are visible signals whose `outcome_suggestion.source_signal_ts`
-    points back to this signal and that don't already have a final outcome.
-    Both the signal and each child are enriched with computed metrics.
-    """
+    """Return one signal enriched with computed metrics."""
     signals = _load_visible_signals()
     if timestamp not in signals:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"signal not found: {timestamp}")
     config = instruments.load_config()
-    rec = _enrich(signals[timestamp], config)
-
-    children = []
-    for ts, child in signals.items():
-        if ts == timestamp:
-            continue
-        sug = child.get("outcome_suggestion") or {}
-        if sug.get("source_signal_ts") != timestamp:
-            continue
-        if (child.get("outcome") or {}).get("result"):
-            continue
-        children.append(_enrich(child, config))
-    children.sort(key=lambda r: r.get("timestamp", ""), reverse=True)
-
-    return {"signal": rec, "children": children}
+    return {"signal": _enrich(signals[timestamp], config)}
 
 
 def _require_signal(timestamp: str, *, include_deleted: bool = False) -> dict:
@@ -170,13 +142,25 @@ def update_journal(timestamp: str, update: JournalUpdate) -> dict[str, Any]:
 
 @router.post("/{timestamp}/outcome")
 def update_outcome(timestamp: str, update: OutcomeUpdate) -> dict[str, Any]:
-    _require_signal(timestamp)
+    """Set the outcome and coerce entry_triggered to match the rule:
+    outcome populated implies the entry was hit, so any non-no_fill
+    outcome forces entry_triggered=True; outcome=no_fill forces False.
+    Reject the contradictory case (already flagged not-entered, asking
+    for a real outcome) so stats stay honest."""
+    rec = _require_signal(timestamp)
+    if rec.get("entry_triggered") is False and update.result != "no_fill":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Signal was not entered (entry_triggered=false); outcome is locked to 'no_fill'.",
+        )
     signal_storage.append_update(
         bridge.SIGNALS_LOG, timestamp,
         outcome={"result": update.result, "note": update.note,
                  "closing_price": update.closing_price},
+        entry_triggered=(update.result != "no_fill"),
     )
-    return {"timestamp": timestamp, "outcome": update.model_dump()}
+    return {"timestamp": timestamp, "outcome": update.model_dump(),
+            "entry_triggered": update.result != "no_fill"}
 
 
 @router.post("/{timestamp}/position")
@@ -194,36 +178,29 @@ def update_entry_triggered(timestamp: str, update: EntryTriggeredUpdate) -> dict
     """Mark whether the proposal's entry price was actually hit + the user
     took the trade. Distinct from outcome (how it closed) and position_size
     (sizing decision). Toggled from the Signal Analysis row's Entry-column
-    checkbox; surfaces in trade-history filters."""
-    _require_signal(timestamp)
+    checkbox; surfaces in trade-history filters.
+
+    Flipping triggered=False stamps outcome=no_fill when no outcome is set
+    yet so the signal flows into the W/L + P&L rollups without a separate
+    edit. An existing outcome (target/stop/etc.) is left alone."""
+    rec = _require_signal(timestamp)
     signal_storage.append_update(
         bridge.SIGNALS_LOG, timestamp,
         entry_triggered=update.triggered,
     )
-    return {"timestamp": timestamp, "entry_triggered": update.triggered}
-
-
-@router.post("/{timestamp}/suggestion/confirm")
-def confirm_suggestion(timestamp: str) -> dict[str, Any]:
-    """Apply the suggested outcome AND soft-delete the prior signal — it's now resolved.
-
-    Mirrors TradingBot dashboard.py confirm_suggestion. Outcome data persists in
-    the JSONL for later analysis but the row is hidden from the dashboard.
-    """
-    rec = _require_signal(timestamp)
-    suggestion = rec.get("outcome_suggestion") or {}
-    if not suggestion or rec.get("outcome_suggestion_dismissed"):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "no pending suggestion")
-    note = f"Confirmed from suggestion: {(suggestion.get('reasoning') or '')[:200]}"
-    signal_storage.append_update(
-        bridge.SIGNALS_LOG, timestamp,
-        outcome={"result": suggestion["result"], "note": note, "closing_price": None},
-    )
-    signal_storage.append_update(bridge.SIGNALS_LOG, timestamp, deleted=True)
-    logger.info("Confirmed %s for %s + soft-deleted (prior signal resolved)",
-                suggestion["result"], timestamp)
-    return {"timestamp": timestamp, "applied": suggestion["result"],
-            "source_signal_ts": suggestion.get("source_signal_ts")}
+    auto_no_fill = False
+    if not update.triggered and not (rec.get("outcome") or {}).get("result"):
+        signal_storage.append_update(
+            bridge.SIGNALS_LOG, timestamp,
+            outcome={"result": "no_fill",
+                     "note": "Auto: marked no-entry on the dashboard",
+                     "closing_price": None,
+                     "auto_confirmed": True},
+        )
+        auto_no_fill = True
+    return {"timestamp": timestamp,
+            "entry_triggered": update.triggered,
+            "auto_no_fill_outcome": auto_no_fill}
 
 
 @router.post("/{timestamp}/reject")

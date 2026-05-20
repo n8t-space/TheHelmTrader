@@ -42,26 +42,22 @@ For this project specifically, the user's preferences differ from TradingBot's w
 
 ## User accounts
 
-- `<live-account-id>` — live brokerage
-- `<demo-account-id>` — sim
-- `<eval-account-id>` — Tradify prop firm eval
-- `Sim101`, `Playback101`, `Backtest`, `SimBetaSIM` — NT-default sims
-
-Trades CL / MCL / MES / ES futures through Tradovate.
+NT account IDs are operator-specific; categorize them under Live / Evals / Simulation via the Settings page. NT-default sims (`Sim101`, `Playback101`, `Backtest`, `SimBetaSIM`) ship pre-listed under simulation.
 
 ## Conventions
 
-- **Loopback only.** FastAPI binds `127.0.0.1`. Workstation Ollama at `<workstation-LAN-IP>:11434` (default) is the one external dep, firewalled to GEEKOM via UFW.
+- **Loopback only.** FastAPI binds `127.0.0.1`. Ollama (configured via the Settings page) is the one external dep — default localhost, may point at a LAN workstation if inference is offloaded.
 - **System Python.** Uvicorn runs from `%USERPROFILE%\AppData\Local\Programs\Python\Python312\python.exe` (real winget install — NOT the `WindowsApps` alias, which is service-incompatible). The watchdog's `Resolve-PythonExe` enforces this. Bot pipeline deps (`fastapi`, `uvicorn[standard]`, `pydantic`, `requests`, `Pillow`, `httpx`) installed system-wide. **Not** the TradingBot venv.
 - **No auto-execution.** The bot proposes; the user decides. Forever.
 - **`signals.jsonl` is append-only.** Updates are new lines with the same timestamp; readers merge latest-wins. Soft-delete = a line with `deleted: true`.
+- **Entry/outcome invariant (enforced 2026-05-19).** `outcome=no_fill` ⇔ `entry_triggered=False`; any other outcome implies `entry_triggered=True`. The `POST /api/signals/{ts}/outcome` and `/entry-triggered` routes coerce the pair on every write. Outcomes default to `position_size=1` so realized P&L populates without manual sizing. The bar walker (`outcome_watcher`) auto-stamps both fields for manual and headless signals; the only blocker is having feed.db data covering the signal's time window.
 - **CORS dev mode:** `allow_methods=["GET","POST","PUT","DELETE"]` for `:5173`. PUT was added when the Auto Analysis config endpoint landed.
 
 ## Routers
 
-- `signals.py` — Signal Analysis page (LLM proposals, journal, outcome).
+- `signals.py` — Signal Analysis page (LLM proposals, journal, outcome). Coerces the entry/outcome invariants: `outcome=no_fill` ⇔ `entry_triggered=False`; any other outcome implies `entry_triggered=True`.
 - `trades.py` (helper module — actual route in `main.py`) — derives round-trip P&L from fills.
-- `home.py` — today's session card, action queue, equity curve, cumulative-earnings by Live / Evals / Simulation / Signals bucket.
+- `home.py` — today's session card, action queue (below_floor + missing_journal), equity curve, cumulative-earnings by Live / Evals / Simulation / Signals bucket. Buckets are read from the live Settings doc.
 - `health.py` — log tail + latency stats.
 - `feed.py` — `/api/feed/{bar,ticks,prune}` ingest from `HelmFeed.cs`. Includes session-gap warmup gate.
 - `auto_analysis.py` — `/api/auto-analysis/{config,status}` for the Auto Analysis dashboard panel.

@@ -460,6 +460,56 @@ No code changes this session. Outstanding list restructured around the new top b
 
 ---
 
+### 2026-05-19 — Signals rules overhaul, reconciliation removal, packaging prep
+
+Three threads landed:
+
+**(1) Entry/outcome invariants enforced everywhere.** Codified the rule "outcome populated implies entry was hit" across all write paths:
+- `Trade_Perf/dashboard/api/signals.py` — `update_outcome` route coerces `entry_triggered` to match (`no_fill` ⇔ `False`, anything else ⇒ `True`). Rejects 409 if you try to set a non-no_fill outcome on an already-no-entry signal.
+- Same coercion on `update_entry_triggered`: flipping triggered=false auto-stamps `outcome=no_fill`.
+- `TradingBot/app/src/outcome_watcher.py` — bar-walker writes now stamp `entry_triggered` alongside the outcome.
+- Signals default to `position_size=1` contract (`signal_storage.append_signal` adds the default; `instruments.compute_trade_metrics` floors zero/missing to 1) so realized P&L and W/L tallies populate without manual sizing edits.
+
+**(2) "Reconciliations from this analysis" feature removed.** The cross-signal LLM reconciliation that ran per capture and surfaced via a confirm-and-soft-delete UI was retired — confirming destroyed prior signals from the visible list, distorting W/L + P&L stats, and the LLM was often less accurate than the deterministic bar walker. Removed:
+- Frontend: `ChildrenSection`, `PendingSuggestionBanner`, `pending_suggestions` block on Home, `children` field on `SignalDetailResp`.
+- Dashboard API: `_load_visible_signals` suggestion-stripper, children walk in `GET /api/signals/{ts}`, `POST /api/signals/{ts}/suggestion/confirm`, `pending_suggestions` from the action queue.
+- Bot pipeline: `_reconcile_open_trades`, `_find_open_trades`, `MAX_RECONCILE_TARGETS`, the `reconcile()` call site (the function itself is left in `local_llm_analyzer.py` with no caller).
+
+Side-effect: manual signals (Ctrl+Shift+F) now get the same direct outcome write from the bar walker that headless signals already had — no confirm banner exists to surface a "suggestion." User retains override via the Signal Detail Outcome editor.
+
+**(3) Outcome-watcher candidate filter fix + data normalization.** The watcher was skipping any signal where `outcome_suggestion.result` was set, regardless of who wrote it — so stale LLM-reconciliation suggestions from the now-removed feature were blocking the bar walker from ever running. Filter now only skips when `outcome_suggestion.engine == "resolver"`. Backfilled three sticky signals (2026-05-13T18:45, 2026-05-18T18:45, 2026-05-19T08:53) via a force-rerun script. Earlier in the day backfilled 61 historical signals that had `entry_triggered=None` + age >= 4h: 50 with real outcomes (target/stop) got `entry_triggered=true`; 11 with no/no_fill outcome got `entry_triggered=false` plus `outcome=no_fill` where missing.
+
+**Packaging prep (also today):**
+- Scrubbed personal data from runtime defaults. `runtime_config.py`, `Trade_Perf/dashboard/api/settings.py`, `Trade_Perf/dashboard/api/home.py`, `Trade_Perf/dashboard/web/src/api.ts`, `SettingsPage.tsx`, `parse_fills.py` no longer carry the operator's account IDs or LAN Ollama IP. Defaults are localhost Ollama + NT-default sims only; the friend's account categorization is driven from the Settings page.
+- `home.py`'s previously-hardcoded `ACCOUNT_CATEGORIES` now reads from `settings_mod.get_settings().accounts` at request time — single source of truth.
+- Doc sweep: `README.md`, `TradingBot/CLAUDE.md`, `TradingBot/PROJECT.md`, `Trade_Perf/CLAUDE.md`, `Trade_Perf/PROJECT.md` no longer reference the operator-specific workstation IP as the canonical inference target. `README.md` gained a "unzip the bundle" alternative to the SSH-clone instruction. `TradingBot/PROJECT.md` "Open-Trade Reconciliation" section rewritten as "(REMOVED)".
+
+**Test status:** TradingBot 29/29 pass. Trade_Perf 12/13 pass — the one failure (`test_second_bar_within_window_is_armed`) pre-dates today and is unrelated; tracks the feed-router session-gap warmup behavior.
+
+**Not done / next session:**
+- Carry-forward from 2026-05-12: backend HTTP plumbing (Ctrl+Shift+F + HelmFeed POSTs failing to reach `:8000`) still item #1.
+- The two ATM-strategy asks: refresh available strategies at boot + force proposals to reference an ATM strategy instead of raw TP/SL.
+- Clarify the "automated signal updater still doesn't work" report.
+- Investigate the pre-existing `test_second_bar_within_window_is_armed` failure.
+
+---
+
+### 2026-05-18 — Signal Analysis page cleanup (KPI grid + P&L column)
+
+Tightened the Signal Analysis page header and added a P&L column to the row table. Nothing structural — pure dashboard polish on `Trade_Perf/dashboard/web/src/pages/SignalAnalysisPage.tsx`.
+
+**Done:**
+- Replaced the single "Today's Signals" KPI card with a side-by-side `.grid` of two cards: **Today** (date in header) and **All-Time** (`since <first-signal-date>` in header). Both share a `computeKpi(signals)` helper that returns `{count, resolved, pnl, wins, losses, instruments, autoGen, autoRes, avgConfidence, avgRR}`. Today's card shows: P&L headline, signals captured, win-rate · W/L, resolved/count, auto-gen · auto-res, instruments list. All-Time adds avg confidence · avg R:R and a distinct-instrument count.
+- Added a sortable **P&L** column to the signal table between Outcome and Auto-res. Reads `s.metrics.realized_pnl`, formatted as `$X,XXX.XX` with `pnl-pos`/`pnl-neg` coloring; `—` for signals with no realized P&L; tooltip surfaces `realized_pnl_source` (e.g. `trade-match` vs `proposal-bracket`). `SignalKey` union extended with `'realized_pnl'`; accessor + `<Th>` + empty-row `colSpan` bumped from 14 → 15.
+- Removed dead `fmtNum` helper that had been unreferenced for several sessions (was tripping `noUnusedLocals`).
+- `npx tsc -p tsconfig.app.json --noEmit` clean. `npm run build` clean. New bundle `dist/assets/index-pBRHd6uB.js` (333 kB / 99 kB gzipped). Watchdog picks it up next uvicorn restart; no NS / backend changes required.
+
+**Not done / next session:**
+- No backend touched. Backend HTTP plumbing investigation from 2026-05-12 (Ctrl+Shift+F hotkey + HelmFeed POSTs both failing to reach `:8000`) is still the priority item carried forward.
+- All-Time card lists every distinct instrument inline — fine at current volume; will need a `Top N` / collapse if the count grows past ~10.
+
+---
+
 ### Closure
 
 The original four-phase AI-offload migration is fully done; the eight-checkpoint dashboard merger is fully done; four post-merge improvement tiers are done; rebrand is done. The Live Feed Pipeline is functionally complete — Phases 1–4 all shipped (2026-05-08 → 2026-05-09); only live Phase 1 verification at market open remains. The 10-item improvement sweep closed the headless-analyzer + auto-prune carry-forwards from earlier in the day, plus added pytest, schema versioning, NSSM-service watchdog, project-local CLAUDE.md scaffolding, and an `ninjascript-reviewer` subagent. **Next major initiative: SHARING** (config page + installer). The list under "Outstanding (next session pickup)" near the top of this doc is the source of truth for what's next.
