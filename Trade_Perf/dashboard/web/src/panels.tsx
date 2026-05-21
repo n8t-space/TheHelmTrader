@@ -2,7 +2,8 @@ import React, { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   ACCOUNT_GROUPS, buildQuery, fetchJSON, EMPTY_FILTERS,
-  type DimensionsResp, type Filters, type HealthResp, type StatsResp,
+  type DimensionsResp, type DrawdownResp, type DrawdownState,
+  type Filters, type HealthResp, type SettingsResp, type StatsResp,
   type Trade, type TradesResp, type Fill, type FillsResp,
 } from './api'
 import { arrow, flip, sortBy, type Sort } from './lib/sorting'
@@ -88,6 +89,22 @@ export function StatsPanel({ label, filters, extra = {} }: { label: string; filt
 
 export function FilterBar({ filters, setFilters }: { filters: Filters; setFilters: (f: Filters) => void }) {
   const dims = useQuery({ queryKey: ['dimensions'], queryFn: () => fetchJSON<DimensionsResp>('/api/dimensions') })
+  // Account groups come from live Settings (accounts.live / evals / simulation).
+  // Falls back to the static ACCOUNT_GROUPS preset only when /api/settings is
+  // unreachable — without this, the Live + Eval buttons are bound to the empty
+  // arrays in the const and clicking them does nothing.
+  const settings = useQuery({
+    queryKey: ['settings'],
+    queryFn: () => fetchJSON<SettingsResp>('/api/settings'),
+    staleTime: 60_000,
+  })
+  const groups: Record<string, string[]> = settings.data
+    ? {
+        Live:       settings.data.settings.accounts.live,
+        Eval:       settings.data.settings.accounts.evals,
+        Simulation: settings.data.settings.accounts.simulation,
+      }
+    : ACCOUNT_GROUPS
   const update = (patch: Partial<Filters>) => setFilters({ ...filters, ...patch })
   const cleared = JSON.stringify(filters) === JSON.stringify(EMPTY_FILTERS)
   const accounts = dims.data?.accounts ?? []
@@ -98,6 +115,10 @@ export function FilterBar({ filters, setFilters }: { filters: Filters; setFilter
     update({ account: Array.from(next) })
   }
   const setGroup = (members: string[]) => {
+    // Empty group (no accounts configured for this bucket) -> no-op; clearing
+    // the filter would mimic "All" and silently swallow the click. Honest
+    // signal: button stays inactive + we don't change state.
+    if (members.length === 0) return
     // Keep only members that actually exist in the recorder so the query
     // never carries dead IDs. If none exist, fall back to the raw group --
     // an empty result set is the honest answer.
@@ -105,7 +126,7 @@ export function FilterBar({ filters, setFilters }: { filters: Filters; setFilter
     update({ account: present.length ? present : members })
   }
   const groupActive = (members: string[]) => {
-    if (filters.account.length === 0) return false
+    if (filters.account.length === 0 || members.length === 0) return false
     const set = new Set(filters.account)
     const present = members.filter((m) => accounts.includes(m))
     const ref = present.length ? present : members
@@ -116,14 +137,18 @@ export function FilterBar({ filters, setFilters }: { filters: Filters; setFilter
       <div className="filter-accounts">
         <div className="filter-account-quick">
           <span className="subtle">Accounts:</span>
-          {Object.entries(ACCOUNT_GROUPS).map(([label, members]) => (
+          {Object.entries(groups).map(([label, members]) => (
             <button
               key={label}
               type="button"
               className={'quick-btn' + (groupActive(members) ? ' on' : '')}
               onClick={() => setGroup(members)}
+              disabled={members.length === 0}
+              title={members.length === 0
+                ? `No accounts assigned to ${label} — configure on the Settings page.`
+                : `Filter to ${label}: ${members.join(', ')}`}
             >
-              {label}
+              {label}{members.length === 0 ? ' (0)' : ''}
             </button>
           ))}
           <button
@@ -307,6 +332,81 @@ export function TradesTable({ filters }: { filters: Filters }) {
 }
 
 // ---------- Scale-out detail row ----------
+
+const pnlClass = (n: number) => (n > 0 ? 'pnl-pos' : n < 0 ? 'pnl-neg' : '')
+
+export function DrawdownsCard() {
+  const q = useQuery<DrawdownResp>({
+    queryKey: ['drawdowns'],
+    queryFn: () => fetchJSON<DrawdownResp>('/api/drawdown/accounts'),
+    refetchInterval: 10_000,
+  })
+  if (q.isLoading || !q.data) return null
+  if (q.data.accounts.length === 0) return null
+  const worst = q.data.accounts[0]?.status
+  return (
+    <div className={'card drawdown-card status-' + worst}>
+      <h2>
+        Account drawdowns
+        {worst !== 'ok' && (
+          <span className={'drawdown-headline-tag status-' + worst}>
+            {worst === 'breach' ? 'BREACH' : 'WARNING'}
+          </span>
+        )}
+      </h2>
+      <div className="table-wrap">
+        <table className="drawdown-table">
+          <thead>
+            <tr>
+              <th>Account</th>
+              <th className="num">Balance</th>
+              <th className="num">Peak</th>
+              <th className="num">Today</th>
+              <th className="num">Trailing DD left</th>
+              <th className="num">Daily DD left</th>
+              <th className="num">Profit target</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {q.data.accounts.map((a) => <DrawdownRow key={a.account} a={a} />)}
+          </tbody>
+        </table>
+      </div>
+      <p className="subtle" style={{ marginTop: 8, marginBottom: 0 }}>
+        Realized P&amp;L only. Open positions not included. Daily window: midnight {q.data.tz}.
+      </p>
+    </div>
+  )
+}
+
+function DrawdownRow({ a }: { a: DrawdownState }) {
+  const trailingPct = a.trailing_drawdown > 0 ? a.trailing_dd_left / a.trailing_drawdown : 1
+  const dailyPct    = a.daily_drawdown    > 0 ? a.daily_dd_left    / a.daily_drawdown    : 1
+  const tProgress   = a.profit_target > 0 ? (a.profit_target - a.profit_target_left) / a.profit_target : 0
+  return (
+    <tr>
+      <td><strong>{a.account}</strong> {a.profit_target_hit && <span className="badge auto-res">target hit</span>}</td>
+      <td className="num">{fmtMoney(a.current_balance)}</td>
+      <td className="num">{fmtMoney(a.peak_balance)}</td>
+      <td className={'num ' + pnlClass(a.today_pnl)}>{fmtMoney(a.today_pnl)}</td>
+      <td className={'num status-' + a.trailing_status}>
+        {fmtMoney(a.trailing_dd_left)}
+        <span className="subtle"> ({(trailingPct * 100).toFixed(0)}%)</span>
+      </td>
+      <td className={'num status-' + a.daily_status}>
+        {fmtMoney(a.daily_dd_left)}
+        <span className="subtle"> ({(dailyPct * 100).toFixed(0)}%)</span>
+      </td>
+      <td className="num">
+        {fmtMoney(a.profit_target_left)}
+        <span className="subtle"> ({Math.min(100, Math.max(0, tProgress * 100)).toFixed(0)}% done)</span>
+      </td>
+      <td><span className={'badge status-' + a.status}>{a.status}</span></td>
+    </tr>
+  )
+}
+
 
 function ScaleOutDetail({ trade }: { trade: Trade }) {
   // Entry usually a single fill (1 row), exits split across N legs. Render

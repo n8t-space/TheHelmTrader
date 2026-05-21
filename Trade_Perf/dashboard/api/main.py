@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from . import _tradebot_bridge as bridge, atm_strategies as atm_routes, auto_analysis as auto_analysis_routes, db, feed as feed_routes, health as health_routes, home as home_routes, settings as settings_routes, signals as signals_routes, trades as tradelib, version as version_routes
+from . import _tradebot_bridge as bridge, atm_strategies as atm_routes, auto_analysis as auto_analysis_routes, db, drawdown as drawdown_routes, feed as feed_routes, health as health_routes, home as home_routes, settings as settings_routes, signals as signals_routes, trades as tradelib, version as version_routes
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +139,7 @@ app.include_router(auto_analysis_routes.router)
 app.include_router(settings_routes.router)
 app.include_router(atm_routes.router)
 app.include_router(version_routes.router)
+app.include_router(drawdown_routes.router)
 
 
 @app.get("/api/health")

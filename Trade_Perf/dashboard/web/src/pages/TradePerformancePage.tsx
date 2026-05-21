@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { EMPTY_FILTERS, type Filters } from '../api'
-import { FillsTable, FilterBar, StatsPanel, StatusPanel, TradesTable } from '../panels'
+import { DrawdownsCard, FillsTable, FilterBar, StatsPanel, StatusPanel, TradesTable } from '../panels'
 
 export function TradePerformancePage() {
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS)
@@ -15,6 +15,8 @@ export function TradePerformancePage() {
         <StatsPanel label="Today" filters={filters} extra={{ date_from: today }} />
         <StatsPanel label="Filtered" filters={filters} />
       </div>
+
+      <DrawdownsCard />
 
       <TradesTable filters={filters} />
       <FillsTable filters={filters} />

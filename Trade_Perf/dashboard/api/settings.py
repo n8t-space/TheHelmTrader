@@ -76,6 +76,16 @@ class Strategy(BaseModel):
     stale_bar_seconds: int = Field(default=120, ge=10, le=3600)
 
 
+class DrawdownConfig(BaseModel):
+    # Per-account prop-firm drawdown limits. Keys here are NT account IDs that
+    # appear in `evals` (or `live` for funded accounts that still carry a
+    # trailing DD). All amounts in account-currency dollars.
+    starting_balance: float = Field(default=50000.0, ge=0.0)
+    trailing_drawdown: float = Field(default=2500.0, ge=0.0)
+    daily_drawdown: float = Field(default=1500.0, ge=0.0)
+    profit_target: float = Field(default=3000.0, ge=0.0)
+
+
 class Accounts(BaseModel):
     # Bucket your NT account IDs so the Home page's cumulative-earnings card
     # aggregates correctly. Set these via the Settings page after first run.
@@ -87,6 +97,11 @@ class Accounts(BaseModel):
     simulation: list[str] = Field(default_factory=lambda: [
         "Sim101", "Playback101", "Backtest", "SimBetaSIM",
     ])
+    # Per-account drawdown configuration, keyed by NT account ID. Only the
+    # accounts you want tracked (typically your prop-firm Evals) need entries
+    # here. Missing entries get NO drawdown tracking -- the account just
+    # doesn't show up in the Drawdown card.
+    drawdowns: dict[str, DrawdownConfig] = Field(default_factory=dict)
 
 
 class Settings(BaseModel):

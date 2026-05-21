@@ -11,6 +11,7 @@ import {
   type AutoAnalysisStatusResp,
   type Signal,
 } from '../api'
+import { DrawdownsCard } from '../panels'
 
 interface ActionItem {
   timestamp: string
@@ -67,10 +68,14 @@ export function HomePage() {
         <ActionQueueCard q={d.action_queue} />
         <AutoAnalysisCard />
       </div>
+      <DrawdownsCard />
       <LastSignalCard signal={d.last_signal} />
     </>
   )
 }
+
+// DrawdownsCard + DrawdownRow live in panels.tsx (shared between Home and
+// Trade Performance pages).
 
 function TodayCard({ t }: { t: HomeData['today'] }) {
   // Trades-only on Home. Signal KPI lives on the Signal Analysis page.

@@ -9,7 +9,7 @@ declare global {
 }
 import {
   fetchJSON, postJSON, putJSON,
-  type OllamaTestResp, type SettingsAccounts, type SettingsAiBackend,
+  type DrawdownConfig, type OllamaTestResp, type SettingsAccounts, type SettingsAiBackend,
   type SettingsAppearance, type SettingsDoc, type SettingsResp,
   type SettingsStrategy,
 } from '../api'
@@ -71,6 +71,7 @@ export function SettingsPage() {
           live:       clean(doc.accounts.live),
           evals:      clean(doc.accounts.evals),
           simulation: clean(doc.accounts.simulation),
+          drawdowns:  doc.accounts.drawdowns,
         },
       }
       return putJSON<{ settings: SettingsDoc; path: string }>('/api/settings', cleaned)
@@ -578,6 +579,130 @@ function AccountsTab({ value, onChange }: {
           onChange={(l) => editList('simulation', l)}
         />
       </div>
+
+      <DrawdownTrackingBlock
+        accounts={value}
+        onChange={(d) => onChange({ ...value, drawdowns: d })}
+      />
+    </>
+  )
+}
+
+function DrawdownTrackingBlock({
+  accounts, onChange,
+}: {
+  accounts: SettingsAccounts
+  onChange: (d: Record<string, DrawdownConfig>) => void
+}) {
+  const drawdowns = accounts.drawdowns || {}
+  const tracked = Object.keys(drawdowns).sort()
+  // Eligible candidates = live + evals (sim accounts don't have DD limits).
+  const candidates = [...accounts.live, ...accounts.evals]
+    .map((a) => a.trim())
+    .filter((a) => a !== '' && !(a in drawdowns))
+    .sort()
+
+  const update = (acct: string, patch: Partial<DrawdownConfig>) => {
+    onChange({ ...drawdowns, [acct]: { ...drawdowns[acct], ...patch } })
+  }
+  const remove = (acct: string) => {
+    const next = { ...drawdowns }
+    delete next[acct]
+    onChange(next)
+  }
+  const add = (acct: string) => {
+    if (!acct || acct in drawdowns) return
+    onChange({
+      ...drawdowns,
+      [acct]: {
+        starting_balance: 50000,
+        trailing_drawdown: 2500,
+        daily_drawdown: 1500,
+        profit_target: 3000,
+      },
+    })
+  }
+
+  return (
+    <>
+      <h4 style={{ marginTop: 24 }}>Drawdown tracking</h4>
+      <p className="subtle">
+        Track prop-firm drawdown limits per account. Only accounts listed here appear in the Home page Drawdown card.
+        Defaults match a typical $50K Eval (trailing $2,500 / daily $1,500 / profit target $3,000) — edit as needed.
+      </p>
+      {tracked.length === 0 && (
+        <p className="subtle"><em>No accounts tracked yet. Add one from the dropdown below.</em></p>
+      )}
+      {tracked.map((acct) => {
+        const c = drawdowns[acct]
+        return (
+          <div key={acct} className="drawdown-row">
+            <div className="drawdown-row-head">
+              <strong>{acct}</strong>
+              <button
+                type="button"
+                className="account-row-remove"
+                onClick={() => remove(acct)}
+                title={`Stop tracking ${acct}`}
+                aria-label={`stop tracking ${acct}`}
+              >
+                {'×'}
+              </button>
+            </div>
+            <div className="settings-row drawdown-row-fields">
+              <label>
+                <span>Starting balance ($)</span>
+                <input
+                  type="number" min={0} step="any"
+                  value={c.starting_balance}
+                  onChange={(e) => update(acct, { starting_balance: Number(e.target.value) })}
+                />
+              </label>
+              <label>
+                <span>Trailing DD ($)</span>
+                <input
+                  type="number" min={0} step="any"
+                  value={c.trailing_drawdown}
+                  onChange={(e) => update(acct, { trailing_drawdown: Number(e.target.value) })}
+                />
+                <span className="subtle">Distance from peak balance.</span>
+              </label>
+              <label>
+                <span>Daily DD ($)</span>
+                <input
+                  type="number" min={0} step="any"
+                  value={c.daily_drawdown}
+                  onChange={(e) => update(acct, { daily_drawdown: Number(e.target.value) })}
+                />
+                <span className="subtle">Loss-per-day limit.</span>
+              </label>
+              <label>
+                <span>Profit target ($)</span>
+                <input
+                  type="number" min={0} step="any"
+                  value={c.profit_target}
+                  onChange={(e) => update(acct, { profit_target: Number(e.target.value) })}
+                />
+                <span className="subtle">Eval pass threshold.</span>
+              </label>
+            </div>
+          </div>
+        )
+      })}
+      {candidates.length > 0 ? (
+        <div className="drawdown-add-row">
+          <span className="subtle">Track new account:</span>
+          <select
+            defaultValue=""
+            onChange={(e) => { if (e.target.value) { add(e.target.value); e.currentTarget.value = '' } }}
+          >
+            <option value="">— pick an account —</option>
+            {candidates.map((a) => <option key={a} value={a}>{a}</option>)}
+          </select>
+        </div>
+      ) : (
+        <p className="subtle"><em>All Live + Eval accounts are already tracked. Add more under Live / Evals above to track them here.</em></p>
+      )}
     </>
   )
 }

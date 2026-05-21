@@ -466,10 +466,50 @@ export interface SettingsStrategy {
   stale_bar_seconds: number
 }
 
+export interface DrawdownConfig {
+  starting_balance: number
+  trailing_drawdown: number
+  daily_drawdown: number
+  profit_target: number
+}
+
 export interface SettingsAccounts {
   live: string[]
   evals: string[]
   simulation: string[]
+  // Per-account drawdown config, keyed by NT account ID. Only accounts listed
+  // here show up in the Drawdown card on Home + the augmented by_account row
+  // on Trade Performance.
+  drawdowns: Record<string, DrawdownConfig>
+}
+
+export interface DrawdownState {
+  account: string
+  starting_balance: number
+  current_balance: number
+  peak_balance: number
+  realized_pnl_total: number
+  today_pnl: number
+  trailing_drawdown: number
+  trailing_dd_used: number
+  trailing_dd_left: number
+  daily_drawdown: number
+  daily_dd_used: number
+  daily_dd_left: number
+  profit_target: number
+  profit_target_left: number
+  profit_target_hit: boolean
+  trade_count: number
+  trailing_status: 'ok' | 'warn' | 'breach'
+  daily_status:    'ok' | 'warn' | 'breach'
+  status:          'ok' | 'warn' | 'breach'
+}
+
+export interface DrawdownResp {
+  accounts: DrawdownState[]
+  warn_threshold: number
+  tz: string
+  error?: string
 }
 
 export interface SettingsDoc {

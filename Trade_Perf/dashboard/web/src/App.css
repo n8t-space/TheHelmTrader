@@ -1086,6 +1086,84 @@ th.select-col, td.select-col { padding: 6px; }
   color:      rgba(120, 220, 130, 0.95);
 }
 
+/* ---------- Account drawdown card (Home + Trade Performance) ---------- */
+
+.drawdown-card.status-warn  { border-color: rgba(255, 200, 80, 0.6); }
+.drawdown-card.status-breach { border-color: var(--neg); }
+
+.drawdown-headline-tag {
+  display: inline-block;
+  margin-left: 12px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+}
+
+.drawdown-headline-tag.status-warn {
+  background: rgba(255, 200, 80, 0.15);
+  color: rgba(255, 200, 80, 0.95);
+}
+.drawdown-headline-tag.status-breach {
+  background: rgba(248, 81, 73, 0.18);
+  color: var(--neg);
+}
+
+.drawdown-table th, .drawdown-table td {
+  white-space: nowrap;
+}
+
+td.status-warn   { color: rgba(255, 200, 80, 0.95); font-weight: 600; }
+td.status-breach { color: var(--neg);              font-weight: 600; }
+td.status-ok     { color: var(--pos); }
+
+.badge.status-ok     { background: rgba(63, 185, 80, 0.15);  color: rgba(120, 220, 130, 0.95); }
+.badge.status-warn   { background: rgba(255, 200, 80, 0.15); color: rgba(255, 200, 80, 0.95); }
+.badge.status-breach { background: rgba(248, 81, 73, 0.18);  color: var(--neg); }
+
+/* ---------- Settings: drawdown row editor ---------- */
+
+.drawdown-row {
+  margin-top: 14px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.drawdown-row-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+
+.drawdown-row-fields {
+  margin-top: 0;
+}
+
+.drawdown-add-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.drawdown-add-row select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  min-width: 200px;
+}
+
+
 /* ---------- Trades table: scale-out expansion ----------
    Click the arrow to reveal a per-leg fill breakdown inline beneath the
    aggregate row. The aggregate stays the volume-weighted average -- the
