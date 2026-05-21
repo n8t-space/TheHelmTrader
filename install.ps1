@@ -36,6 +36,13 @@ param(
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
 
+# PS 5.1's console defaults to the OEM codepage (typically Windows-1252 / CP437)
+# and mangles UTF-8 output from native commands -- vite prints checkmarks and
+# box-drawing chars during the frontend build that come out as "Gamma-pound-chi"
+# noise without this. PS 7+ does it by default; this fixes 5.1.
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
 # PS 5.1 wraps every line of a native command's stderr as a NativeCommandError
 # when '2>&1' is in play, which trips $ErrorActionPreference = 'Stop' even on
 # successful builds (vite's "chunks > 500 kB" advisory is the classic example).
