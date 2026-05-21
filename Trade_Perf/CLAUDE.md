@@ -51,17 +51,21 @@ NT account IDs are operator-specific; categorize them under Live / Evals / Simul
 - **No auto-execution.** The bot proposes; the user decides. Forever.
 - **`signals.jsonl` is append-only.** Updates are new lines with the same timestamp; readers merge latest-wins. Soft-delete = a line with `deleted: true`.
 - **Entry/outcome invariant (enforced 2026-05-19).** `outcome=no_fill` ⇔ `entry_triggered=False`; any other outcome implies `entry_triggered=True`. The `POST /api/signals/{ts}/outcome` and `/entry-triggered` routes coerce the pair on every write. Outcomes default to `position_size=1` so realized P&L populates without manual sizing. The bar walker (`outcome_watcher`) auto-stamps both fields for manual and headless signals; the only blocker is having feed.db data covering the signal's time window.
+- **Scale-out legs are TOP-LEVEL (added 2026-05-20).** For multi-bracket ATMs (the new `MES_*` / `MCL_*` 2c templates), per-leg fills live at `signal.legs`, **not** inside `signal.outcome`. Done deliberately so the auto-resolver can publish progressive per-leg fills without clobbering a user-edited aggregate outcome, and the user can edit the aggregate `outcome.result` without touching auto-resolved legs. `legs` is in `signal_storage.MERGEABLE_FIELDS`. Future readers: `rec["legs"]`, NOT `rec["outcome"]["legs"]`. When `legs` is present, `compute_trade_metrics` sums realized P&L across them and falls back to `closing_price` then single-outcome math otherwise.
+- **`is_scale_out` on trades (added 2026-05-20).** `derive_trades` flags any round-trip with >1 exit fill. The aggregate `exit_price` is still the qty-weighted average (volume-weighted math gives correct total P&L) — the per-leg `entry_fills[]` + `exit_fills[]` arrays expose what NT8 actually filled so the table can show TP1 + Runner detail under an expandable row.
 - **CORS dev mode:** `allow_methods=["GET","POST","PUT","DELETE"]` for `:5173`. PUT was added when the Auto Analysis config endpoint landed.
 
 ## Routers
 
-- `signals.py` — Signal Analysis page (LLM proposals, journal, outcome). Coerces the entry/outcome invariants: `outcome=no_fill` ⇔ `entry_triggered=False`; any other outcome implies `entry_triggered=True`.
-- `trades.py` (helper module — actual route in `main.py`) — derives round-trip P&L from fills.
+- `signals.py` — Signal Analysis page (LLM proposals, journal, outcome). Coerces the entry/outcome invariants: `outcome=no_fill` ⇔ `entry_triggered=False`; any other outcome implies `entry_triggered=True`. Also hosts `POST /api/signals/{ts}/legs` for manual per-leg fill editing on scale-out ATMs.
+- `trades.py` (helper module — actual route in `main.py`) — derives round-trip P&L from fills. Outputs `is_scale_out`, `entry_fills[]`, `exit_fills[]` (with pre-computed per-leg pnl) so the dashboard can show per-leg detail without recomputing client-side.
 - `home.py` — today's session card, action queue (below_floor + missing_journal), equity curve, cumulative-earnings by Live / Evals / Simulation / Signals bucket. Buckets are read from the live Settings doc.
 - `health.py` — log tail + latency stats.
 - `feed.py` — `/api/feed/{bar,ticks,prune}` ingest from `HelmFeed.cs`. Includes session-gap warmup gate.
 - `auto_analysis.py` — `/api/auto-analysis/{config,status}` for the Auto Analysis dashboard panel.
 - `settings.py` — `/api/settings` GET/PUT/reset + `/test/ollama`. Pydantic schema at `~/.helm/settings.json`. Consumed by `runtime_config.py` on the bot side.
+- `atm_strategies.py` — `/api/atm-strategies` enumerates NT8 ATM XMLs on every call (no caching — user creates new strategies mid-session).
+- `version.py` — `/api/version` returns the cached git HEAD-vs-origin/main comparison; `/api/version/check` forces a refresh. Background loop in `main.py` lifespan refreshes every 6 h. Safe-fails on release-zip (no `.git`) installs.
 - `db.py` — `trades.db` connection + queries. Multi-account filter supports `?account=A&account=B`.
 - `_tradebot_bridge.py` — sys.path shim importing `TradingBot/app/src/` modules.
 

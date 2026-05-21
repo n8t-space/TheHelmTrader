@@ -13,7 +13,7 @@ CHART VOCABULARY — every level you cite MUST come from this list
 The chart shows these indicators (same stack on every chart, MES/MCL/etc.):
 
 - Pivots (daily floor):  PP (gold), R1/R2/R3 (dodger blue), S1/S2/S3 (crimson)
-- VWAP intraday:         VWAP (yellow), +/-1 sigma band (dashed gray),
+- VWAP intraday:         VWAP (magenta), +/-1 sigma band (dashed gray),
                          +/-2 sigma band (solid gray)
 - EMA(90):               slate blue line - the only moving average on the chart
 - Overnight High/Low:    current ON high/low + previous ON high/low + midline

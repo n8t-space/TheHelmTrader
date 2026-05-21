@@ -126,6 +126,64 @@ In order, after each phase:
 
 ## 9. Session Log
 
+### 2026-05-20 — Update infrastructure, Support page, scale-out ATM end-to-end, Trade Performance per-leg
+
+Long session, four landing initiatives + the scale-out architecture that's been deferred since the new 2c ATM templates were dropped earlier in the day.
+
+**Done:**
+
+1. **Six new 2-contract scale-out ATM templates** dropped into `~/Documents/NinjaTrader 8/templates/AtmStrategy/`: `MES_SCALP_8t_8-20`, `MES_INTRA_16t_16-40`, `MES_SWING_24t_24-80`, `MCL_SCALP_15t_15-30`, `MCL_INTRA_30t_30-75`, `MCL_SWING_50t_50-150`. Each is TP1 + Runner with BE-arm + trail-step config. Sized by heuristic (typical noise + 1R/2R math) — **NOT yet grounded in actual MES/MCL ATR or replay data**; user flagged this gap explicitly and wants it revisited.
+
+2. **`uninstall.ps1`** at repo root mirroring `install.ps1`. Idempotent 5-phase (service / recorder / NS / settings / data). Defaults preserve trade data + settings; `-PurgeSettings / -PurgeData / -All` flags gate the destructive paths. Also stops the recorder process before removing its Startup shortcut (the README's prior copy-paste sequence didn't). `install.ps1` UTF-8 console encoding fix so PS 5.1 doesn't mangle vite's `✓` and `│` output.
+
+3. **Update-check infrastructure.** `Trade_Perf/dashboard/api/version.py` walks `git -C <repo> fetch origin main` on a 6-hour background loop, caches the result; `GET /api/version` is a cheap read; `POST /api/version/check` forces refresh. `UpdateBanner.tsx` mounts above the header on every page, shows when `commits_behind > 0`, has Check-now + per-SHA dismiss (re-pops when newer commits land). Release-zip installs (no `.git`) gracefully hide the banner. Wired into main.py lifespan alongside the existing prune + outcome-watcher loops.
+
+4. **Support page** at `/support` with four deep-linkable tabs: Overview (version + uninstall + help) · Update (5-step procedure + "what's preserved" guarantees) · Troubleshooting (FAQ + log locations) · Configuration (mirrors `CONFIGURATION.md`). Replaces the loose "you'll figure it out" docs with one operator destination.
+
+5. **`CONFIGURATION.md`** at repo root — recommended baseline config across AI backend (Ollama vs Claude vs OpenAI comparison + per-provider tables), strategy thresholds with rationale, accounts setup, Auto Analysis 4-slot layout, NinjaScript placement. Settings page fields gained per-field `<span className="subtle">` hints + a link to `Support → Configuration`.
+
+6. **Scale-out ATM support, end-to-end** (the big one — commit `8168f79`):
+   - `local_llm_analyzer._load_atm_strategies` now extracts the full per-bracket plan (qty, SL, TP, BE trigger/offset, trail steps). Prompt block surfaces total qty + bracket count so the LLM picks size-aware.
+   - `_derive_stop_target` attaches `atm_brackets` + `atm_total_qty` to every proposal that resolved a known ATM.
+   - `pipeline.py` lifts `atm_total_qty` to top-level `position_size` (2c ATMs now record `position_size=2` instead of 1).
+   - `signal_storage.py` adds `legs` to `MERGEABLE_FIELDS` as a top-level field (independent of `outcome` so auto-resolver and user edits don't clobber each other). No schema bump — purely additive.
+   - `instruments.compute_trade_metrics` makes `legs` the primary realized-P&L source (sum across legs); new `leg_breakdown[]` for per-leg dollar attribution. Falls back to `closing_price` then single-outcome math for legacy records.
+   - `outcome_resolver.resolve_brackets()` — **new per-bracket state machine**. Streams ticks (preferred) or bars (fallback) from feed.db, advances each bracket independently with auto-BE arming (`be_armed` when MFE ≥ trigger → stop steps to entry + plus offset), trail-step state with NT8's frequency semantics (stop only updates when MFE advances by `freq` more ticks since the last anchor). Conservative stop-wins-ties tie-break. Returns one `Leg` per bracket: `{result ∈ target | stop | trail | be | neither, exit_price, exit_ts, method}`.
+   - `outcome_watcher` got a bracket-aware path: when proposal carries `atm_brackets`, runs `resolve_brackets` instead of the single-outcome resolver. Writes legs as they accumulate (progressive partial fills allowed); writes the aggregate `outcome.result` only when every leg has closed (`all-target → target`, `all-stop → stop`, mixed → `partial`).
+   - New `POST /api/signals/{ts}/legs` route for manual leg editing. User-entered legs overwrite auto-resolved; `engine` field tags the source.
+   - Frontend types in `api.ts` (`AtmBracket`, `Leg`, `LegResult`, `LegBreakdownItem`). `SignalDetailPage` gained a **Scale-out brackets** card: one row per bracket with the plan (SL/TP/BE/trail in ticks + computed prices), result dropdown, exit-price input, per-leg P&L (color-coded), engine badge. Sum-of-legs total. Edits flow through the existing save-all + dirty-tracking.
+   - Smoke-tested: 2-bracket scale-out walks through to both legs resolving `target` at the correct tick prices.
+
+7. **Trade Performance per-leg display** (commit `9964370`). The aggregate $ P&L was already correct (volume-weighted avg gives the right total) but the table showed one misleading averaged exit price for trades NT8 actually closed in multiple legs.
+   - `trades.derive_trades` now stamps `is_scale_out`, `entry_fills`, `exit_fills` (with pre-computed per-leg `pnl`) on every trade. Aggregate `exit_price / gross_pnl / net_pnl` unchanged.
+   - `TradesTable` adds a leading chevron column for scale-out rows; click to expand an inline detail row showing per-leg fills (qty/price/time + color-coded leg P&L). Subtle "avg of N legs" caption on the Exit cell.
+   - Sanity-tested: 2c entry + 1c TP1 @ +2pt + 1c runner @ +5pt → aggregate $35, per-leg ($10 + $25). ✓
+
+Verified: `npx tsc -b` clean. Python imports clean. Service NOT restarted — user did the rebuild + restart and confirmed everything renders + persists.
+
+Three commits pushed to `main`:
+- `73f1cb7` — UTF-8 encoding + uninstall.ps1
+- `5a0858a` — version check, Support page, CONFIGURATION.md
+- `8168f79` — scale-out feature
+- `9964370` — Trade Performance per-leg display
+
+(Plus two README-only commits earlier: `54979f3` Daily-use section, `45faaf9` Update section, `cc97266` multi-provider AI positioning.)
+
+**Outstanding (next session pickup, priority order):**
+
+1. **Re-ground the 6 new ATMs against actual data.** Current tick counts came from heuristics. Pull ATR(14) on MES + MCL across 1m/5m/15m for the last 20 sessions and re-derive SL = ATR × {0.5, 1.0, 1.5} for scalp/intraday/swing. Then either Strategy Analyzer + Market Replay or fill-log mining to validate hit rates. Cheapest path: ATR pull from `feed.db` if coverage is there, else from NT8's bar export.
+2. **Dynamic indicator vocabulary from NS at trigger time.** Right now `analyzer.txt` hardcodes the chart's indicator stack with plot colors (PP gold, R1-3 dodger blue, EMA90 slate blue, **VWAP magenta**, etc.). Discovered EOD that VWAP was documented as yellow in the prompt while the chart actually renders it magenta — a static-color drift exactly as predicted. Static-fixed the one mismatch (`analyzer.txt:18`, yellow → magenta) but the **real fix** is to make NS enumerate the chart's indicators on every Ctrl+Shift+F + serialize them (name, plot-property names, colors, periods) into the `market_context` payload, then have `pipeline._format_context_for_prompt` build the "CHART VOCABULARY" section from that data instead of from a static prompt. Eliminates the drift class. Touch points: `HelmAnalyzer.cs` (BuildContextJson) → POST payload → `pipeline._format_context_for_prompt` → analyzer.txt loses the static vocabulary block. SMC events stay in the prompt since they're computed not plotted.
+3. **Aggregate outcome refinement for scale-outs.** Currently any mix of leg results → `partial`. Could split: `partial_target` (TP1+runner_target), `partial_be` (TP1+runner_BE), `partial_trail` (TP1+runner_trail), `partial_stop` (TP1+initial_stop). Useful for win-rate slicing.
+4. **Backend HTTP plumbing item from 2026-05-19** — Ctrl+Shift+F was reported failing to reach `:8000` at that time. User has been using the hotkey successfully this session, so this may have resolved itself via the restart cycle or one of the intervening fixes. **Verify it's fully healthy** before closing.
+5. **`test_second_bar_within_window_is_armed` failure** — pre-existing, still uninvestigated.
+6. **resolve_brackets caching.** Runs on every watcher pass for unclosed scale-outs (cheap at current volume — 30s interval, handful of open trades — but a per-signal "last walked through ts_ms" cache would let it incremental-walk only the new tape).
+
+**Carry-forward observations:**
+- `outcome.legs` does NOT exist — `legs` is a **top-level** field on the signal record, independent of `outcome`. This is intentional so the auto-resolver can publish per-leg fills without clobbering a user-edited aggregate outcome and vice versa. Future code reading legs should look at `rec["legs"]`, not `rec["outcome"]["legs"]`.
+- The scale-out resolver makes the bar-fallback **optimistic for stop avoidance**: within a single bar, it probes the favorable extreme for target/MFE-update BEFORE checking the unfavorable extreme against the stop, so a bar that touched both inside its range gets ruled "target hit" if target was inside. Matches the existing single-outcome resolver's behavior; flagged here because the conservative tie-break documented in module docstring only applies to *tick-level* ties.
+
+---
+
 ### 2026-05-08 — Migration kickoff session
 
 **Done:**
