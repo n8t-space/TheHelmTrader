@@ -61,6 +61,36 @@ def _build_trade(group: list[dict]) -> dict | None:
     exit_time = exits[-1]["time_utc"]
     duration = (_parse_iso(exit_time) - _parse_iso(entry_time)).total_seconds()
 
+    # Per-fill detail so the dashboard can show TP1 vs Runner fills on scale-out
+    # ATMs instead of a misleading volume-weighted average. Each fill carries
+    # its own dollar P&L (vs entry's avg) so the UI doesn't have to recompute.
+    sign = 1 if direction == "Long" else -1
+
+    def _fill_summary(rows: list[dict]) -> list[dict]:
+        return [
+            {
+                "time":  f["time_utc"],
+                "qty":   f["qty"],
+                "price": f["price"],
+            }
+            for f in rows
+        ]
+
+    entry_fills = _fill_summary(entries)
+    exit_fills_detailed = []
+    for f in exits:
+        leg_pnl = sign * (f["price"] - avg_entry) * f["qty"] * pv
+        exit_fills_detailed.append({
+            "time":  f["time_utc"],
+            "qty":   f["qty"],
+            "price": f["price"],
+            "pnl":   round(leg_pnl, 2),
+        })
+
+    # Scale-out heuristic: NT8 records each bracket's TP/SL/trail fill as a
+    # separate execution. >1 exit row means the trade closed in legs.
+    is_scale_out = len(exits) > 1
+
     return {
         "account": group[0]["account_name"],
         "symbol": group[0]["master_symbol"],
@@ -81,6 +111,9 @@ def _build_trade(group: list[dict]) -> dict | None:
         "num_fills": len(group),
         "first_fill_id": group[0]["id"],
         "last_fill_id": group[-1]["id"],
+        "is_scale_out": is_scale_out,
+        "entry_fills": entry_fills,
+        "exit_fills": exit_fills_detailed,
     }
 
 

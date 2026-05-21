@@ -1086,6 +1086,52 @@ th.select-col, td.select-col { padding: 6px; }
   color:      rgba(120, 220, 130, 0.95);
 }
 
+/* ---------- Trades table: scale-out expansion ----------
+   Click the arrow to reveal a per-leg fill breakdown inline beneath the
+   aggregate row. The aggregate stays the volume-weighted average -- the
+   detail row shows what NT8 actually filled. */
+
+.scale-out-arrow {
+  color: var(--accent);
+  font-size: 10px;
+  user-select: none;
+}
+
+tr.scale-out-detail td {
+  background: rgba(88, 166, 255, 0.04);
+  border-top: none;
+  padding: 8px 12px 12px;
+}
+
+.scale-out-detail-content {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 24px;
+}
+
+.scale-out-block .scale-out-label {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.scale-out-mini {
+  width: 100%;
+}
+
+.scale-out-mini td {
+  padding: 3px 8px;
+  border-bottom: none;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.scale-out-mini td:first-child { padding-left: 0; }
+
+
 /* ---------- "Entered" column in Signal Analysis table ----------
    Auto-resolved by the bot's entry_resolver:
      hit       -> price touched the entry level after the signal

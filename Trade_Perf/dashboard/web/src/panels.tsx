@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import React, { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   ACCOUNT_GROUPS, buildQuery, fetchJSON, EMPTY_FILTERS,
@@ -185,6 +185,12 @@ type TradeKey = keyof Pick<Trade, 'exit_time' | 'account' | 'symbol' | 'directio
 
 export function TradesTable({ filters }: { filters: Filters }) {
   const [sort, setSort] = useState<Sort<TradeKey>>({ key: 'exit_time', dir: 'desc' })
+  // Set of trade keys (first_fill_id-last_fill_id) whose scale-out detail
+  // row is currently expanded. Scale-out trades default collapsed; click to
+  // expand and see the per-leg fill breakdown.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const toggleExpanded = (k: string) =>
+    setExpanded((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n })
   const q = useQuery<TradesResp>({
     queryKey: ['trades', filters],
     queryFn: () => fetchJSON<TradesResp>('/api/trades' + buildQuery(filters)),
@@ -215,6 +221,7 @@ export function TradesTable({ filters }: { filters: Filters }) {
           <table>
             <thead>
               <tr>
+                <th style={{ width: 24 }}></th>
                 <Th k="exit_time">Exit time (CT)</Th>
                 <Th k="account">Account</Th>
                 <Th k="symbol">Symbol</Th>
@@ -231,29 +238,56 @@ export function TradesTable({ filters }: { filters: Filters }) {
             <tbody>
               {trades.map((t) => {
                 const cls = t.net_pnl > 0 ? 'pnl-pos' : t.net_pnl < 0 ? 'pnl-neg' : ''
+                const key = `${t.first_fill_id}-${t.last_fill_id}`
+                const isExpanded = expanded.has(key)
                 return (
-                  <tr key={`${t.first_fill_id}-${t.last_fill_id}` as React.Key}>
-                    <td>{fmtTime(t.exit_time)}</td>
-                    <td>{t.account}</td>
-                    <td>{t.contract || t.symbol}</td>
-                    <td>{t.direction}</td>
-                    <td className="num">{t.qty}</td>
-                    <td className="num">{t.entry_price}</td>
-                    <td className="num">{t.exit_price}</td>
-                    <td className={'num ' + cls}>{fmtMoney(t.net_pnl)}</td>
-                    <td className="num">{fmtMoney(t.commission + t.fee)}</td>
-                    <td className="num">{fmtDuration(t.duration_seconds)}</td>
-                    <td>{t.strategies.join(', ') || <span className="subtle">—</span>}</td>
-                  </tr>
+                  <React.Fragment key={key}>
+                    <tr>
+                      <td style={{ textAlign: 'center', cursor: t.is_scale_out ? 'pointer' : 'default' }}
+                          onClick={() => t.is_scale_out && toggleExpanded(key)}
+                          title={t.is_scale_out ? 'Click to show per-leg fills' : ''}>
+                        {t.is_scale_out
+                          ? <span className="scale-out-arrow">{isExpanded ? '▼' : '▶'}</span>
+                          : ''}
+                      </td>
+                      <td>{fmtTime(t.exit_time)}</td>
+                      <td>{t.account}</td>
+                      <td>{t.contract || t.symbol}</td>
+                      <td>{t.direction}</td>
+                      <td className="num">{t.qty}</td>
+                      <td className="num">{t.entry_price}</td>
+                      <td className="num">
+                        {t.exit_price}
+                        {t.is_scale_out && (
+                          <div className="subtle" style={{ fontSize: 11 }}>
+                            avg of {t.exit_fills.length} legs
+                          </div>
+                        )}
+                      </td>
+                      <td className={'num ' + cls}>{fmtMoney(t.net_pnl)}</td>
+                      <td className="num">{fmtMoney(t.commission + t.fee)}</td>
+                      <td className="num">{fmtDuration(t.duration_seconds)}</td>
+                      <td>{t.strategies.join(', ') || <span className="subtle">—</span>}</td>
+                    </tr>
+                    {isExpanded && t.is_scale_out && (
+                      <tr className="scale-out-detail">
+                        <td></td>
+                        <td colSpan={11}>
+                          <ScaleOutDetail trade={t} />
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 )
               })}
               {trades.length === 0 && (
-                <tr><td colSpan={11} className="subtle" style={{ textAlign: 'center', padding: '20px' }}>No trades match these filters.</td></tr>
+                <tr><td colSpan={12} className="subtle" style={{ textAlign: 'center', padding: '20px' }}>No trades match these filters.</td></tr>
               )}
             </tbody>
             {trades.length > 0 && (
               <tfoot>
                 <tr className="totals-row">
+                  <td></td>
                   <td colSpan={4}>Totals ({trades.length} trades)</td>
                   <td className="num">{totals.qty}</td>
                   <td className="num"></td>
@@ -271,6 +305,55 @@ export function TradesTable({ filters }: { filters: Filters }) {
     </div>
   )
 }
+
+// ---------- Scale-out detail row ----------
+
+function ScaleOutDetail({ trade }: { trade: Trade }) {
+  // Entry usually a single fill (1 row), exits split across N legs. Render
+  // both as a compact two-column block so the reader sees Entry → Legs at a
+  // glance. Per-leg P&L is pre-computed server-side.
+  return (
+    <div className="scale-out-detail-content">
+      <div className="scale-out-block">
+        <div className="scale-out-label">Entry</div>
+        <table className="scale-out-mini">
+          <tbody>
+            {trade.entry_fills.map((f, i) => (
+              <tr key={i}>
+                <td className="num">{f.qty}</td>
+                <td>@</td>
+                <td className="num">{f.price}</td>
+                <td className="subtle">{fmtTime(f.time)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="scale-out-block">
+        <div className="scale-out-label">
+          Exit fills ({trade.exit_fills.length})
+        </div>
+        <table className="scale-out-mini">
+          <tbody>
+            {trade.exit_fills.map((f, i) => {
+              const cls = f.pnl > 0 ? 'pnl-pos' : f.pnl < 0 ? 'pnl-neg' : ''
+              return (
+                <tr key={i}>
+                  <td className="num">{f.qty}</td>
+                  <td>@</td>
+                  <td className="num">{f.price}</td>
+                  <td className="subtle">{fmtTime(f.time)}</td>
+                  <td className={'num ' + cls}>{fmtMoney(f.pnl)}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 
 // ---------- FillsTable ----------
 
