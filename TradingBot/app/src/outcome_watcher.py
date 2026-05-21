@@ -58,6 +58,21 @@ async def watcher_loop(signals_path: Path) -> None:
             logger.exception("[outcome-watcher] iteration failed")
 
 
+def _aggregate_leg_outcome(legs: list[dict]) -> str:
+    """Collapse per-leg results to a single outcome label.
+
+    All target -> 'target'; all initial-stop -> 'stop'; mix of target + anything
+    -> 'partial'; otherwise -> 'partial' (legs that hit BE or trailed out
+    aren't full stop-outs and aren't clean targets either).
+    """
+    results = [leg.get("result") for leg in legs]
+    if all(r == "target" for r in results):
+        return "target"
+    if all(r == "stop" for r in results):
+        return "stop"
+    return "partial"
+
+
 def _one_pass(signals_path, signal_storage, entry_resolver, outcome_resolver,
               instruments_mod) -> None:
     sigs = signal_storage.load_all(signals_path)
@@ -76,12 +91,26 @@ def _one_pass(signals_path, signal_storage, entry_resolver, outcome_resolver,
         # the trade is closed (or the user marked it not_watched / other).
         if outcome.get("result") and outcome.get("result") != "pending":
             continue
-        suggestion = rec.get("outcome_suggestion") or {}
-        if suggestion.get("result") and suggestion.get("engine") == "resolver":
-            # Already walked by the bar resolver; outcome write must have
-            # failed previously. The earlier backfill handles those.
-            continue
+        # For multi-bracket scale-outs we may have written PARTIAL legs on a
+        # prior pass while the runner kept trailing -- re-walk those each pass
+        # until every leg closes. Bracket-aware signals therefore skip the
+        # outcome_suggestion guard below.
         p = rec.get("proposal") or {}
+        brackets = p.get("atm_brackets") or []
+        has_brackets = bool(brackets)
+        if not has_brackets:
+            suggestion = rec.get("outcome_suggestion") or {}
+            if suggestion.get("result") and suggestion.get("engine") == "resolver":
+                # Already walked by the bar resolver; outcome write must have
+                # failed previously. The earlier backfill handles those.
+                continue
+        else:
+            existing_legs = rec.get("legs") or []
+            if (len(existing_legs) == len(brackets)
+                    and all((leg or {}).get("result") not in (None, "neither")
+                            for leg in existing_legs)):
+                # All legs already resolved -- nothing more to discover.
+                continue
         if p.get("direction") in (None, "flat"):
             continue
         if not all(k in p for k in ("instrument", "direction", "entry", "stop", "target")):
@@ -177,6 +206,74 @@ def _one_pass(signals_path, signal_storage, entry_resolver, outcome_resolver,
             continue
 
         # --- Step 2: did stop or target get hit? ------------------------
+        # Bracket-aware path: scale-out ATMs carry a per-bracket plan on the
+        # proposal. Run the per-bracket state machine and write legs as they
+        # resolve. Aggregate outcome is only written once every leg closes.
+        brackets = p.get("atm_brackets") or []
+        if brackets:
+            try:
+                tick_size, _ = instruments_mod.lookup_tick_size(
+                    inst_full, instruments_mod.load_config())
+            except Exception:
+                logger.exception("[outcome-watcher] tick_size lookup failed for %s", ts)
+                continue
+            if not tick_size or tick_size <= 0:
+                # No tick size -> can't translate tick distances to prices.
+                # Fall through to the legacy single-outcome path.
+                pass
+            else:
+                try:
+                    legs = outcome_resolver.resolve_brackets(
+                        instrument=inst_clean,
+                        direction=p["direction"],
+                        entry_ts=entry_ts,
+                        entry_price=float(p["entry"]),
+                        tick_size=float(tick_size),
+                        brackets=brackets,
+                    )
+                except Exception:
+                    logger.exception("[outcome-watcher] resolve_brackets failed for %s", ts)
+                    continue
+                # Skip if nothing has resolved at all (price still in the
+                # initial range). Try again next pass.
+                resolved_count = sum(1 for leg in legs if leg["result"] != "neither")
+                if resolved_count == 0:
+                    continue
+                # Tag each leg with the resolver as the source so the UI can
+                # distinguish auto-suggested legs from user-entered ones.
+                tagged_legs = [{**dict(leg), "engine": "resolver"} for leg in legs]
+                signal_storage.append_update(signals_path, ts, legs=tagged_legs)
+                all_done = resolved_count == len(legs)
+                if all_done:
+                    agg = _aggregate_leg_outcome(legs)
+                    # Audit suggestion + final outcome write, same shape as the
+                    # single-bracket path so the rest of the dashboard is happy.
+                    signal_storage.append_update(
+                        signals_path, ts,
+                        outcome_suggestion={
+                            "result": agg,
+                            "source_signal_ts": ts,
+                            "engine": "resolver-brackets",
+                        },
+                        outcome={
+                            "result": agg,
+                            "note": f"Auto-resolved per-leg ({len(legs)} brackets)",
+                            "closing_price": None,
+                            "auto_confirmed": True,
+                        },
+                        entry_triggered=True,
+                    )
+                    logger.info(
+                        "[outcome-watcher] BRACKETS RESOLVED %s for %s "
+                        "(legs=%s)", agg, ts,
+                        [(leg["result"], leg["exit_price"]) for leg in legs],
+                    )
+                else:
+                    logger.info(
+                        "[outcome-watcher] PARTIAL bracket progress for %s "
+                        "(%d/%d legs closed)", ts, resolved_count, len(legs))
+                continue  # bracket path handled; skip single-bracket fallback
+
         try:
             result = outcome_resolver.resolve_outcome(
                 instrument=inst_clean,

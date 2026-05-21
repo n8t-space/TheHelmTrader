@@ -143,6 +143,7 @@ def compute_trade_metrics(rec: dict, config: dict) -> dict:
         "total_reward": 0.0,
         "realized_pnl": None,
         "realized_pnl_source": None,
+        "leg_breakdown": None,
     }
 
     if direction == "flat" or point_value is None:
@@ -167,8 +168,46 @@ def compute_trade_metrics(rec: dict, config: dict) -> dict:
 
     realized_pnl = None
     realized_pnl_source = None
-    # Closing price overrides the outcome-derived P/L.
-    if closing_price not in (None, "") and direction in ("long", "short") and position_size > 0:
+
+    # Per-leg fills (multi-bracket scale-out) take precedence over everything.
+    # Sum the realized P&L across legs; record the per-leg breakdown for the UI.
+    legs = rec.get("legs")
+    leg_breakdown: list[dict] | None = None
+    if isinstance(legs, list) and legs and direction in ("long", "short"):
+        sign = 1 if direction == "long" else -1
+        pnl_sum = 0.0
+        leg_breakdown = []
+        any_leg = False
+        for leg in legs:
+            if not isinstance(leg, dict):
+                continue
+            try:
+                qty = float(leg.get("qty") or 0)
+                px  = float(leg.get("exit_price"))
+            except (TypeError, ValueError):
+                continue
+            if qty <= 0:
+                continue
+            leg_pnl = sign * (px - entry) * point_value * qty
+            pnl_sum += leg_pnl
+            any_leg = True
+            leg_breakdown.append({
+                "bracket_idx":   leg.get("bracket_idx"),
+                "qty":           qty,
+                "result":        leg.get("result"),
+                "exit_price":    px,
+                "exit_ts":       leg.get("exit_ts"),
+                "method":        leg.get("method"),
+                "pnl":           leg_pnl,
+            })
+        if any_leg:
+            realized_pnl        = pnl_sum
+            realized_pnl_source = "legs"
+
+    # Closing price overrides the single-outcome path (still useful for trades
+    # where the user just wants to type the average fill rather than enter legs).
+    if realized_pnl is None and closing_price not in (None, "") \
+       and direction in ("long", "short") and position_size > 0:
         try:
             close = float(closing_price)
             sign = 1 if direction == "long" else -1
@@ -204,6 +243,7 @@ def compute_trade_metrics(rec: dict, config: dict) -> dict:
         "total_reward": total_reward,
         "realized_pnl": realized_pnl,
         "realized_pnl_source": realized_pnl_source,
+        "leg_breakdown": leg_breakdown,
     }
 
 

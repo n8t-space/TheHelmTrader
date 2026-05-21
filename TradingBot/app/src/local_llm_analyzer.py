@@ -290,30 +290,79 @@ def _parse_json(raw: str) -> dict:
         raise
 
 
+def _parse_bracket(bracket_node: ET.Element) -> dict:
+    """Parse a single <Bracket> element into a structured dict.
+
+    Captures the full per-bracket plan -- qty, initial stop, target, auto-BE
+    trigger/offset, and the trail-step list. The trail steps drive the
+    runner state machine in outcome_resolver."""
+    def _int(parent: ET.Element | None, tag: str) -> int:
+        if parent is None:
+            return 0
+        v = parent.findtext(tag)
+        try:
+            return int(v) if v is not None else 0
+        except ValueError:
+            return 0
+
+    out: dict = {
+        "qty":            _int(bracket_node, "Quantity"),
+        "stop_ticks":     _int(bracket_node, "StopLoss"),
+        "target_ticks":   _int(bracket_node, "Target"),
+        "auto_be_plus":   0,
+        "auto_be_trigger": 0,
+        "trail_steps":    [],
+    }
+    ss = bracket_node.find("StopStrategy")
+    if ss is not None:
+        out["auto_be_plus"]    = _int(ss, "AutoBreakEvenPlus")
+        out["auto_be_trigger"] = _int(ss, "AutoBreakEvenProfitTrigger")
+        for step in ss.findall("AutoTrailSteps/AutoTrailStep"):
+            out["trail_steps"].append({
+                "frequency":      _int(step, "Frequency"),
+                "profit_trigger": _int(step, "ProfitTrigger"),
+                "stop_loss":      _int(step, "StopLoss"),
+            })
+    return out
+
+
 def _load_atm_strategies() -> list[dict]:
-    """Enumerate NT's ATM strategy templates with stop/target tick counts.
+    """Enumerate NT's ATM strategy templates with full per-bracket detail.
 
     Reads ~/Documents/NinjaTrader 8/templates/AtmStrategy/*.xml on every call --
     cheap (<10 ms for a typical folder) and ensures user-created strategies
     are picked up without restarting the bot.
+
+    Each strategy carries:
+      name, total_qty, brackets[]: {qty, stop_ticks, target_ticks,
+        auto_be_plus, auto_be_trigger, trail_steps[]}
+    Plus aggregate stop_ticks/target_ticks (tightest/widest) for the
+    prompt block and back-compat with old single-bracket consumers.
     """
     if not ATM_TEMPLATES_DIR.is_dir():
         logger.warning("ATM templates dir not found: %s", ATM_TEMPLATES_DIR)
         return []
     out: list[dict] = []
     for xml_path in sorted(ATM_TEMPLATES_DIR.glob("*.xml")):
-        info = {"name": xml_path.stem, "stop_ticks": None, "target_ticks": None}
+        info: dict = {
+            "name":          xml_path.stem,
+            "stop_ticks":    None,
+            "target_ticks":  None,
+            "total_qty":     0,
+            "brackets":      [],
+        }
         try:
             root = ET.parse(xml_path).getroot()
             # NT8 XML schema: <NinjaTrader>/<AtmStrategy>/<Brackets>/<Bracket>
-            brackets = root.findall(".//Brackets/Bracket")
-            if brackets:
-                stops = [int(b.findtext("StopLoss") or 0) for b in brackets]
-                tgts  = [int(b.findtext("Target")   or 0) for b in brackets]
-                # Use the tightest stop and widest target across brackets --
-                # matches what the user-visible R:R label typically shows.
-                info["stop_ticks"]   = min(s for s in stops if s > 0) if any(stops) else None
-                info["target_ticks"] = max(t for t in tgts  if t > 0) if any(tgts)  else None
+            bracket_nodes = root.findall(".//Brackets/Bracket")
+            if bracket_nodes:
+                brackets = [_parse_bracket(b) for b in bracket_nodes]
+                info["brackets"]  = brackets
+                info["total_qty"] = sum(b["qty"] for b in brackets if b["qty"] > 0)
+                stops = [b["stop_ticks"]   for b in brackets if b["stop_ticks"]   > 0]
+                tgts  = [b["target_ticks"] for b in brackets if b["target_ticks"] > 0]
+                if stops: info["stop_ticks"]   = min(stops)
+                if tgts:  info["target_ticks"] = max(tgts)
         except (ET.ParseError, OSError, ValueError) as e:
             logger.warning("[atm] couldn't parse %s: %s", xml_path.name, e)
         if info["stop_ticks"] and info["target_ticks"]:
@@ -322,7 +371,10 @@ def _load_atm_strategies() -> list[dict]:
 
 
 def _format_atm_block(strategies: list[dict]) -> str:
-    """Build the 'Available ATM Strategies' prompt section the LLM picks from."""
+    """Build the 'Available ATM Strategies' prompt section the LLM picks from.
+
+    Surfaces total contract count + bracket count for scale-out strategies so
+    the model understands sizing implications before picking."""
     if not strategies:
         return ("## Available ATM Strategies\n"
                 "(none found in NinjaTrader 8/templates/AtmStrategy/ -- "
@@ -330,8 +382,11 @@ def _format_atm_block(strategies: list[dict]) -> str:
     lines = ["## Available ATM Strategies (pick one by exact name):"]
     for s in strategies:
         rr = s["target_ticks"] / s["stop_ticks"] if s["stop_ticks"] else 0
+        qty   = s.get("total_qty") or 1
+        bcnt  = len(s.get("brackets") or []) or 1
+        size_note = "" if (qty == 1 and bcnt == 1) else f", {qty}c in {bcnt} brackets (scale-out)"
         lines.append(f'- "{s["name"]}": stop_ticks={s["stop_ticks"]}, '
-                     f'target_ticks={s["target_ticks"]} (R:R={rr:.1f})')
+                     f'target_ticks={s["target_ticks"]} (R:R={rr:.1f}{size_note})')
     return "\n".join(lines)
 
 
@@ -346,6 +401,12 @@ def _derive_stop_target(proposal: dict, strategies: list[dict]) -> None:
         return
 
     atm_name = proposal.get("atm_strategy")
+    # When the LLM picks an ATM, attach the full per-bracket plan so the
+    # outcome resolver can run the trail state machine per leg and the
+    # dashboard can show "TP1 + Runner" details. Single-bracket ATMs degrade
+    # cleanly to a 1-leg plan; unknown / custom ATMs leave brackets empty
+    # so legacy single-outcome math kicks in.
+    matched_strat: dict | None = None
     if not atm_name:
         logger.warning("LLM did not emit an atm_strategy field; falling back to "
                        "a 1:2 default (10 ticks stop / 20 ticks target)")
@@ -378,9 +439,21 @@ def _derive_stop_target(proposal: dict, strategies: list[dict]) -> None:
             stop_ticks   = int(strat["stop_ticks"])
             target_ticks = int(strat["target_ticks"])
             proposal["atm_strategy_resolved"] = True
+            matched_strat = strat
 
     proposal["atm_stop_ticks"]   = stop_ticks
     proposal["atm_target_ticks"] = target_ticks
+
+    # Scale-out plumbing: when the picked ATM is one we know, surface the
+    # full per-bracket plan so the resolver + UI can act on it. Total qty
+    # becomes the proposal's sizing hint (the pipeline lifts it onto the
+    # signal record's position_size).
+    if matched_strat:
+        proposal["atm_brackets"]  = matched_strat.get("brackets") or []
+        proposal["atm_total_qty"] = int(matched_strat.get("total_qty") or 1)
+    else:
+        proposal["atm_brackets"]  = []
+        proposal["atm_total_qty"] = 1
 
     instrument = proposal.get("instrument", "")
     tick_size, _ = instruments.lookup_tick_size(instrument, instruments.load_config())

@@ -63,6 +63,11 @@ MERGEABLE_FIELDS = (
     "outcome_suggestion_dismissed",
     "entry_triggered",
     "entry_hit_ts",
+    # Per-leg fills for multi-bracket ATM scale-outs. Top-level (not inside
+    # outcome) so the auto-resolver can publish legs without overwriting a
+    # user-edited aggregate outcome, and vice versa. Old records simply
+    # lack this field; metrics calc falls back to single-outcome math.
+    "legs",
 )
 
 

@@ -145,6 +145,16 @@ export interface StatsResp {
   by_account: AccountBreakdown[]
 }
 
+export interface TradeFill {
+  time: string
+  qty: number
+  price: number
+}
+
+export interface TradeExitFill extends TradeFill {
+  pnl: number       // dollar P&L of this leg vs avg entry
+}
+
 export interface Trade {
   account: string
   symbol: string
@@ -153,8 +163,8 @@ export interface Trade {
   qty: number
   entry_time: string
   exit_time: string
-  entry_price: number
-  exit_price: number
+  entry_price: number      // qty-weighted average across all entry fills
+  exit_price: number       // qty-weighted average across all exit fills
   point_value: number
   gross_pnl: number
   commission: number
@@ -165,6 +175,12 @@ export interface Trade {
   num_fills: number
   first_fill_id: number
   last_fill_id: number
+  // Scale-out detail: present on every trade, but only meaningfully different
+  // from the aggregate row when is_scale_out=true (i.e. NT8 closed the
+  // position in multiple legs via TP1 + runner + trail).
+  is_scale_out: boolean
+  entry_fills: TradeFill[]
+  exit_fills: TradeExitFill[]
 }
 
 export interface TradesResp {
@@ -200,6 +216,22 @@ export interface FillsResp {
 
 // ---------- Signal Analysis ----------
 
+// Per-bracket plan extracted from the NT8 ATM XML. Single-bracket ATMs
+// degrade trivially to a 1-element array; scale-out ATMs (e.g. TP1 + runner)
+// carry one entry per bracket with the per-bracket SL/TP/BE/trail config.
+export interface AtmBracket {
+  qty: number
+  stop_ticks: number
+  target_ticks: number
+  auto_be_plus: number
+  auto_be_trigger: number
+  trail_steps: Array<{
+    frequency: number
+    profit_trigger: number
+    stop_loss: number
+  }>
+}
+
 export interface Proposal {
   instrument: string
   direction: 'long' | 'short' | 'flat'
@@ -224,8 +256,35 @@ export interface Proposal {
   atm_strategy_resolved?: boolean
   atm_stop_ticks?: number
   atm_target_ticks?: number
+  // Full per-bracket plan for scale-out templates (TP1 + runner, etc.).
+  // Drives the per-leg display + the resolver state machine. Empty for
+  // custom / unknown ATM picks.
+  atm_brackets?: AtmBracket[]
+  atm_total_qty?: number
   custom_stop_ticks?: number
   custom_target_ticks?: number
+}
+
+export type LegResult = 'target' | 'stop' | 'trail' | 'be' | 'manual' | 'neither'
+
+export interface Leg {
+  bracket_idx: number
+  qty: number
+  result: LegResult
+  exit_price: number | null
+  exit_ts: number | null         // unix milliseconds
+  method?: 'tick' | 'bar' | 'manual' | null
+  engine?: 'resolver' | 'manual' | null
+}
+
+export interface LegBreakdownItem {
+  bracket_idx: number | null
+  qty: number
+  result: LegResult | null
+  exit_price: number
+  exit_ts: number | null
+  method: string | null
+  pnl: number
 }
 
 export interface Journal {
@@ -289,6 +348,9 @@ export interface TradeMetrics {
   total_reward: number
   realized_pnl: number | null
   realized_pnl_source: string | null
+  // Per-leg P&L attribution when the signal carries `legs`. null when no
+  // per-leg fills exist (single-bracket trade, or scale-out still pending).
+  leg_breakdown: LegBreakdownItem[] | null
 }
 
 export interface Signal {
@@ -303,6 +365,11 @@ export interface Signal {
   journal?: Journal
   outcome?: Outcome
   position_size?: number
+  // Top-level array of per-leg fills for scale-out trades. May be
+  // partial (some legs resolved while runner is still open) or complete.
+  // Auto-resolved entries carry engine='resolver'; user edits carry
+  // engine='manual'.
+  legs?: Leg[]
   outcome_suggestion?: OutcomeSuggestion
   outcome_suggestion_dismissed?: boolean
   deleted?: boolean

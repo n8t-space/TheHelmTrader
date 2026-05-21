@@ -6,6 +6,9 @@ import {
   fetchJSON,
   fmtPrice,
   postJSON,
+  type AtmBracket,
+  type Leg,
+  type LegResult,
   type Outcome,
   type Signal,
   type SignalDetailResp,
@@ -51,6 +54,10 @@ export function SignalDetailPage() {
   const [outcomeResult, setOutcomeResult] = useState<Outcome['result']>('pending')
   const [outcomeNote, setOutcomeNote] = useState('')
   const [outcomeClose, setOutcomeClose] = useState('')
+  // Per-leg draft for scale-out ATMs. One row per ATM bracket. Pre-filled
+  // from existing signal.legs (auto-resolved or user-saved); falls back to
+  // blank rows matching the bracket plan if no legs exist yet.
+  const [legsDraft, setLegsDraft] = useState<LegDraft[]>([])
 
   const signal = q.data?.signal
   useEffect(() => {
@@ -66,6 +73,7 @@ export function SignalDetailPage() {
     setOutcomeClose(
       signal.outcome?.closing_price != null ? String(signal.outcome.closing_price) : '',
     )
+    setLegsDraft(buildLegsDraft(signal))
   }, [signal])
 
   // ---- Dirty tracking ----
@@ -91,7 +99,13 @@ export function SignalDetailPage() {
     return nxt !== cur
   })()
 
-  const anyDirty = journalDirty || positionDirty || outcomeDirty
+  const legsDirty = (() => {
+    if (!signal) return false
+    const baseline = JSON.stringify(buildLegsDraft(signal))
+    return JSON.stringify(legsDraft) !== baseline
+  })()
+
+  const anyDirty = journalDirty || positionDirty || outcomeDirty || legsDirty
 
   // ---- Single save mutation ----
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -115,6 +129,20 @@ export function SignalDetailPage() {
           note: outcomeNote.trim() || null,
           closing_price: cp,
         }))
+      }
+      if (legsDirty) {
+        const payload = legsDraft
+          .filter((l) => l.exit_price.trim() !== '' && Number.isFinite(parseFloat(l.exit_price)))
+          .map((l) => ({
+            bracket_idx: l.bracket_idx,
+            qty: l.qty,
+            result: l.result,
+            exit_price: parseFloat(l.exit_price),
+            exit_ts: l.exit_ts,
+            method: l.method ?? 'manual',
+            engine: l.engine === 'resolver' ? 'resolver' : 'manual',
+          }))
+        ops.push(postJSON(`/api/signals/${tsEnc}/legs`, { legs: payload }))
       }
       await Promise.all(ops)
     },
@@ -167,6 +195,14 @@ export function SignalDetailPage() {
         <TickAdjustmentsBlock signal={sig} />
       </div>
 
+      <BracketsSection
+        signal={sig}
+        legsDraft={legsDraft}
+        setLegsDraft={setLegsDraft}
+        dirty={legsDirty}
+        metrics={m}
+      />
+
       <div className="forms-grid">
         <JournalSection
           note={journalNote} setNote={setJournalNote}
@@ -192,7 +228,7 @@ export function SignalDetailPage() {
           {saveAll.isPending
             ? 'Saving…'
             : anyDirty
-              ? `Save changes (${[journalDirty, positionDirty, outcomeDirty].filter(Boolean).length} section${[journalDirty, positionDirty, outcomeDirty].filter(Boolean).length === 1 ? '' : 's'})`
+              ? `Save changes (${[journalDirty, positionDirty, outcomeDirty, legsDirty].filter(Boolean).length} section${[journalDirty, positionDirty, outcomeDirty, legsDirty].filter(Boolean).length === 1 ? '' : 's'})`
               : 'No changes'}
         </button>
         {saveError && <div className="error">{saveError}</div>}
@@ -495,6 +531,202 @@ function OutcomeSection({
       />
     </div>
   )
+}
+
+// ---------- Per-leg fills (scale-out ATMs) ----------
+
+const LEG_RESULTS: LegResult[] = ['target', 'stop', 'trail', 'be', 'manual', 'neither']
+
+interface LegDraft {
+  bracket_idx: number
+  qty: number
+  result: LegResult
+  exit_price: string          // string for the input control; parse on save
+  exit_ts: number | null      // unix ms; preserved as-is
+  method: 'tick' | 'bar' | 'manual' | null
+  engine: 'resolver' | 'manual' | null
+}
+
+function buildLegsDraft(signal: Signal): LegDraft[] {
+  const brackets = signal.proposal.atm_brackets ?? []
+  const legs = signal.legs ?? []
+  if (brackets.length === 0) return []
+  return brackets.map((b, i) => {
+    const existing: Leg | undefined =
+      legs.find((l) => l.bracket_idx === i) ?? legs[i]
+    return {
+      bracket_idx: i,
+      qty: existing?.qty ?? b.qty,
+      result: (existing?.result as LegResult | undefined) ?? 'neither',
+      exit_price:
+        existing?.exit_price != null ? String(existing.exit_price) : '',
+      exit_ts: existing?.exit_ts ?? null,
+      method: (existing?.method as LegDraft['method'] | undefined) ?? null,
+      engine: (existing?.engine as LegDraft['engine'] | undefined) ?? null,
+    }
+  })
+}
+
+function bracketPrices(
+  bracket: AtmBracket,
+  entry: number,
+  direction: 'long' | 'short' | 'flat',
+  tickSize: number | null,
+): { stop: number | null; target: number | null; be: number | null } {
+  if (!tickSize || direction === 'flat') {
+    return { stop: null, target: null, be: null }
+  }
+  const sign = direction === 'long' ? 1 : -1
+  return {
+    stop:   entry - sign * bracket.stop_ticks   * tickSize,
+    target: entry + sign * bracket.target_ticks * tickSize,
+    be:     bracket.auto_be_trigger > 0
+              ? entry + sign * bracket.auto_be_plus * tickSize
+              : null,
+  }
+}
+
+function BracketsSection({
+  signal, legsDraft, setLegsDraft, dirty, metrics,
+}: {
+  signal: Signal
+  legsDraft: LegDraft[]
+  setLegsDraft: (next: LegDraft[]) => void
+  dirty: boolean
+  metrics: TradeMetrics | undefined
+}) {
+  const brackets = signal.proposal.atm_brackets ?? []
+  if (brackets.length === 0) return null
+
+  const p = signal.proposal
+  const tickSize = metrics?.tick_size ?? p.tick_size_applied ?? null
+  const allAutoResolver =
+    legsDraft.length > 0 && legsDraft.every((l) => l.engine === 'resolver')
+  const anyResolved = legsDraft.some((l) => l.result !== 'neither')
+  const breakdown = metrics?.leg_breakdown ?? null
+
+  const update = (i: number, patch: Partial<LegDraft>) => {
+    setLegsDraft(legsDraft.map((l, idx) => (idx === i ? { ...l, ...patch } : l)))
+  }
+
+  return (
+    <div className="card">
+      <h2>
+        Scale-out brackets {dirty && <span className="dirty-flag">unsaved</span>}
+        {' '}
+        <span className="subtle">
+          {brackets.length} bracket{brackets.length === 1 ? '' : 's'} · {signal.proposal.atm_strategy ?? 'custom'}
+        </span>
+      </h2>
+      {!anyResolved && (
+        <p className="subtle">
+          No legs resolved yet. The outcome watcher will fill these in automatically as price walks through each
+          bracket's stop / target / trail — or you can enter the actual fills below to record what really happened.
+        </p>
+      )}
+      {anyResolved && allAutoResolver && (
+        <p className="subtle">
+          Legs filled in automatically by the outcome resolver. Edit any row to override with the actual fill from NinjaTrader.
+        </p>
+      )}
+
+      <div className="table-wrap">
+        <table className="brackets-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th className="num">Qty</th>
+              <th>Plan</th>
+              <th>Result</th>
+              <th>Exit price</th>
+              <th className="num">P&amp;L</th>
+              <th>Source</th>
+            </tr>
+          </thead>
+          <tbody>
+            {brackets.map((b, i) => {
+              const leg = legsDraft[i]
+              if (!leg) return null
+              const prices = bracketPrices(b, p.entry, p.direction, tickSize)
+              const pnl = breakdown?.[i]?.pnl
+              return (
+                <tr key={i}>
+                  <td>{i + 1}</td>
+                  <td className="num">{leg.qty}</td>
+                  <td>
+                    <BracketPlanCell bracket={b} prices={prices} instrument={p.instrument} />
+                  </td>
+                  <td>
+                    <select
+                      value={leg.result}
+                      onChange={(e) => update(i, { result: e.target.value as LegResult, engine: 'manual' })}
+                    >
+                      {LEG_RESULTS.map((r) => (
+                        <option key={r} value={r}>{r}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td>
+                    <input
+                      type="number"
+                      step="any"
+                      value={leg.exit_price}
+                      onChange={(e) => update(i, { exit_price: e.target.value, engine: 'manual' })}
+                      placeholder={prices.target != null ? fmtPrice(prices.target, p.instrument) : ''}
+                      style={{ width: 120 }}
+                    />
+                  </td>
+                  <td className={`num ${pnl == null ? '' : pnl > 0 ? 'pnl-pos' : pnl < 0 ? 'pnl-neg' : ''}`}>
+                    {pnl == null ? '—' : fmtMoney(pnl)}
+                  </td>
+                  <td>
+                    {leg.engine === 'resolver' ? (
+                      <span className="badge auto-res">auto</span>
+                    ) : leg.engine === 'manual' ? (
+                      <span className="badge auto-gen">manual</span>
+                    ) : (
+                      <span className="subtle">—</span>
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+          {breakdown && breakdown.some((b) => b != null) && (
+            <tfoot>
+              <tr className="totals-row">
+                <td colSpan={5}><strong>Total (sum of legs)</strong></td>
+                <td className={`num ${(metrics?.realized_pnl ?? 0) > 0 ? 'pnl-pos' : (metrics?.realized_pnl ?? 0) < 0 ? 'pnl-neg' : ''}`}>
+                  <strong>{metrics?.realized_pnl != null ? fmtMoney(metrics.realized_pnl) : '—'}</strong>
+                </td>
+                <td></td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </div>
+  )
+}
+
+function BracketPlanCell({
+  bracket, prices, instrument,
+}: {
+  bracket: AtmBracket
+  prices: { stop: number | null; target: number | null; be: number | null }
+  instrument: string
+}) {
+  const parts: string[] = []
+  parts.push(`SL ${bracket.stop_ticks}t${prices.stop != null ? ` @ ${fmtPrice(prices.stop, instrument)}` : ''}`)
+  parts.push(`TP ${bracket.target_ticks}t${prices.target != null ? ` @ ${fmtPrice(prices.target, instrument)}` : ''}`)
+  if (bracket.auto_be_trigger > 0) {
+    parts.push(`BE+${bracket.auto_be_plus}@+${bracket.auto_be_trigger}t`)
+  }
+  if (bracket.trail_steps && bracket.trail_steps.length > 0) {
+    const t = bracket.trail_steps[0]
+    parts.push(`Trail ${t.stop_loss}t every ${t.frequency}t from +${t.profit_trigger}t`)
+  }
+  return <span className="subtle" style={{ fontSize: 12 }}>{parts.join(' · ')}</span>
 }
 
 // ---------- Delete button ----------

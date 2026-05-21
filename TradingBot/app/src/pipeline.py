@@ -73,6 +73,15 @@ def run_pipeline(
         "model": MODEL,
         "market_context": market_context,
     }
+
+    # Lift the ATM's total contract count onto the top-level record so the
+    # metrics calculator and the dashboard W/L rollup size correctly for
+    # scale-out templates (2c TP1 + runner, etc.). Default DEFAULT_POSITION_SIZE
+    # from signal_storage handles the no-ATM case; user can still override
+    # via the Signal Detail "Contracts / Shares" field.
+    atm_qty = result["proposal"].get("atm_total_qty")
+    if isinstance(atm_qty, int) and atm_qty > 0:
+        record_payload["position_size"] = float(atm_qty)
     if not is_valid:
         record_payload["deleted"]               = True
         record_payload["auto_dismissed"]        = True

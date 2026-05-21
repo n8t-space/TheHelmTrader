@@ -56,6 +56,25 @@ class EntryTriggeredUpdate(BaseModel):
     triggered: bool
 
 
+# Per-leg fill record. Frontend POSTs the full legs array on each save;
+# server writes it verbatim so the latest-wins merge picks up the new value.
+LEG_RESULTS = ("target", "stop", "trail", "be", "manual", "neither")
+
+
+class LegFill(BaseModel):
+    bracket_idx: int = Field(..., ge=0)
+    qty: float = Field(..., gt=0)
+    result: str = Field(..., pattern=f"^({'|'.join(LEG_RESULTS)})$")
+    exit_price: float | None = None
+    exit_ts: int | None = None       # unix milliseconds
+    method: str | None = None        # 'tick' | 'bar' | 'manual'
+    engine: str | None = None        # 'resolver' | 'manual'
+
+
+class LegsUpdate(BaseModel):
+    legs: list[LegFill]
+
+
 def _enrich(rec: dict, config: dict) -> dict:
     """Attach computed trade metrics + screenshot filename to a signal record."""
     rec = dict(rec)
@@ -171,6 +190,28 @@ def update_position(timestamp: str, update: PositionUpdate) -> dict[str, Any]:
         position_size=update.position_size,
     )
     return {"timestamp": timestamp, "position_size": update.position_size}
+
+
+@router.post("/{timestamp}/legs")
+def update_legs(timestamp: str, update: LegsUpdate) -> dict[str, Any]:
+    """Write per-leg fills for a multi-bracket scale-out trade.
+
+    User-entered legs overwrite any auto-resolved legs from outcome_watcher;
+    each entry gets engine='manual' unless the caller stamped it otherwise.
+    The aggregate outcome.result is left alone -- the user (or the watcher)
+    sets that separately via /outcome.
+    """
+    _require_signal(timestamp)
+    legs_out: list[dict] = []
+    for leg in update.legs:
+        d = leg.model_dump(exclude_none=False)
+        if not d.get("engine"):
+            d["engine"] = "manual"
+        legs_out.append(d)
+    signal_storage.append_update(
+        bridge.SIGNALS_LOG, timestamp, legs=legs_out,
+    )
+    return {"timestamp": timestamp, "legs": legs_out}
 
 
 @router.post("/{timestamp}/entry-triggered")
