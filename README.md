@@ -193,6 +193,25 @@ cd Trade_Perf\dashboard
 .\run_dev.ps1                  # Vite with HMR at http://localhost:5173/
 ```
 
+### Update
+
+`install.ps1` is idempotent — re-running it after a fresh checkout picks up changes safely. From an **elevated** PowerShell:
+
+```powershell
+cd $HOME\Documents\Projects\TheHelmTrader
+git pull
+.\install.ps1                                  # rebuilds the frontend, refreshes NS indicators, redeploys deps
+Restart-Service HelmDashboardWatchdog          # picks up Python/API changes
+```
+
+Then in NinjaTrader: **NinjaScript Editor (F11) -> Compile (F5)** — only required if anything under `_Helm Locker\*.cs` changed.
+
+Hard-refresh the dashboard tab (`Ctrl+F5`) to bust the cached SPA bundle.
+
+If you received a release zip instead of using git, unzip over the existing checkout and run the same two commands.
+
+Use the same `-SkipPrereqs / -SkipNsIndicators / -SkipRecorder / -SkipService` switches as the initial install if you want to limit what the rerun touches (e.g. `.\install.ps1 -SkipPrereqs -SkipService` for a frontend-only refresh).
+
 ### Uninstall
 
 ```powershell
