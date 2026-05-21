@@ -20,6 +20,11 @@ TheHelmTrader/
     +- PROJECT.md     # architecture + runtime modes
 ```
 
+## Documentation
+
+- [`CONFIGURATION.md`](CONFIGURATION.md) — recommended baseline settings for AI backend, strategy thresholds, accounts, Auto Analysis, and NinjaScript indicators. Read this before tweaking anything on the Settings page.
+- The dashboard's **Support** page mirrors the same content under the **Configuration** tab, alongside the update guide and a troubleshooting FAQ.
+
 ## Architecture in one breath
 
 NinjaScript indicator on hotkey -> FastAPI on `:8000` -> bot opens snipping overlay -> snip + market context -> vision LLM backend (Ollama local/LAN, Anthropic Claude, or OpenAI — selected on the Settings page) -> proposal in `signals.jsonl` -> React dashboard renders.
@@ -195,6 +200,10 @@ cd Trade_Perf\dashboard
 
 ### Update
 
+The dashboard runs a background check every 6 hours that compares the installed checkout against `origin/main`. When new commits are available, a banner appears at the top of every page showing the current and latest short SHAs, a **View update guide** link to the Support page, and a **Check now** button. Dismissing the banner remembers the latest SHA in `localStorage` — it reappears automatically when a newer commit lands. The endpoint is `GET /api/version`; force a re-check via `POST /api/version/check`.
+
+The **Support** page (in the top nav, or `http://127.0.0.1:8000/support`) breaks the same surface into four tabs — **Overview** (version + uninstall + help), **Update** (full procedure), **Troubleshooting** (FAQ + log locations), and **Configuration** (recommended settings, mirrored from [`CONFIGURATION.md`](CONFIGURATION.md)). Deep-linkable via `/support#update`, `/support#troubleshooting`, `/support#configuration`.
+
 `install.ps1` is idempotent — re-running it after a fresh checkout picks up changes safely. From an **elevated** PowerShell:
 
 ```powershell
@@ -216,15 +225,28 @@ Use the same `-SkipPrereqs / -SkipNsIndicators / -SkipRecorder / -SkipService` s
 
 ```powershell
 # Elevated PowerShell
-cd Trade_Perf
-.\runtime\uninstall_service.ps1
-# Remove NinjaScript indicators
-Remove-Item -Recurse -Force "$HOME\Documents\NinjaTrader 8\bin\Custom\Indicators\_Helm Locker"
-# (optional) Remove settings + data
-Remove-Item -Recurse -Force "$HOME\.helm"
+cd $HOME\Documents\Projects\TheHelmTrader
+.\uninstall.ps1
 ```
 
-`trades.db`, `signals.jsonl`, and `feed.db` are left in place for safety — delete by hand if you want a clean wipe.
+`uninstall.ps1` is the mirror of `install.ps1`. By default it:
+
+1. Stops + removes the `HelmDashboardWatchdog` NSSM service
+2. Stops the `recorder.py` process and removes its Startup shortcut
+3. Removes the NinjaScript indicators from `Documents\NinjaTrader 8\bin\Custom\Indicators\_Helm Locker\`
+
+It **preserves** `%USERPROFILE%\.helm\settings.json`, `trades.db`, `signals.jsonl`, and `feed.db` so an accidental run can't destroy trade history or API keys.
+
+Switches:
+
+| Flag | Effect |
+|---|---|
+| `-PurgeSettings` | Also delete `%USERPROFILE%\.helm` |
+| `-PurgeData` | Also delete `trades.db`, `signals.jsonl`, `feed.db` |
+| `-All` | `-PurgeSettings` + `-PurgeData` |
+| `-SkipService` / `-SkipRecorder` / `-SkipNsIndicators` | Leave that piece alone |
+
+After removing the NS indicators, open NinjaTrader and run **NinjaScript Editor (F11) -> Compile (F5)** to clear the compiled assembly. The checkout directory itself is never touched — delete it by hand for a fully clean wipe.
 
 ## Quick start (existing operator)
 

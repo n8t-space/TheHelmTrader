@@ -9,7 +9,9 @@ import { HomePage } from './pages/HomePage'
 import { SettingsPage } from './pages/SettingsPage'
 import { SignalAnalysisPage } from './pages/SignalAnalysisPage'
 import { SignalDetailPage } from './pages/SignalDetailPage'
+import { SupportPage } from './pages/SupportPage'
 import { TradePerformancePage } from './pages/TradePerformancePage'
+import { UpdateBanner } from './UpdateBanner'
 
 // Pre-paint hint: if we cached an appearance from a prior load, apply it before
 // React mounts so the SPA never flashes the default palette.
@@ -71,6 +73,7 @@ export default function App() {
     <QueryClientProvider client={qc}>
       <BrowserRouter>
         <BootSettings />
+        <UpdateBanner />
         <div className="app">
           <header>
             <h1>The Helm</h1>
@@ -80,6 +83,7 @@ export default function App() {
               <NavLink to="/signals">Signal Analysis</NavLink>
               <NavLink to="/health">Health</NavLink>
               <NavLink to="/settings">Settings</NavLink>
+              <NavLink to="/support">Support</NavLink>
             </nav>
             <span className="subtle">local mirror &mdash; auto-refreshing every 5s</span>
           </header>
@@ -91,6 +95,7 @@ export default function App() {
             <Route path="/signals/:timestamp" element={<SignalDetailPage />} />
             <Route path="/health" element={<HealthPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/support" element={<SupportPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>

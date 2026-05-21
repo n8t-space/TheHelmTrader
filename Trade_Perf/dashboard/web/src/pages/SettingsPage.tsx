@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 
 declare global {
   interface Window {
@@ -112,6 +113,8 @@ export function SettingsPage() {
           <p className="subtle" style={{ margin: '4px 0 0' }}>
             Stored at <code>{q.data.path}</code>
             {!q.data.exists_on_disk && <> · <span>(file not yet created — defaults shown)</span></>}
+            {' · '}
+            <Link to="/support#configuration">See recommended configuration</Link>
           </p>
         </div>
         <div className="settings-actions">
@@ -212,6 +215,7 @@ function AppearanceTab({ value, onChange }: {
   return (
     <>
       <h3 style={{ marginTop: 0 }}>Appearance</h3>
+      <p className="subtle">Visual + locale settings. Defaults are tuned for long sessions on a dark editor.</p>
       <div className="settings-row">
         <label>
           <span>Theme</span>
@@ -220,6 +224,7 @@ function AppearanceTab({ value, onChange }: {
             <option value="light">Light</option>
             <option value="system">System</option>
           </select>
+          <span className="subtle">System follows your OS preference.</span>
         </label>
         <label>
           <span>Timezone (IANA)</span>
@@ -229,6 +234,7 @@ function AppearanceTab({ value, onChange }: {
             onChange={(e) => onChange({ ...value, timezone: e.target.value })}
             placeholder="America/Chicago"
           />
+          <span className="subtle">Used for chart timestamps + session boundaries. CME futures: <code>America/Chicago</code>.</span>
         </label>
         <label>
           <span>Table page size</span>
@@ -239,6 +245,7 @@ function AppearanceTab({ value, onChange }: {
             value={value.table_page_size}
             onChange={(e) => onChange({ ...value, table_page_size: Number(e.target.value) })}
           />
+          <span className="subtle">Rows per page on Trade Performance / Signal Analysis tables.</span>
         </label>
       </div>
 
@@ -293,7 +300,9 @@ function AiTab({ value, onChange }: {
   return (
     <>
       <h3 style={{ marginTop: 0 }}>AI Backend</h3>
-      <p className="subtle">The vision LLM endpoint that turns chart screenshots into proposals.</p>
+      <p className="subtle">
+        Vision LLM that turns chart screenshots into trade proposals. Three providers supported — pick by cost / latency / privacy tradeoff. See <Link to="/support#configuration">Support → Configuration</Link> for a full comparison.
+      </p>
       <div className="settings-row">
         <label>
           <span>Provider</span>
@@ -305,6 +314,9 @@ function AiTab({ value, onChange }: {
             <option value="claude">Anthropic Claude (cloud)</option>
             <option value="openai">OpenAI ChatGPT (cloud)</option>
           </select>
+          <span className="subtle">
+            Ollama: free, on-network, ~5–15 s warm. Claude: best reasoning, ~2–4 s, ~$0.01–0.03/snip. OpenAI: balanced, ~2–5 s, ~$0.005–0.02/snip.
+          </span>
         </label>
         <label>
           <span>Request timeout (s)</span>
@@ -313,12 +325,16 @@ function AiTab({ value, onChange }: {
             value={value.request_timeout_s}
             onChange={(e) => onChange({ ...value, request_timeout_s: Number(e.target.value) })}
           />
+          <span className="subtle">
+            How long to wait before aborting an inference call. Local Ollama on iGPU: 180+ for cold starts. Cloud: 60 is plenty.
+          </span>
         </label>
       </div>
 
       {provider === 'ollama' && (
         <>
           <h4>Ollama config</h4>
+          <p className="subtle">Run <code>ollama pull qwen2.5vl:7b</code> on the inference host before testing.</p>
           <div className="settings-row">
             <label className="span-2">
               <span>Ollama URL</span>
@@ -328,6 +344,9 @@ function AiTab({ value, onChange }: {
                 onChange={(e) => onChange({ ...value, ollama_url: e.target.value })}
                 placeholder="http://127.0.0.1:11434/api/generate"
               />
+              <span className="subtle">
+                Local: <code>http://127.0.0.1:11434/api/generate</code>. LAN GPU: <code>http://&lt;host&gt;:11434/api/generate</code>.
+              </span>
             </label>
             <label>
               <span>Model</span>
@@ -336,6 +355,7 @@ function AiTab({ value, onChange }: {
                 value={value.model}
                 onChange={(e) => onChange({ ...value, model: e.target.value })}
               />
+              <span className="subtle">Vision-capable model. Default: <code>qwen2.5vl:7b</code>.</span>
             </label>
             <label>
               <span>Fallback model</span>
@@ -344,6 +364,7 @@ function AiTab({ value, onChange }: {
                 value={value.fallback_model}
                 onChange={(e) => onChange({ ...value, fallback_model: e.target.value })}
               />
+              <span className="subtle">Tried if primary times out. Use a smaller variant (e.g. <code>qwen2.5vl:3b</code>).</span>
             </label>
             <label>
               <span>num_ctx (tokens)</span>
@@ -352,6 +373,7 @@ function AiTab({ value, onChange }: {
                 value={value.num_ctx}
                 onChange={(e) => onChange({ ...value, num_ctx: Number(e.target.value) })}
               />
+              <span className="subtle">Context window. 8192 is the sweet spot; raise only if your prompt is dense.</span>
             </label>
           </div>
         </>
@@ -373,6 +395,7 @@ function AiTab({ value, onChange }: {
                 onChange={(e) => onChange({ ...value, claude_api_key: e.target.value })}
                 placeholder="sk-ant-..."
               />
+              <span className="subtle">Stored at <code>~/.helm/settings.json</code>. Never committed to git.</span>
             </label>
             <label>
               <span>Model</span>
@@ -382,6 +405,7 @@ function AiTab({ value, onChange }: {
                 onChange={(e) => onChange({ ...value, claude_model: e.target.value })}
                 placeholder="claude-sonnet-4-6"
               />
+              <span className="subtle">Default: <code>claude-sonnet-4-6</code>. Use <code>claude-opus-4-7</code> for max quality at higher cost.</span>
             </label>
             <label>
               <span>Max tokens</span>
@@ -390,6 +414,7 @@ function AiTab({ value, onChange }: {
                 value={value.claude_max_tokens}
                 onChange={(e) => onChange({ ...value, claude_max_tokens: Number(e.target.value) })}
               />
+              <span className="subtle">Upper bound on response size. 2048 covers a structured proposal + reasoning.</span>
             </label>
           </div>
         </>
@@ -411,6 +436,7 @@ function AiTab({ value, onChange }: {
                 onChange={(e) => onChange({ ...value, openai_api_key: e.target.value })}
                 placeholder="sk-proj-..."
               />
+              <span className="subtle">Stored at <code>~/.helm/settings.json</code>. Never committed to git.</span>
             </label>
             <label>
               <span>Model</span>
@@ -420,6 +446,7 @@ function AiTab({ value, onChange }: {
                 onChange={(e) => onChange({ ...value, openai_model: e.target.value })}
                 placeholder="gpt-4o"
               />
+              <span className="subtle">Default: <code>gpt-4o</code>. <code>gpt-4o-mini</code> is ~5x cheaper but noticeably weaker on charts.</span>
             </label>
             <label>
               <span>Max tokens</span>
@@ -428,6 +455,7 @@ function AiTab({ value, onChange }: {
                 value={value.openai_max_tokens}
                 onChange={(e) => onChange({ ...value, openai_max_tokens: Number(e.target.value) })}
               />
+              <span className="subtle">Upper bound on response size. 2048 is enough for the structured proposal.</span>
             </label>
           </div>
         </>
@@ -458,7 +486,9 @@ function StrategyTab({ value, onChange }: {
   return (
     <>
       <h3 style={{ marginTop: 0 }}>Strategy</h3>
-      <p className="subtle">Tunable thresholds for signal generation and outcome resolution.</p>
+      <p className="subtle">
+        Tunable thresholds for signal generation and outcome resolution. Recommended baseline values are documented in <Link to="/support#configuration">Support → Configuration</Link>.
+      </p>
       <div className="settings-row">
         <label>
           <span>Confidence floor</span>
@@ -468,7 +498,7 @@ function StrategyTab({ value, onChange }: {
             value={value.confidence_floor}
             onChange={(e) => onChange({ ...value, confidence_floor: Number(e.target.value) })}
           />
-          <span className="subtle">Below this, the model retries up to max_attempts.</span>
+          <span className="subtle">Reject proposals below this (0–1). Default <code>0.65</code>. Higher = fewer signals; lower = more.</span>
         </label>
         <label>
           <span>Max attempts</span>
@@ -478,6 +508,7 @@ function StrategyTab({ value, onChange }: {
             value={value.max_attempts}
             onChange={(e) => onChange({ ...value, max_attempts: Number(e.target.value) })}
           />
+          <span className="subtle">Retry budget when below floor. Each attempt costs latency + (for cloud providers) tokens.</span>
         </label>
         <label>
           <span>Reconciliation cap</span>
@@ -528,7 +559,7 @@ function AccountsTab({ value, onChange }: {
       <h3 style={{ marginTop: 0 }}>Accounts</h3>
       <p className="subtle">
         Categorizes recorder fills for the Home page Cumulative Earnings card and the
-        Trade Performance quick-filter buttons. One account ID per line.
+        Trade Performance quick-filter buttons. Account IDs should match exactly what NT8 shows in the Control Center → Accounts tab. NT-default sims ship pre-listed under Simulation; add your live broker and prop-firm IDs to the matching bucket.
       </p>
       <div className="settings-row">
         <AccountList

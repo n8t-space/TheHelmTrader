@@ -1093,3 +1093,261 @@ th.select-col, td.select-col { padding: 6px; }
      pending   -> within the window, may still resolve either way */
 .entered-hit { color: var(--pos); }
 .entered-no  { color: var(--muted); font-style: italic; }
+
+/* ---------- Update-available banner ---------- */
+
+.update-banner {
+  background: rgba(88, 166, 255, 0.10);
+  border-bottom: 1px solid rgba(88, 166, 255, 0.35);
+  color: var(--text);
+  font-size: 13px;
+  padding: 10px 24px;
+}
+
+.update-banner-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.update-banner-icon {
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.update-banner-text {
+  flex: 1;
+  min-width: 240px;
+}
+
+.update-banner-text code {
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+}
+
+.update-banner-meta {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.update-banner-btn {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid rgba(88, 166, 255, 0.45);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.update-banner-btn:hover:not(:disabled) {
+  background: rgba(88, 166, 255, 0.15);
+  border-color: var(--accent);
+}
+
+.update-banner-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.update-banner-dismiss {
+  padding: 4px 10px;
+  color: var(--muted);
+  border-color: var(--border);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.update-banner-dismiss:hover:not(:disabled) {
+  color: var(--neg);
+  border-color: var(--neg);
+  background: transparent;
+}
+
+.update-banner-link {
+  text-decoration: none;
+  display: inline-block;
+}
+
+.update-banner-link:hover {
+  text-decoration: none;
+  color: var(--accent);
+}
+
+.update-banner-error {
+  max-width: 1400px;
+  margin: 8px auto 0;
+  color: var(--neg);
+  font-size: 12px;
+}
+
+/* ---------- Support page ---------- */
+
+.support-card {
+  margin-bottom: 16px;
+}
+
+.support-card h2 {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+
+.support-h3,
+.support-card h3 {
+  margin: 18px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--link);
+  font: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.link-button:hover {
+  color: var(--link-hover);
+  text-decoration: underline;
+  background: none;
+  border: none;
+}
+
+.support-prose {
+  margin: 8px 0;
+  line-height: 1.55;
+  font-size: 14px;
+}
+
+.support-prose.subtle {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.support-steps {
+  margin: 12px 0;
+  padding-left: 22px;
+  line-height: 1.6;
+  font-size: 14px;
+}
+
+.support-steps li {
+  margin-bottom: 12px;
+}
+
+.support-list {
+  margin: 8px 0;
+  padding-left: 22px;
+  line-height: 1.55;
+  font-size: 14px;
+}
+
+.support-list li {
+  margin-bottom: 4px;
+}
+
+.support-code {
+  margin: 8px 0 4px;
+  padding: 10px 14px;
+  background: #0a0d12;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #c9d1d9;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.support-faq {
+  margin: 8px 0 0;
+}
+
+.support-faq dt {
+  margin-top: 16px;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.support-faq dt:first-child {
+  margin-top: 0;
+}
+
+.support-faq dd {
+  margin: 6px 0 0;
+  padding-left: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.support-faq code,
+.support-prose code,
+.support-list code,
+.support-steps code {
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+}
+
+.support-card kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  background: var(--bg);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+.support-actions {
+  margin-top: 14px;
+  display: flex;
+  gap: 8px;
+}
+
+.support-actions button {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.support-actions button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.support-actions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
