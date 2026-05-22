@@ -12,6 +12,8 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Iterable
 
+from .trading_day import trading_day_for_ts
+
 
 # Action codes that increase position (long-side opens / short-covers)
 LONG_OPEN_ACTIONS = {"Buy", "BuyToCover"}
@@ -145,8 +147,13 @@ def derive_trades(fills: list[dict]) -> list[dict]:
     return trades
 
 
-def compute_stats(trades: list[dict]) -> dict:
-    """Aggregate stats for a set of trades, plus equity curve and breakdowns."""
+def compute_stats(trades: list[dict], *, tz: str | None = None) -> dict:
+    """Aggregate stats for a set of trades, plus equity curve and breakdowns.
+
+    Keys ``daily_pnl`` by **trading day** (CME-style 6 PM CT roll) instead of
+    raw UTC date, so trades that close after the operator's local 6 PM but
+    before UTC midnight don't end up booked to the wrong calendar day.
+    """
     if not trades:
         return _empty_stats()
 
@@ -176,7 +183,10 @@ def compute_stats(trades: list[dict]) -> dict:
 
     by_day: dict[str, float] = defaultdict(float)
     for t, p in zip(asc, pnls):
-        day = t["exit_time"][:10]  # YYYY-MM-DD
+        # Trading-day attribution: any trade closed at-or-after the operator's
+        # local 6 PM rolls into the NEXT trading day. Falls back to UTC date
+        # only if the timestamp can't be parsed (malformed legacy records).
+        day = trading_day_for_ts(t["exit_time"], tz) or t["exit_time"][:10]
         by_day[day] += p
     daily = [{"date": d, "net_pnl": round(v, 2)} for d, v in sorted(by_day.items())]
 

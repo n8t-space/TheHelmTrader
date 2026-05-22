@@ -110,7 +110,7 @@ cd TheHelmTrader
 
 ```powershell
 python -m pip install --upgrade pip
-python -m pip install fastapi "uvicorn[standard]" pydantic requests Pillow httpx
+python -m pip install fastapi "uvicorn[standard]" pydantic requests Pillow httpx tzdata
 ```
 
 #### Build the frontend

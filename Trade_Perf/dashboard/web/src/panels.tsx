@@ -361,7 +361,7 @@ export function DrawdownsCard() {
               <th>Account</th>
               <th className="num">Balance</th>
               <th className="num">Peak</th>
-              <th className="num">Today</th>
+              <th className="num">Session</th>
               <th className="num">Trailing DD left</th>
               <th className="num">Daily DD left</th>
               <th className="num">Profit target</th>

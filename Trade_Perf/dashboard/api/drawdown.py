@@ -24,33 +24,19 @@ SQLite for open-position MTM.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter
 
 from . import db, settings as settings_mod, trades as tradelib
+from .trading_day import current_trading_day, trading_day_bounds_utc
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/drawdown", tags=["drawdown"])
 
 WARN_THRESHOLD = 0.25     # alert when remaining buffer < 25% of limit
-
-
-def _day_bounds_utc(tz_name: str, now_utc: datetime | None = None) -> tuple[datetime, datetime]:
-    """Return (start, end) of today's calendar day in the operator's timezone,
-    expressed as UTC datetimes. CME futures session timing aligns with
-    America/Chicago in the default config."""
-    try:
-        tz = ZoneInfo(tz_name)
-    except Exception:
-        tz = ZoneInfo("America/Chicago")
-    now = (now_utc or datetime.now(timezone.utc)).astimezone(tz)
-    start_local = datetime.combine(now.date(), time(0, 0), tzinfo=tz)
-    end_local = start_local + timedelta(days=1)
-    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
 
 
 def _classify(buffer_left: float | None, limit: float | None) -> str:
@@ -144,7 +130,11 @@ def list_drawdowns() -> dict[str, Any]:
         return {"accounts": [], "warn_threshold": WARN_THRESHOLD, "tz": settings_mod.get_settings().appearance.timezone}
 
     tz_name = settings_mod.get_settings().appearance.timezone
-    today_start, today_end = _day_bounds_utc(tz_name)
+    # Daily DD window = current trading day (CME-style 6 PM CT roll), not the
+    # calendar day. Trades closed after the local 6 PM roll bucket into the
+    # NEW trading day's daily-DD allowance.
+    today = current_trading_day(tz_name)
+    today_start, today_end = trading_day_bounds_utc(today, tz_name)
 
     # Pull every fill for the configured accounts, derive round-trips, group.
     account_ids = list(configs.keys())

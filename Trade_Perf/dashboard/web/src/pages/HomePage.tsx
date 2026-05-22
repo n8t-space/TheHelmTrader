@@ -79,9 +79,11 @@ export function HomePage() {
 
 function TodayCard({ t }: { t: HomeData['today'] }) {
   // Trades-only on Home. Signal KPI lives on the Signal Analysis page.
+  // Label reflects CME session attribution (6 PM CT roll) -- t.date is the
+  // current trading day, NOT the wall-clock calendar date.
   return (
     <div className="card">
-      <h2>Today's Trades · {t.date}</h2>
+      <h2>Current CME Session · {t.date}</h2>
       <div className="big">
         <span className={pnlClass(t.trade_pnl)}>{fmtMoney(t.trade_pnl)}</span>
         <span className="big-sub"> net (NT fills)</span>

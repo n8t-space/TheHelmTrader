@@ -14,6 +14,11 @@ from fastapi import APIRouter
 from . import _tradebot_bridge as bridge  # noqa: F401  -- side-effect: sys.path
 from . import db, settings as settings_mod, trades as tradelib
 from .signals import _load_visible_signals
+from .trading_day import (
+    current_trading_day,
+    trading_day_bounds_utc,
+    trading_day_for_ts,
+)
 from src import instruments  # type: ignore[import-not-found]  # via bridge
 
 router = APIRouter(prefix="/api/home", tags=["home"])
@@ -32,16 +37,16 @@ def _account_category(account_name: str) -> str | None:
     return None
 
 
-def _today_local_iso() -> str:
-    return date.today().isoformat()
-
-
 @router.get("")
 def home() -> dict[str, Any]:
     """Single endpoint serving everything the home page needs."""
     visible = _load_visible_signals()
     config = instruments.load_config()
-    today = _today_local_iso()
+    # Trading-day "today" -- CME-style 6 PM CT roll. Trades closed after the
+    # local 6 PM roll are attributed to the NEXT trading day. See trading_day.py.
+    tz_name = settings_mod.get_settings().appearance.timezone
+    today = current_trading_day(tz_name)
+    today_start_utc, today_end_utc = trading_day_bounds_utc(today, tz_name)
 
     # Enrich signals with metrics so realized P/L is computable.
     enriched: list[dict] = []
@@ -51,7 +56,10 @@ def home() -> dict[str, Any]:
     enriched.sort(key=lambda s: s.get("timestamp", ""), reverse=True)
 
     # ---- Today's snapshot ----
-    today_signals = [s for s in enriched if s.get("timestamp", "")[:10] == today]
+    today_signals = [
+        s for s in enriched
+        if trading_day_for_ts(s.get("timestamp", ""), tz_name) == today
+    ]
     today_with_pnl = [s for s in today_signals
                       if s["metrics"].get("realized_pnl") is not None]
     today_pnl = sum(s["metrics"]["realized_pnl"] for s in today_with_pnl)
@@ -65,7 +73,10 @@ def home() -> dict[str, Any]:
     today_trades_count = 0
     today_trades_pnl = 0.0
     try:
-        fills_rows = db.fetch_fills_for_derivation(date_from=today + "T00:00:00")
+        fills_rows = db.fetch_fills_for_derivation(
+            date_from=today_start_utc.isoformat().replace("+00:00", "Z"),
+            date_to=today_end_utc.isoformat().replace("+00:00", "Z"),
+        )
         trades_rows = tradelib.derive_trades(fills_rows)
         today_trades_count = len(trades_rows)
         today_trades_pnl = sum(t["net_pnl"] for t in trades_rows)

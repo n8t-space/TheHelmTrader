@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
-import { deleteJSON, fetchJSON, fmtPrice, postJSON, type Signal, type SignalListResp } from '../api'
+import { deleteJSON, fetchJSON, fmtPrice, postJSON, type Signal, type SettingsResp, type SignalListResp } from '../api'
 import { arrow, flip, sortBy, type Sort } from '../lib/sorting'
+import { currentTradingDay, tradingDayFor } from '../lib/trading_day'
 
 type SignalKey =
   | 'timestamp'
@@ -157,18 +158,30 @@ export function SignalAnalysisPage() {
     return sortBy(q.data.signals, sort, accessor)
   }, [q.data, sort])
 
-  // KPI derivation: parallel stats for today's signals and the full history.
-  // Both come from the same signal list so we don't need a separate API.
-  // "Today" uses the same local-date semantics as home.py's today_pnl.
+  // KPI derivation: parallel stats for the current CME session and the
+  // full history. Both come from the same signal list so we don't need a
+  // separate API. Session = current trading day per the operator's TZ +
+  // 6 PM CT roll (matches the home.py "today" rule). Falls back to
+  // America/Chicago while settings load.
+  const settingsQ = useQuery({
+    queryKey: ['settings'],
+    queryFn:  () => fetchJSON<SettingsResp>('/api/settings'),
+    staleTime: 60_000,
+  })
+  const tz = settingsQ.data?.settings.appearance.timezone ?? 'America/Chicago'
+
   const { todayKpi, allTimeKpi } = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10)
+    const today = currentTradingDay(tz)
     const all = q.data?.signals ?? []
-    const todays = all.filter((s) => (s.timestamp || '').slice(0, 10) === today)
+    const todays = all.filter((s) => {
+      if (!s.timestamp) return false
+      return tradingDayFor(new Date(s.timestamp), tz) === today
+    })
     return {
       todayKpi:   { date: today, ...computeKpi(todays) },
       allTimeKpi: computeKpi(all),
     }
-  }, [q.data])
+  }, [q.data, tz])
 
   const firstSignalDate = useMemo(() => {
     const all = q.data?.signals ?? []
@@ -223,7 +236,7 @@ export function SignalAnalysisPage() {
     <>
       <div className="grid">
         <div className="card">
-          <h2>Today · {todayKpi.date}</h2>
+          <h2>Current CME Session · {todayKpi.date}</h2>
           <div className="big">
             <span className={pnlCls(todayKpi.pnl)}>{fmtMoney(todayKpi.pnl)}</span>
             <span className="big-sub"> realized (signals)</span>

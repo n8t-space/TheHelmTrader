@@ -181,17 +181,51 @@ def fills(
     return {"count": len(rows), "fills": rows}
 
 
+def _resolve_date_window(
+    trading_day: str | None,
+    trading_day_from: str | None,
+    trading_day_to: str | None,
+    date_from: str | None,
+    date_to: str | None,
+) -> tuple[str | None, str | None]:
+    """Translate trading-day filter params into UTC ISO bounds the db layer
+    understands. A single ``trading_day`` is shorthand for from=that day,
+    to=that day inclusive. Trading-day params win when both are supplied --
+    they're the futures-correct mental model."""
+    if trading_day and not (trading_day_from or trading_day_to):
+        trading_day_from = trading_day
+        trading_day_to   = trading_day
+    if trading_day_from or trading_day_to:
+        from .trading_day import trading_day_bounds_utc
+        tz_name = settings_routes.get_settings().appearance.timezone
+        start_iso = None
+        end_iso = None
+        if trading_day_from:
+            start_iso = trading_day_bounds_utc(trading_day_from, tz_name)[0] \
+                .isoformat().replace("+00:00", "Z")
+        if trading_day_to:
+            end_iso = trading_day_bounds_utc(trading_day_to, tz_name)[1] \
+                .isoformat().replace("+00:00", "Z")
+        return start_iso, end_iso
+    return date_from, date_to
+
+
 @app.get("/api/trades")
 def trades(
     account: Annotated[list[str] | None, Query()] = None,
     symbol: Annotated[str | None, Query()] = None,
     date_from: Annotated[str | None, Query()] = None,
     date_to: Annotated[str | None, Query()] = None,
+    trading_day: Annotated[str | None, Query(
+        description="YYYY-MM-DD; futures-aware day (CT 6 PM roll)")] = None,
+    trading_day_from: Annotated[str | None, Query()] = None,
+    trading_day_to: Annotated[str | None, Query()] = None,
 ):
+    df, dt = _resolve_date_window(trading_day, trading_day_from, trading_day_to, date_from, date_to)
     try:
         fills_rows = db.fetch_fills_for_derivation(
             account=account, symbol=symbol,
-            date_from=date_from, date_to=date_to,
+            date_from=df, date_to=dt,
         )
     except FileNotFoundError as e:
         raise HTTPException(503, str(e))
@@ -205,16 +239,22 @@ def stats(
     symbol: Annotated[str | None, Query()] = None,
     date_from: Annotated[str | None, Query()] = None,
     date_to: Annotated[str | None, Query()] = None,
+    trading_day: Annotated[str | None, Query(
+        description="YYYY-MM-DD; futures-aware day (CT 6 PM roll)")] = None,
+    trading_day_from: Annotated[str | None, Query()] = None,
+    trading_day_to: Annotated[str | None, Query()] = None,
 ):
+    df, dt = _resolve_date_window(trading_day, trading_day_from, trading_day_to, date_from, date_to)
     try:
         fills_rows = db.fetch_fills_for_derivation(
             account=account, symbol=symbol,
-            date_from=date_from, date_to=date_to,
+            date_from=df, date_to=dt,
         )
     except FileNotFoundError as e:
         raise HTTPException(503, str(e))
     trades_rows = tradelib.derive_trades(fills_rows)
-    return tradelib.compute_stats(trades_rows)
+    tz_name = settings_routes.get_settings().appearance.timezone
+    return tradelib.compute_stats(trades_rows, tz=tz_name)
 
 
 def _capture_with_context_async(ctx: dict, image_path: Path | None) -> None:

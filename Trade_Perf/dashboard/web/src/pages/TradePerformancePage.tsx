@@ -1,10 +1,22 @@
 import { useState } from 'react'
-import { EMPTY_FILTERS, type Filters } from '../api'
+import { useQuery } from '@tanstack/react-query'
+import { EMPTY_FILTERS, fetchJSON, type Filters, type SettingsResp } from '../api'
 import { DrawdownsCard, FillsTable, FilterBar, StatsPanel, StatusPanel, TradesTable } from '../panels'
+import { currentTradingDay } from '../lib/trading_day'
 
 export function TradePerformancePage() {
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS)
-  const today = new Date().toISOString().slice(0, 10)
+  // "Current CME Session" = current trading day per the operator's TZ + 6 PM
+  // CT roll. Trades closed after the local 6 PM bucket into the NEXT trading
+  // day -- so 5 PM CDT trade = today's session, 7 PM CDT trade = tomorrow's
+  // session. Falls back to America/Chicago while settings load.
+  const settings = useQuery({
+    queryKey: ['settings'],
+    queryFn:  () => fetchJSON<SettingsResp>('/api/settings'),
+    staleTime: 60_000,
+  })
+  const tz = settings.data?.settings.appearance.timezone ?? 'America/Chicago'
+  const today = currentTradingDay(tz)
 
   return (
     <>
@@ -12,8 +24,8 @@ export function TradePerformancePage() {
 
       <div className="grid">
         <StatusPanel />
-        <StatsPanel label="Today" filters={filters} extra={{ date_from: today }} />
-        <StatsPanel label="Filtered" filters={filters} />
+        <StatsPanel label="Current CME Session" filters={filters} extra={{ trading_day: today }} />
+        <StatsPanel label="Calendar Day / Range" filters={filters} />
       </div>
 
       <DrawdownsCard />
