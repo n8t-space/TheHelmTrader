@@ -45,14 +45,16 @@ One non-Helm prerequisite the installer can't grab for you:
 
 - **NinjaTrader 8** (8.1.6.3+) — your brokerage connection lives here. https://ninjatrader.com/
 
-Then, from an **elevated** PowerShell. Either clone the repo (requires SSH access):
+Then, from an **elevated** PowerShell. Either clone the repo:
 
 ```powershell
 cd $HOME\Documents\Projects
-git clone git@github.com:n8t-space/TheHelmTrader.git
+git clone https://github.com/n8t-space/TheHelmTrader.git
 cd TheHelmTrader
 .\install.ps1
 ```
+
+`install.ps1` checks for `python`, `node`, `git`, and `nssm` and uses `winget` to install any that are missing — so you don't need git pre-installed if you're starting from the zip bundle.
 
 Or unzip the bundle you were given:
 
@@ -88,23 +90,37 @@ When the script finishes:
 
 #### Prerequisites
 
-Install once. Skip any line you already have.
+Conditional installs -- each line is a no-op if the tool is already on PATH.
 
 ```powershell
 # From an elevated PowerShell
-winget install Python.Python.3.12          # python 3.12+ -- NOT the Microsoft Store alias
-winget install OpenJS.NodeJS.LTS           # node for the React build (>=18)
-winget install Git.Git
-winget install NSSM.NSSM                   # service wrapper (install_service.ps1 will also auto-install if missing)
+if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+    winget install Python.Python.3.12          # python 3.12+ -- NOT the Microsoft Store alias
+}
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+    winget install OpenJS.NodeJS.LTS           # node for the React build (>=18)
+}
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    winget install Git.Git
+}
+if (-not (Get-Command nssm -ErrorAction SilentlyContinue)) {
+    winget install NSSM.NSSM                   # service wrapper (install_service.ps1 will also auto-install if missing)
+}
 ```
+
+After installing, close + reopen PowerShell (or refresh `$env:Path`) so the new tools are visible.
 
 #### Clone
 
+The repo is public, so HTTPS works without any auth setup:
+
 ```powershell
 cd $HOME\Documents\Projects
-git clone git@github.com:n8t-space/TheHelmTrader.git
+git clone https://github.com/n8t-space/TheHelmTrader.git
 cd TheHelmTrader
 ```
+
+(SSH still works if you've registered a key: `git clone git@github.com:n8t-space/TheHelmTrader.git`.)
 
 #### Python dependencies
 
