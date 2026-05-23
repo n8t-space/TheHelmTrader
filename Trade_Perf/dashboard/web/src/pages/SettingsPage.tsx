@@ -9,7 +9,8 @@ declare global {
 }
 import {
   fetchJSON, postJSON, putJSON,
-  type DrawdownConfig, type OllamaTestResp, type SettingsAccounts, type SettingsAiBackend,
+  type DimensionsResp, type DrawdownConfig, type OllamaTestResp,
+  type SettingsAccounts, type SettingsAiBackend,
   type SettingsAppearance, type SettingsDoc, type SettingsResp,
   type SettingsStrategy,
 } from '../api'
@@ -555,6 +556,41 @@ function AccountsTab({ value, onChange }: {
   const editList = (key: keyof SettingsAccounts, list: string[]) =>
     onChange({ ...value, [key]: list })
 
+  // Pull the accounts that have ANY fills in trades.db so we can offer
+  // one-click categorization. The same endpoint feeds the Trade Performance
+  // FilterBar; if accounts appear there but are missing from the buckets
+  // below, the operator sees them in 'Detected accounts' and can drop them
+  // into the right bucket without re-typing the ID.
+  const dims = useQuery({
+    queryKey: ['dimensions'],
+    queryFn:  () => fetchJSON<DimensionsResp>('/api/dimensions'),
+    staleTime: 30_000,
+  })
+  const discovered: string[] = dims.data?.accounts ?? []
+
+  const where = (acct: string): 'live' | 'evals' | 'simulation' | null => {
+    if (value.live.includes(acct))       return 'live'
+    if (value.evals.includes(acct))      return 'evals'
+    if (value.simulation.includes(acct)) return 'simulation'
+    return null
+  }
+  const addTo = (key: 'live' | 'evals' | 'simulation', acct: string) => {
+    const current = where(acct)
+    const next: SettingsAccounts = {
+      ...value,
+      live:       current === 'live'       ? value.live       : value.live.filter((a) => a !== acct),
+      evals:      current === 'evals'      ? value.evals      : value.evals.filter((a) => a !== acct),
+      simulation: current === 'simulation' ? value.simulation : value.simulation.filter((a) => a !== acct),
+    }
+    // Append to the chosen bucket (dedupe + strip blanks at save time).
+    if (!next[key].includes(acct)) next[key] = [...next[key], acct]
+    // Drop the empty placeholder row from the target bucket if present.
+    next[key] = next[key].filter((a) => a !== '')
+    onChange(next)
+  }
+
+  const uncategorized = discovered.filter((a) => where(a) === null)
+
   return (
     <>
       <h3 style={{ marginTop: 0 }}>Accounts</h3>
@@ -562,6 +598,63 @@ function AccountsTab({ value, onChange }: {
         Categorizes recorder fills for the Home page Cumulative Earnings card and the
         Trade Performance quick-filter buttons. Account IDs should match exactly what NT8 shows in the Control Center → Accounts tab. NT-default sims ship pre-listed under Simulation; add your live broker and prop-firm IDs to the matching bucket.
       </p>
+
+      <h4 style={{ marginTop: 18 }}>Detected accounts in trades.db</h4>
+      <p className="subtle">
+        Auto-discovered from your recorder's fill history. Click a button to drop the account into the matching bucket; moving an already-bucketed account just reassigns it.
+      </p>
+      {discovered.length === 0 ? (
+        <p className="subtle"><em>No accounts have fills yet. The list will populate once the recorder has captured trades.</em></p>
+      ) : (
+        <div className="detected-accounts">
+          {discovered.map((acct) => {
+            const bucket = where(acct)
+            return (
+              <div key={acct} className="detected-account-row">
+                <span className="detected-account-id">{acct}</span>
+                {bucket && (
+                  <span className={'detected-account-bucket bucket-' + bucket}>
+                    in {bucket}
+                  </span>
+                )}
+                <div className="detected-account-actions">
+                  <button
+                    type="button"
+                    className={'quick-btn' + (bucket === 'live' ? ' on' : '')}
+                    onClick={() => addTo('live', acct)}
+                    disabled={bucket === 'live'}
+                  >
+                    → Live
+                  </button>
+                  <button
+                    type="button"
+                    className={'quick-btn' + (bucket === 'evals' ? ' on' : '')}
+                    onClick={() => addTo('evals', acct)}
+                    disabled={bucket === 'evals'}
+                  >
+                    → Eval
+                  </button>
+                  <button
+                    type="button"
+                    className={'quick-btn' + (bucket === 'simulation' ? ' on' : '')}
+                    onClick={() => addTo('simulation', acct)}
+                    disabled={bucket === 'simulation'}
+                  >
+                    → Sim
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+          {uncategorized.length > 0 && (
+            <p className="subtle" style={{ marginTop: 8 }}>
+              <strong>{uncategorized.length}</strong> account{uncategorized.length === 1 ? '' : 's'} not yet categorized.
+            </p>
+          )}
+        </div>
+      )}
+
+      <h4 style={{ marginTop: 18 }}>Bucket assignments</h4>
       <div className="settings-row">
         <AccountList
           label="Live"

@@ -1123,6 +1123,52 @@ td.status-ok     { color: var(--pos); }
 .badge.status-warn   { background: rgba(255, 200, 80, 0.15); color: rgba(255, 200, 80, 0.95); }
 .badge.status-breach { background: rgba(248, 81, 73, 0.18);  color: var(--neg); }
 
+/* ---------- Settings: detected accounts (quick-add) ---------- */
+
+.detected-accounts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 4px;
+}
+
+.detected-account-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.detected-account-id {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  min-width: 160px;
+}
+
+.detected-account-bucket {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-style: italic;
+  min-width: 90px;
+}
+
+.detected-account-bucket.bucket-live       { color: var(--accent); font-style: normal; }
+.detected-account-bucket.bucket-evals      { color: rgba(255, 200, 80, 0.95); font-style: normal; }
+.detected-account-bucket.bucket-simulation { color: var(--muted); font-style: normal; }
+
+.detected-account-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+
+
 /* ---------- Settings: drawdown row editor ---------- */
 
 .drawdown-row {
