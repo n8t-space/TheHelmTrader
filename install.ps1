@@ -2,7 +2,7 @@
 #
 # Run from elevated PowerShell, inside a TheHelmTrader checkout:
 #
-#     git clone git@github.com:n8t-space/TheHelmTrader.git
+#     git clone https://github.com/n8t-space/TheHelmTrader.git
 #     cd TheHelmTrader
 #     # Right-click PowerShell -> Run as administrator
 #     .\install.ps1
