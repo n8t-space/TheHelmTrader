@@ -153,9 +153,13 @@ def health():
 
 
 @app.get("/api/dimensions")
-def dimensions():
+def dimensions(
+    include_hidden: Annotated[bool, Query(
+        description="Include accounts not selected on the Settings page. "
+                    "True is only intended for the Settings Accounts tab.")] = False,
+):
     try:
-        return db.list_dimensions()
+        return db.list_dimensions(include_hidden=include_hidden)
     except FileNotFoundError as e:
         raise HTTPException(503, str(e))
 

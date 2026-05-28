@@ -147,6 +147,17 @@ def get_settings() -> Settings:
     return _cache
 
 
+def visible_accounts() -> set[str]:
+    """Source-of-truth set for which NT account IDs are visible to the rest of
+    the site. Union of the three Settings buckets (live + evals + simulation).
+    Any account not in this set is hidden from /api/dimensions, FilterBar,
+    Home cumulative-earnings, and default unfiltered fill queries -- the
+    recorder keeps writing fills for hidden accounts, but the UI ignores them.
+    Re-select an account on the Settings Accounts tab to restore visibility."""
+    a = get_settings().accounts
+    return {x for x in (*a.live, *a.evals, *a.simulation) if x}
+
+
 def _save_to_disk(settings: Settings) -> None:
     SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = SETTINGS_PATH.with_suffix(".json.tmp")

@@ -125,7 +125,8 @@ def list_drawdowns() -> dict[str, Any]:
     per account (configured on the Accounts tab of the Settings page).
     """
     cfg = settings_mod.get_settings().accounts
-    configs = cfg.drawdowns or {}
+    visible = settings_mod.visible_accounts()
+    configs = {a: c for a, c in (cfg.drawdowns or {}).items() if a in visible}
     if not configs:
         return {"accounts": [], "warn_threshold": WARN_THRESHOLD, "tz": settings_mod.get_settings().appearance.timezone}
 

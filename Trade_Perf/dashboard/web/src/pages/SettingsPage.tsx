@@ -63,20 +63,8 @@ export function SettingsPage() {
   }, [draft])
 
   const save = useMutation({
-    mutationFn: (doc: SettingsDoc) => {
-      // Strip empty / whitespace-only account entries before PUT.
-      const clean = (xs: string[]) => xs.map((s) => s.trim()).filter((s) => s !== '')
-      const cleaned: SettingsDoc = {
-        ...doc,
-        accounts: {
-          live:       clean(doc.accounts.live),
-          evals:      clean(doc.accounts.evals),
-          simulation: clean(doc.accounts.simulation),
-          drawdowns:  doc.accounts.drawdowns,
-        },
-      }
-      return putJSON<{ settings: SettingsDoc; path: string }>('/api/settings', cleaned)
-    },
+    mutationFn: (doc: SettingsDoc) =>
+      putJSON<{ settings: SettingsDoc; path: string }>('/api/settings', doc),
     onSuccess: (resp) => {
       // Refresh draft from server's canonical (cleaned) response so the
       // dirty-state comparison stays accurate.
@@ -549,129 +537,106 @@ function StrategyTab({ value, onChange }: {
 
 // ---------- Accounts ----------
 
+type Visibility = 'hidden' | 'live' | 'evals' | 'simulation'
+
 function AccountsTab({ value, onChange }: {
   value: SettingsAccounts
   onChange: (v: SettingsAccounts) => void
 }) {
-  const editList = (key: keyof SettingsAccounts, list: string[]) =>
-    onChange({ ...value, [key]: list })
-
-  // Pull the accounts that have ANY fills in trades.db so we can offer
-  // one-click categorization. The same endpoint feeds the Trade Performance
-  // FilterBar; if accounts appear there but are missing from the buckets
-  // below, the operator sees them in 'Detected accounts' and can drop them
-  // into the right bucket without re-typing the ID.
+  // include_hidden=true so the candidate list includes accounts the user
+  // hasn't opted into yet -- that's the whole point of this tab.
   const dims = useQuery({
-    queryKey: ['dimensions'],
-    queryFn:  () => fetchJSON<DimensionsResp>('/api/dimensions'),
+    queryKey: ['dimensions', 'all'],
+    queryFn:  () => fetchJSON<DimensionsResp>('/api/dimensions?include_hidden=true'),
     staleTime: 30_000,
   })
   const discovered: string[] = dims.data?.accounts ?? []
 
-  const where = (acct: string): 'live' | 'evals' | 'simulation' | null => {
+  const where = (acct: string): Visibility => {
     if (value.live.includes(acct))       return 'live'
     if (value.evals.includes(acct))      return 'evals'
     if (value.simulation.includes(acct)) return 'simulation'
-    return null
+    return 'hidden'
   }
-  const addTo = (key: 'live' | 'evals' | 'simulation', acct: string) => {
-    const current = where(acct)
-    const next: SettingsAccounts = {
+  const setVisibility = (acct: string, v: Visibility) => {
+    const stripped: SettingsAccounts = {
       ...value,
-      live:       current === 'live'       ? value.live       : value.live.filter((a) => a !== acct),
-      evals:      current === 'evals'      ? value.evals      : value.evals.filter((a) => a !== acct),
-      simulation: current === 'simulation' ? value.simulation : value.simulation.filter((a) => a !== acct),
+      live:       value.live.filter((a) => a !== acct),
+      evals:      value.evals.filter((a) => a !== acct),
+      simulation: value.simulation.filter((a) => a !== acct),
     }
-    // Append to the chosen bucket (dedupe + strip blanks at save time).
-    if (!next[key].includes(acct)) next[key] = [...next[key], acct]
-    // Drop the empty placeholder row from the target bucket if present.
-    next[key] = next[key].filter((a) => a !== '')
-    onChange(next)
+    if (v === 'hidden') {
+      onChange(stripped)
+      return
+    }
+    onChange({ ...stripped, [v]: [...stripped[v], acct] })
   }
 
-  const uncategorized = discovered.filter((a) => where(a) === null)
+  // Union: every discovered account + every account already in a bucket
+  // (even if it has no fills yet, e.g. the NT-default Sim101/Playback101/
+  // Backtest/SimBetaSIM that ship pre-listed under Simulation on first run).
+  const bucketed = [...value.live, ...value.evals, ...value.simulation]
+  const allKnown = Array.from(new Set([...discovered, ...bucketed]))
+    .filter((a) => a !== '')
+    .sort()
+
+  const visibleCount = allKnown.filter((a) => where(a) !== 'hidden').length
+  const hiddenCount  = allKnown.length - visibleCount
 
   return (
     <>
       <h3 style={{ marginTop: 0 }}>Accounts</h3>
       <p className="subtle">
-        Categorizes recorder fills for the Home page Cumulative Earnings card and the
-        Trade Performance quick-filter buttons. Account IDs should match exactly what NT8 shows in the Control Center → Accounts tab. NT-default sims ship pre-listed under Simulation; add your live broker and prop-firm IDs to the matching bucket.
+        Source of truth for which NT accounts are visible to the rest of the dashboard. The recorder keeps capturing fills for every account NT8 reports — these toggles only control what shows up in FilterBar, the Home cumulative-earnings card, and the Drawdown tracker. Account IDs match exactly what NT8 displays in Control Center → Accounts.
       </p>
-
-      <h4 style={{ marginTop: 18 }}>Detected accounts in trades.db</h4>
       <p className="subtle">
-        Auto-discovered from your recorder's fill history. Click a button to drop the account into the matching bucket; moving an already-bucketed account just reassigns it.
+        <strong>{visibleCount}</strong> visible · <strong>{hiddenCount}</strong> hidden · <strong>{allKnown.length}</strong> known
       </p>
-      {discovered.length === 0 ? (
-        <p className="subtle"><em>No accounts have fills yet. The list will populate once the recorder has captured trades.</em></p>
-      ) : (
-        <div className="detected-accounts">
-          {discovered.map((acct) => {
-            const bucket = where(acct)
-            return (
-              <div key={acct} className="detected-account-row">
-                <span className="detected-account-id">{acct}</span>
-                {bucket && (
-                  <span className={'detected-account-bucket bucket-' + bucket}>
-                    in {bucket}
-                  </span>
-                )}
-                <div className="detected-account-actions">
-                  <button
-                    type="button"
-                    className={'quick-btn' + (bucket === 'live' ? ' on' : '')}
-                    onClick={() => addTo('live', acct)}
-                    disabled={bucket === 'live'}
-                  >
-                    → Live
-                  </button>
-                  <button
-                    type="button"
-                    className={'quick-btn' + (bucket === 'evals' ? ' on' : '')}
-                    onClick={() => addTo('evals', acct)}
-                    disabled={bucket === 'evals'}
-                  >
-                    → Eval
-                  </button>
-                  <button
-                    type="button"
-                    className={'quick-btn' + (bucket === 'simulation' ? ' on' : '')}
-                    onClick={() => addTo('simulation', acct)}
-                    disabled={bucket === 'simulation'}
-                  >
-                    → Sim
-                  </button>
-                </div>
-              </div>
-            )
-          })}
-          {uncategorized.length > 0 && (
-            <p className="subtle" style={{ marginTop: 8 }}>
-              <strong>{uncategorized.length}</strong> account{uncategorized.length === 1 ? '' : 's'} not yet categorized.
-            </p>
-          )}
-        </div>
-      )}
 
-      <h4 style={{ marginTop: 18 }}>Bucket assignments</h4>
-      <div className="settings-row">
-        <AccountList
-          label="Live"
-          value={value.live}
-          onChange={(l) => editList('live', l)}
-        />
-        <AccountList
-          label="Evals"
-          value={value.evals}
-          onChange={(l) => editList('evals', l)}
-        />
-        <AccountList
-          label="Simulation"
-          value={value.simulation}
-          onChange={(l) => editList('simulation', l)}
-        />
-      </div>
+      {allKnown.length === 0 ? (
+        <p className="subtle"><em>No accounts known yet. The list populates once the recorder captures a fill, or once NT8 connects to an account it has previously traded on.</em></p>
+      ) : (
+        <table className="accounts-visibility-table">
+          <thead>
+            <tr>
+              <th>Account ID</th>
+              <th>Hidden</th>
+              <th>Live</th>
+              <th>Eval</th>
+              <th>Sim</th>
+            </tr>
+          </thead>
+          <tbody>
+            {allKnown.map((acct) => {
+              const v = where(acct)
+              const inDb = discovered.includes(acct)
+              return (
+                <tr key={acct}>
+                  <td>
+                    <span className="account-id-mono">{acct}</span>
+                    {!inDb && (
+                      <span className="subtle" style={{ marginLeft: 8 }}>
+                        (no fills yet)
+                      </span>
+                    )}
+                  </td>
+                  {(['hidden', 'live', 'evals', 'simulation'] as Visibility[]).map((opt) => (
+                    <td key={opt} style={{ textAlign: 'center' }}>
+                      <input
+                        type="radio"
+                        name={`acct-${acct}`}
+                        checked={v === opt}
+                        onChange={() => setVisibility(acct, opt)}
+                        aria-label={`${acct} -> ${opt}`}
+                      />
+                    </td>
+                  ))}
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      )}
 
       <DrawdownTrackingBlock
         accounts={value}
@@ -800,74 +765,3 @@ function DrawdownTrackingBlock({
   )
 }
 
-function AccountList({ label, value, onChange }: {
-  label: string
-  value: string[]
-  onChange: (l: string[]) => void
-}) {
-  // Always render at least one row so the user can type into an empty bucket.
-  // The save handler upstream strips blank entries before PUT.
-  const rows = value.length === 0 ? [''] : value
-  const inputRefs = useRef<Array<HTMLInputElement | null>>([])
-  const focusIndex = useRef<number | null>(null)
-
-  useEffect(() => {
-    if (focusIndex.current !== null) {
-      inputRefs.current[focusIndex.current]?.focus()
-      focusIndex.current = null
-    }
-  })
-
-  const updateAt = (i: number, v: string) => {
-    const next = [...rows]
-    next[i] = v
-    onChange(next)
-  }
-  const removeAt = (i: number) => {
-    const next = rows.filter((_, idx) => idx !== i)
-    onChange(next)
-  }
-  const appendBlank = () => {
-    focusIndex.current = rows.length  // focus the new row once it mounts
-    onChange([...rows, ''])
-  }
-
-  return (
-    <div className="account-bucket">
-      <span className="account-bucket-label">{label}</span>
-      <div className="account-bucket-rows">
-        {rows.map((acc, i) => (
-          <div key={i} className="account-row">
-            <input
-              type="text"
-              ref={(el) => { inputRefs.current[i] = el }}
-              value={acc}
-              placeholder="account ID"
-              onChange={(e) => updateAt(i, e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') { e.preventDefault(); appendBlank() }
-              }}
-            />
-            <button
-              type="button"
-              className="account-row-remove"
-              onClick={() => removeAt(i)}
-              title="Remove this account"
-              aria-label={`remove ${acc || 'empty'}`}
-              disabled={rows.length === 1 && rows[0] === ''}
-            >
-              {'×'}
-            </button>
-          </div>
-        ))}
-      </div>
-      <button
-        type="button"
-        className="account-bucket-add"
-        onClick={appendBlank}
-      >
-        + Add account
-      </button>
-    </div>
-  )
-}

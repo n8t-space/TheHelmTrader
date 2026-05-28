@@ -6,6 +6,8 @@ import sqlite3
 from pathlib import Path
 from typing import Iterable
 
+from . import settings as settings_mod
+
 DB_PATH = Path(__file__).resolve().parents[2] / "trades.db"
 
 
@@ -18,6 +20,21 @@ def _norm_account(account: list[str] | str | None) -> list[str]:
     if isinstance(account, str):
         return [account] if account else []
     return [a for a in account if a]
+
+
+def _apply_visibility(accts: list[str]) -> list[str]:
+    """Gate the caller's requested account list against the Settings-driven
+    visibility set. Empty caller list -> default to ALL visible accounts.
+    Non-empty caller list -> intersect with visible (defense-in-depth so a
+    hidden account can't leak via ?account= URL tampering).
+
+    Returns the post-gating list. An empty return after visibility was applied
+    means 'no visible accounts matched' -- callers will build a WHERE IN()
+    that matches nothing, which is the correct behavior."""
+    visible = settings_mod.visible_accounts()
+    if not accts:
+        return sorted(visible)
+    return [a for a in accts if a in visible]
 
 
 def connect() -> sqlite3.Connection:
@@ -38,12 +55,11 @@ def fetch_fills(
     limit: int = 1000,
     offset: int = 0,
 ) -> list[dict]:
-    where: list[str] = []
-    args: list = []
-    accts = _norm_account(account)
-    if accts:
-        where.append(f"account_name IN ({','.join('?' * len(accts))})")
-        args.extend(accts)
+    accts = _apply_visibility(_norm_account(account))
+    if not accts:
+        return []
+    where: list[str] = [f"account_name IN ({','.join('?' * len(accts))})"]
+    args: list = [*accts]
     if symbol:
         where.append("(symbol = ? OR master_symbol = ?)")
         args += [symbol, symbol]
@@ -58,9 +74,7 @@ def fetch_fills(
     if date_to:
         where.append("time_utc < ?")
         args.append(date_to)
-    sql = "SELECT * FROM fills"
-    if where:
-        sql += " WHERE " + " AND ".join(where)
+    sql = "SELECT * FROM fills WHERE " + " AND ".join(where)
     sql += " ORDER BY id DESC LIMIT ? OFFSET ?"
     args += [limit, offset]
     with connect() as conn:
@@ -75,12 +89,11 @@ def fetch_fills_for_derivation(
     date_to: str | None = None,
 ) -> list[dict]:
     """Time-ordered, no pagination -- used by trade-derivation walk."""
-    where: list[str] = []
-    args: list = []
-    accts = _norm_account(account)
-    if accts:
-        where.append(f"account_name IN ({','.join('?' * len(accts))})")
-        args.extend(accts)
+    accts = _apply_visibility(_norm_account(account))
+    if not accts:
+        return []
+    where: list[str] = [f"account_name IN ({','.join('?' * len(accts))})"]
+    args: list = [*accts]
     if symbol:
         where.append("(symbol = ? OR master_symbol = ?)")
         args += [symbol, symbol]
@@ -90,15 +103,20 @@ def fetch_fills_for_derivation(
     if date_to:
         where.append("time_utc < ?")
         args.append(date_to)
-    sql = "SELECT * FROM fills"
-    if where:
-        sql += " WHERE " + " AND ".join(where)
+    sql = "SELECT * FROM fills WHERE " + " AND ".join(where)
     sql += " ORDER BY time_utc ASC, id ASC"
     with connect() as conn:
         return [dict(r) for r in conn.execute(sql, args)]
 
 
-def list_dimensions() -> dict[str, list[str]]:
+def list_dimensions(*, include_hidden: bool = False) -> dict[str, list[str]]:
+    """Distinct values for the FilterBar dropdowns + Settings candidate list.
+
+    ``include_hidden=False`` (default) gates the ``accounts`` field through the
+    Settings visibility set -- hidden accounts won't appear in FilterBar or the
+    Recorder Status panel. The Settings Accounts tab calls with
+    ``include_hidden=True`` so it can offer hidden accounts as toggle
+    candidates. Symbols + strategies are never filtered (not bucketed)."""
     with connect() as conn:
         accounts = [r[0] for r in conn.execute(
             "SELECT DISTINCT account_name FROM fills WHERE account_name IS NOT NULL ORDER BY account_name")]
@@ -116,6 +134,9 @@ def list_dimensions() -> dict[str, list[str]]:
             "SELECT MIN(time_utc) FROM fills").fetchone()[0]
         last_time = conn.execute(
             "SELECT MAX(time_utc) FROM fills").fetchone()[0]
+    if not include_hidden:
+        visible = settings_mod.visible_accounts()
+        accounts = [a for a in accounts if a in visible]
     return {
         "accounts": accounts,
         "symbols": symbols,

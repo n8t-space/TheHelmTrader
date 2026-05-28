@@ -46,9 +46,7 @@ export function StatusPanel() {
       <h2>Recorder Status</h2>
       <div className="kv"><span>Status</span><span className="ok">{health.data?.status}</span></div>
       <div className="kv"><span>Fills in trades.db</span><span>{health.data?.fills.toLocaleString()}</span></div>
-      <div className="kv"><span>Accounts</span><span>{dims.data?.accounts.join(', ') || '—'}</span></div>
       <div className="kv"><span>Symbols</span><span>{dims.data?.symbols.join(', ') || '—'}</span></div>
-      <div className="kv"><span>Strategies</span><span>{dims.data?.strategies.join(', ') || '—'}</span></div>
       <div className="kv"><span>First fill</span><span>{fmtTime(dims.data?.first_fill_time)}</span></div>
       <div className="kv"><span>Last fill</span><span>{fmtTime(dims.data?.last_fill_time)}</span></div>
     </div>

@@ -42,7 +42,12 @@ For this project specifically, the user's preferences differ from TradingBot's w
 
 ## User accounts
 
-NT account IDs are operator-specific; categorize them under Live / Evals / Simulation via the Settings page. NT-default sims (`Sim101`, `Playback101`, `Backtest`, `SimBetaSIM`) ship pre-listed under simulation.
+Settings is the source of truth for which NT accounts are visible site-wide. The Settings Accounts tab renders one row per account known to trades.db (plus any pre-seeded sims), with radios: `Hidden | Live | Eval | Sim`. The union of the three buckets = the visible set. NT-default sims (`Sim101`, `Playback101`, `Backtest`, `SimBetaSIM`) ship pre-listed under Simulation.
+
+- Helper: `settings.visible_accounts() -> set[str]`. Consumed by `db._apply_visibility`.
+- `db.fetch_fills` / `fetch_fills_for_derivation` self-filter to the visible set when called with no `account=`, and intersect when an explicit account list is passed (defense against URL tampering hitting hidden accounts).
+- `db.list_dimensions(include_hidden=False)` filters its `accounts` field to visible. The Settings tab passes `?include_hidden=true` on `/api/dimensions` so it can offer hidden accounts as toggle candidates.
+- The recorder keeps writing fills for hidden accounts -- visibility is render-only. Re-selecting an account restores its history immediately.
 
 ## Conventions
 
@@ -53,6 +58,8 @@ NT account IDs are operator-specific; categorize them under Live / Evals / Simul
 - **Entry/outcome invariant (enforced 2026-05-19).** `outcome=no_fill` ⇔ `entry_triggered=False`; any other outcome implies `entry_triggered=True`. The `POST /api/signals/{ts}/outcome` and `/entry-triggered` routes coerce the pair on every write. Outcomes default to `position_size=1` so realized P&L populates without manual sizing. The bar walker (`outcome_watcher`) auto-stamps both fields for manual and headless signals; the only blocker is having feed.db data covering the signal's time window.
 - **Scale-out legs are TOP-LEVEL (added 2026-05-20).** For multi-bracket ATMs (the new `MES_*` / `MCL_*` 2c templates), per-leg fills live at `signal.legs`, **not** inside `signal.outcome`. Done deliberately so the auto-resolver can publish progressive per-leg fills without clobbering a user-edited aggregate outcome, and the user can edit the aggregate `outcome.result` without touching auto-resolved legs. `legs` is in `signal_storage.MERGEABLE_FIELDS`. Future readers: `rec["legs"]`, NOT `rec["outcome"]["legs"]`. When `legs` is present, `compute_trade_metrics` sums realized P&L across them and falls back to `closing_price` then single-outcome math otherwise.
 - **`is_scale_out` on trades (added 2026-05-20).** `derive_trades` flags any round-trip with >1 exit fill. The aggregate `exit_price` is still the qty-weighted average (volume-weighted math gives correct total P&L) — the per-leg `entry_fills[]` + `exit_fills[]` arrays expose what NT8 actually filled so the table can show TP1 + Runner detail under an expandable row.
+- **Trading day = 6 PM CT roll, NOT midnight (added 2026-05-22).** Every "today" aggregation across the dashboard uses the futures-correct trading-day boundary: a trade closed at 5 PM CDT is today's session; closed at 7 PM CDT it's tomorrow's. Helpers live in `dashboard/api/trading_day.py` (`current_trading_day`, `trading_day_for_ts`, `trading_day_bounds_utc`) + the JS mirror at `web/src/lib/trading_day.ts`. UI labels: `Current CME Session` (the trading-day view) vs `Calendar Day / Range` (the raw `date_from/date_to` view). Routes `/api/trades` and `/api/stats` accept `trading_day=`, `trading_day_from=`, `trading_day_to=` params (legacy `date_from/date_to` still work).
+- **`tzdata` is a hard dependency on Windows (added 2026-05-22).** Python 3.12's `zoneinfo` ships without IANA data on Windows; the first call to any `ZoneInfo(...)` throws `ZoneInfoNotFoundError` if `tzdata` isn't `pip install`-ed. The trading-day helpers + drawdown card both rely on `zoneinfo` so this is load-bearing. Already in `install.ps1` + README; flag if anyone copies the manual pip-install snippet from an older source.
 - **CORS dev mode:** `allow_methods=["GET","POST","PUT","DELETE"]` for `:5173`. PUT was added when the Auto Analysis config endpoint landed.
 
 ## Routers
@@ -66,6 +73,8 @@ NT account IDs are operator-specific; categorize them under Live / Evals / Simul
 - `settings.py` — `/api/settings` GET/PUT/reset + `/test/ollama`. Pydantic schema at `~/.helm/settings.json`. Consumed by `runtime_config.py` on the bot side.
 - `atm_strategies.py` — `/api/atm-strategies` enumerates NT8 ATM XMLs on every call (no caching — user creates new strategies mid-session).
 - `version.py` — `/api/version` returns the cached git HEAD-vs-origin/main comparison; `/api/version/check` forces a refresh. Background loop in `main.py` lifespan refreshes every 6 h. Safe-fails on release-zip (no `.git`) installs.
+- `drawdown.py` — `/api/drawdown/accounts` per-account prop-firm drawdown tracker (current balance, peak, today P&L, trailing/daily DD remaining, profit-target progress, ok/warn/breach status). Opt-in per account via `Accounts.drawdowns` in Settings. Daily window uses trading-day bounds.
+- `trading_day.py` — pure helpers (no router). Future-trading-correct date attribution at 6 PM CT roll. Consumed by `trades.compute_stats`, `home.py`, `drawdown.py`, and the `_resolve_date_window` helper for the trading_day query params on `/api/trades` + `/api/stats`.
 - `db.py` — `trades.db` connection + queries. Multi-account filter supports `?account=A&account=B`.
 - `_tradebot_bridge.py` — sys.path shim importing `TradingBot/app/src/` modules.
 
