@@ -126,6 +126,50 @@ In order, after each phase:
 
 ## 9. Session Log
 
+### 2026-05-29 — Economic Calendar widget, Home page cleanup, SPA catch-all hardening
+
+Short follow-up session. Pre-trade context piped into the dashboard so the operator doesn't have to flip between FF + Econoday tabs manually.
+
+**Done:**
+
+1. **Economic Calendar widget on Home page** (commit `f5343bd`). Surfaces today's high-impact USD events as a card pinned above the session snapshot.
+   - Backend `dashboard/api/news.py` (new). Two sources:
+     - **ForexFactory** via the public XML feed at `nfs.faireconomy.media/ff_calendar_thisweek.xml`. No AI required. Parsed with stdlib `xml.etree`. Times in the feed are US/Eastern; converted to UTC via `zoneinfo` at parse time.
+     - **Econoday** via HTML fetch of `us.econoday.com/byweek?cust=us&lid=0`, then AI extraction using whichever provider is set in `ai_backend.provider` (ollama / claude / openai). Prompt asks for strict JSON with `time_utc`, `currency`, `impact`, `title`, `forecast`, `previous`, `actual`. HTML capped at 60k chars to keep cloud-API costs bounded.
+   - Merge + dedupe by `(rounded_hour, currency, normalized_title_prefix)` so both sources naming the same release collapse to a single row with merged forecast/previous/actual. The `sources` field on each event lists which feeds saw it.
+   - Filter applied at READ time (`/api/news/today`) not at refresh — flipping impact/currency toggles in Settings is instant, no refresh cycle. CME trading-day bounds via `trading_day_bounds_utc` are also applied at read time so the card only shows events inside the current 6-PM-CT-to-6-PM-CT window.
+   - Cache at `~/.helm/news-cache.json` survives uvicorn restart. Atomic write via `.tmp` + `replace`. Read with `utf-8-sig` (PS 5.1 BOM tolerance, same pattern as the updater status file).
+   - Background refresh loop in `main.py` lifespan; reads `news.refresh_interval_minutes` each iteration so a Settings change takes effect on the next tick (default 15 min, clamped 5-180).
+   - **AI precheck.** `_ai_reachable()` returns ok+null for `ollama` if `/api/tags` responds, for `claude` if there's an API key, for `openai` if there's an API key. Exposed on `GET /api/news/today` as `ai_required` + `ai_ok` + `ai_error`. The Home card shows a "Configure AI to enable Econoday → " deep link inline when AI is needed but unreachable. FF always tries regardless.
+   - Settings → News tab: enable widget, per-source toggles, impact filter (color-coded chips: red/amber/grey), currency multi-select (USD/EUR/GBP/JPY/CAD/AUD/CHF/NZD/CNY), refresh cadence number input.
+   - Frontend `NewsPanel.tsx` (new). Sortable event table with monospaced time column, impact-colored left border + badge, per-source health chips, dedupe-aware source column, manual Refresh button, empty-state with deep link to Settings.
+
+2. **Action Queue card removed from Home page**. Per user request. The same below-floor + missing-journal lists already live on the Signal Analysis page; duplicating them on Home was redundant. Removed `ActionQueueCard`, `ActionGroup`, and `ActionItem` from `HomePage.tsx`; the underlying `/api/home` payload still returns `action_queue` (no schema change).
+
+3. **SPA catch-all hardening** (same commit). The `@app.get("/{full_path:path}")` SPA fallback was swallowing any unmatched `/api/*` GET and returning `index.html`, which made the frontend's `fetch().json()` explode with `Unexpected token '<', '<!doctype'...`. Surfaced today when the running uvicorn (pre-news router) was hit by the new SPA bundle's `/api/news/today` call. Added a hard guard: paths starting with `api/` now raise a real `HTTPException(404)` instead of falling through. Prevents the whole class of bug — any future missing API route surfaces as a clean 404 with a JSON body explaining which path missed.
+
+4. **README + PROJECT.md docs refresh**. Pythond deps line replaced with `pip install -r Trade_Perf\requirements.txt` (alongside the requirements.txt file shipped yesterday). First-run config Accounts step rewritten for the new radio-table model; News tab documented as an optional opt-in. Update section restructured: one-click flow first, manual `install.ps1 + Restart-Service` retained as fallback. Daily-use section now mentions the Economic Calendar card. PROJECT.md Home description updated to drop "action queue" and add "Economic Calendar pre-trade context".
+
+**Carry-forward observations:**
+
+- **Cloudflare TLS interception bites the FF feed.** On corporate / CMMC boxes with TLS interception, the FF XML feed (Cloudflare-fronted) fails Python's certifi cert chain + Windows schannel OCSP both. Symptom on this maintainer box: `SSLError(CERTIFICATE_VERIFY_FAILED)` from requests; `CRYPT_E_NO_REVOCATION_CHECK` from curl. End users on consumer networks don't hit this. Workaround if it surfaces: add the corp CA to the active certifi bundle (e.g. `pip install python-certifi-win32`).
+- **SPA catch-all guard is durable.** Any future `/api/<missing>` returns 404 instead of HTML. If a fetch in the SPA ever comes back with that "Unexpected token '<', '<!doctype'" error again, that's a real "no router registered this path" bug, not a silent fallback.
+- **Filter-at-read vs filter-at-refresh.** News intentionally filters at read time. Cumulative-earnings + drawdown filter at compute time. The difference: news filters are user-tweakable in a way that should give instant feedback; bucket assignments are stable.
+
+**Outstanding (next session pickup, priority order):**
+
+1. **Validate the one-click updater end-to-end on a real commit** (carried from 2026-05-28). Push a no-op commit, click Update Now, watch the watchdog respawn timing. Now urgent — the news feature can't be tested by end users until they pick it up via that flow.
+2. **Econoday parser hardening.** Real Econoday HTML is ~600kB of nested table soup; 60kB is an aggressive trim. If extraction quality is low, options: (a) cherry-pick the calendar grid with a regex / `BeautifulSoup` selector before sending to AI, (b) raise the cap for cloud providers only, (c) add a "diagnostic mode" that logs what made it into the prompt vs what came out.
+3. **News data freshness signal.** The card shows "updated Xm ago"; if X exceeds the refresh interval significantly, surface that as a warning chip. Background refresh loop failures are currently silent (logged but not user-visible).
+4. **Trade Performance accounts UI** (carried). FilterBar wraps poorly when many accounts visible.
+5. **Finish or delete `support.py`** (carried, still untracked).
+6. **Auto-analyzer status diagnostic** (carried). `armed_vs_published` diff on `/api/auto-analysis/status`.
+7. **Re-ground the 6 new ATMs against actual data** (carried).
+8. **Dynamic indicator vocabulary from NS at trigger time** (carried).
+9. **Aggregate outcome refinement for scale-outs** (carried).
+
+---
+
 ### 2026-05-28 — Settings-driven account visibility, one-click in-place updater
 
 Short focused evening session. Two landings, both shipped.
