@@ -1282,14 +1282,15 @@ tr.scale-out-detail td {
   background: transparent;
 }
 
-.update-banner-link {
-  text-decoration: none;
-  display: inline-block;
+.update-banner-primary {
+  background: var(--accent);
+  color: #0e1116;
+  border-color: var(--accent);
+  font-weight: 600;
 }
 
-.update-banner-link:hover {
-  text-decoration: none;
-  color: var(--accent);
+.update-banner-primary:hover:not(:disabled) {
+  filter: brightness(1.1);
 }
 
 .update-banner-error {
@@ -1297,6 +1298,94 @@ tr.scale-out-detail td {
   margin: 8px auto 0;
   color: var(--neg);
   font-size: 12px;
+}
+
+/* ---------- Update progress modal ---------- */
+
+.update-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.update-modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 24px;
+  max-width: 560px;
+  width: 100%;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.update-modal-title {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+.update-modal-subtitle {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 13px;
+  min-height: 1.2em;
+}
+
+.update-progress {
+  width: 100%;
+  height: 6px;
+  background: var(--bg);
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.update-progress-bar {
+  height: 100%;
+  background: var(--accent);
+  transition: width 300ms ease-out;
+}
+
+.update-progress-bar.failed {
+  background: var(--neg);
+}
+
+.update-progress-meta {
+  margin: 6px 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.update-log-tail {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+  max-height: 180px;
+  overflow-y: auto;
+  margin: 0 0 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.update-modal-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.update-error {
+  color: var(--neg);
+  font-size: 13px;
+  margin: 0;
 }
 
 /* ---------- Support page ---------- */

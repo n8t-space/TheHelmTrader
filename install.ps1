@@ -135,7 +135,9 @@ Write-Host ""
 Write-Host "[2/6] Installing Python dependencies ..."
 $pipOut = Invoke-NativeCapture { python -m pip install --upgrade pip } 'pip self-upgrade failed'
 $pipOut | Where-Object { $_ -match 'Successfully|already' } | ForEach-Object { Write-Host "   $_" }
-$pipOut = Invoke-NativeCapture { python -m pip install fastapi 'uvicorn[standard]' pydantic requests Pillow httpx tzdata } 'pip install failed'
+$reqFile = Join-Path $here 'Trade_Perf\requirements.txt'
+if (-not (Test-Path $reqFile)) { throw "requirements.txt missing at $reqFile" }
+$pipOut = Invoke-NativeCapture { python -m pip install -r $reqFile } 'pip install failed'
 $pipOut | Where-Object { $_ -match 'Successfully|already|ERROR' } | ForEach-Object { Write-Host "   $_" }
 
 # ----- 3. Build frontend -----------------------------------------------------

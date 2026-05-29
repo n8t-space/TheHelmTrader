@@ -1,5 +1,11 @@
-"""Update-check endpoint — compares the installed checkout's HEAD against
-origin/main and tells the frontend whether a newer commit is available.
+"""Update-check + one-click apply endpoints.
+
+`/api/version` (GET)  -> cached HEAD-vs-origin/main comparison.
+`/api/version/check` (POST) -> force a fresh fetch + compare.
+`/api/version/update` (POST) -> kick off the in-place updater (detached
+PowerShell helper that git-pulls, rebuilds, kills uvicorn -- watchdog
+respawns with new code).
+`/api/version/update/status` (GET) -> read the helper's progress JSON.
 
 Runs `git fetch` in a background task on a slow cadence (default 6h) so the
 foreground request path is always cheap. Falls back to safe `{available:false}`
@@ -8,14 +14,19 @@ on any error so the banner just stays hidden instead of throwing in the UI.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
+import shutil
 import subprocess
+import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 router = APIRouter(prefix="/api/version", tags=["version"])
 logger = logging.getLogger(__name__)
@@ -182,3 +193,116 @@ async def force_check() -> dict[str, Any]:
     """Force a fresh fetch + compare. Used by the 'Check now' button."""
     snap = await asyncio.to_thread(_compute_once)
     return snap
+
+
+# ---------------------------------------------------------------------------
+# One-click in-place updater
+# ---------------------------------------------------------------------------
+
+# Status file: persists across the uvicorn restart triggered at the end of
+# the update, so the frontend's poll resumes cleanly against the new instance.
+UPDATE_STATUS_PATH = Path.home() / ".helm" / "update-status.json"
+UPDATE_SCRIPT_PATH = REPO_ROOT / "Trade_Perf" / "runtime" / "update.ps1"
+
+
+def _read_status() -> dict[str, Any]:
+    if not UPDATE_STATUS_PATH.is_file():
+        return {"stage": "idle"}
+    try:
+        # utf-8-sig: PS 5.1's Set-Content/Out-File write a UTF-8 BOM that
+        # plain "utf-8" would surface as a leading ﻿ and break json.loads.
+        return json.loads(UPDATE_STATUS_PATH.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError) as e:
+        return {"stage": "unknown", "error": f"could not read status file: {e}"}
+
+
+def _spawn_update_helper() -> int:
+    """Copy update.ps1 to %TEMP% (so a git reset on the source file mid-run
+    can't break the running helper), launch it detached, return the PID."""
+    if not UPDATE_SCRIPT_PATH.is_file():
+        raise FileNotFoundError(f"update script missing at {UPDATE_SCRIPT_PATH}")
+
+    tmp_dir   = Path(tempfile.gettempdir()) / "helm-update"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    tmp_copy  = tmp_dir / f"update-{int(time.time())}.ps1"
+    shutil.copy2(UPDATE_SCRIPT_PATH, tmp_copy)
+
+    pwsh = shutil.which("pwsh") or shutil.which("powershell")
+    if not pwsh:
+        raise RuntimeError("neither pwsh nor powershell.exe is on PATH")
+
+    cmd = [
+        pwsh, "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", str(tmp_copy),
+        "-UvicornPid", str(os.getpid()),
+        "-RepoRoot", str(REPO_ROOT),
+        "-StatusPath", str(UPDATE_STATUS_PATH),
+    ]
+    # DETACHED_PROCESS = 0x00000008 | CREATE_NEW_PROCESS_GROUP = 0x00000200.
+    # Together with close_fds=True this guarantees the helper survives the
+    # uvicorn kill it will perform at the end.
+    creationflags = 0x00000008 | 0x00000200 if sys.platform == "win32" else 0
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(REPO_ROOT),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=creationflags,
+        close_fds=True,
+    )
+    return proc.pid
+
+
+@router.post("/update")
+def start_update() -> dict[str, Any]:
+    """Kick off the one-click updater. Returns 202-style ack with the helper
+    PID; the frontend then polls /api/version/update/status until stage=done."""
+    snap = get_version()
+    if not snap.get("is_git_checkout"):
+        raise HTTPException(409, "not a git checkout; cannot self-update")
+    if not snap.get("update_available"):
+        raise HTTPException(409, "already up to date; nothing to apply")
+
+    # If a previous helper is mid-run, refuse to spawn a second one.
+    status = _read_status()
+    stage  = status.get("stage")
+    if stage in ("fetching", "pip", "npm", "build"):
+        raise HTTPException(409, f"update already in progress (stage={stage})")
+
+    try:
+        pid = _spawn_update_helper()
+    except (FileNotFoundError, RuntimeError) as e:
+        raise HTTPException(500, str(e)) from e
+
+    # Seed the status file immediately so the frontend's first poll sees
+    # 'queued' instead of stale data from a prior run.
+    try:
+        UPDATE_STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        UPDATE_STATUS_PATH.write_text(
+            json.dumps({
+                "stage": "queued",
+                "message": "Update helper spawned",
+                "step": 0,
+                "total_steps": 6,
+                "log_tail": [],
+                "started_at": None,
+                "finished_at": None,
+                "error": None,
+                "target_sha": snap.get("latest_sha"),
+                "pid": pid,
+            }),
+            encoding="utf-8",
+        )
+    except OSError as e:
+        logger.warning("[version] could not seed update status file: %s", e)
+
+    logger.info("[version] update helper spawned (pid=%s)", pid)
+    return {"started": True, "pid": pid, "status_path": str(UPDATE_STATUS_PATH)}
+
+
+@router.get("/update/status")
+def update_status() -> dict[str, Any]:
+    """Poll target. Returns the helper's last-written progress snapshot, or
+    {stage: 'idle'} if no update has ever been attempted on this install."""
+    return _read_status()

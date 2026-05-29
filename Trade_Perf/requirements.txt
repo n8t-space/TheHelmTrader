@@ -1,0 +1,15 @@
+# The Helm dashboard Python deps. Pinned to latest-stable versions; bump as
+# needed in a single commit so the in-app updater's "requirements.txt
+# changed -> reinstall" path fires reliably.
+#
+# tzdata is mandatory on Windows -- Python 3.12's zoneinfo ships without
+# IANA data, and the trading-day helpers + drawdown card throw
+# ZoneInfoNotFoundError without it.
+
+fastapi
+uvicorn[standard]
+pydantic
+requests
+Pillow
+httpx
+tzdata
