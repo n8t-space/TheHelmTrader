@@ -126,6 +126,115 @@ In order, after each phase:
 
 ## 9. Session Log
 
+### 2026-05-28 — Settings-driven account visibility, one-click in-place updater
+
+Short focused evening session. Two landings, both shipped.
+
+**Done:**
+
+1. **Accounts: Settings is the source of truth for site-wide visibility** (commit `1a96872`). Yesterday's `da55420` auto-discovered accounts from `trades.db` and offered one-click bucketing, but the bucket lists were still free-text and a non-bucketed account was implicitly visible-but-uncategorized. Flipped the model: a single radio table (Hidden | Live | Eval | Sim) per known account; the union of the three buckets *is* the visible set. Backend:
+   - `settings.visible_accounts() -> set[str]` (new helper) — union of live + evals + simulation.
+   - `db._apply_visibility(accts)` (new) — when caller passes no `account=`, defaults to the visible set; when an explicit list is passed, intersects with visible. Defense-in-depth against a hidden account leaking via URL tampering.
+   - `db.fetch_fills` / `fetch_fills_for_derivation` short-circuit to `[]` when the gate returns empty (no `WHERE IN ()` SQL errors).
+   - `db.list_dimensions(include_hidden=False)` filters `accounts`; `/api/dimensions?include_hidden=true` is the Settings tab's escape hatch.
+   - `drawdown.list_drawdowns` strips configs for hidden accounts before render.
+   - Recorder untouched — fills keep landing for hidden accounts; re-selecting an account restores its history immediately. No data loss on hide.
+   - Frontend: `AccountsTab` rewritten as a radio table; the old free-text `AccountList` widget deleted along with its CSS (`account-bucket-*`, `detected-account-*`). Pre-seeded sims that don't have fills yet still render with a `(no fills yet)` hint so first-install UX stays intact.
+
+2. **StatusPanel trim** (same commit). Per inline request: dropped the Accounts and Strategies rows from Trade Performance → Recorder Status.
+
+3. **End-user install URL is HTTPS** (commit `0998b52`). Fixed the lone remaining SSH reference in `install.ps1`'s header docstring. README was already HTTPS-correct; maintainer's own `origin` stays SSH for pushes.
+
+4. **One-click in-place updater** (commit `3115fc5`). Replaces the "View update guide" link in the UpdateBanner with a primary "Update now" button that runs the entire upgrade flow from the dashboard. No CLI, no service-restart privileges needed.
+   - `Trade_Perf/runtime/update.ps1` (new). Spawned detached by the API. Does `git fetch && git reset --hard origin/main`, conditional `pip install -r requirements.txt` (only if requirements.txt changed in the diff), conditional `npm install` (only if package-lock changed), always `npm run build`, then `Stop-Process` on the uvicorn PID it was passed. The watchdog's 5 s poll notices the dead uvicorn and respawns it with the new code — no service-restart needed because we're not restarting the service, just its uvicorn child.
+   - `Trade_Perf/requirements.txt` (new). Single source of truth for Python deps; both `install.ps1` and `update.ps1` consume it. Bumping the file in a commit reliably triggers the in-app reinstall path.
+   - `dashboard/api/version.py` — two new routes: `POST /api/version/update` (validates `is_git_checkout` + `update_available`, refuses to spawn if a previous helper is mid-run, copies `update.ps1` to `%TEMP%` so a git reset on the source mid-run can't break the running script, spawns with `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`, seeds the status file). `GET /api/version/update/status` reads the helper's progress JSON.
+   - `~/.helm/update-status.json` survives the uvicorn restart, so the frontend's polling resumes seamlessly against the new API instance.
+   - **PS 5.1 BOM gotcha**: `Set-Content -Encoding utf8` writes a UTF-8 BOM in 5.1 (5.1 only — 7+ omits it). Python's `json.loads` chokes on the leading `﻿`. Read with `encoding="utf-8-sig"` instead.
+   - `install.ps1` switched from hardcoded pip list to `pip install -r requirements.txt` so install + update share one dep list.
+   - `UpdateBanner.tsx` rewritten: confirm dialog → spawn → full-screen modal with progress bar + log tail. Status query is retry-tolerant (`retry: 0`, `refetchInterval: 1500`) so polling survives the ~5 s uvicorn-restart gap. When stage=`done` AND `current_sha === target_sha`, auto-reloads after 1.5 s.
+
+**Outstanding (next session pickup, priority order):**
+
+1. **Validate the updater end-to-end** with a real "publish a commit + click Update now" cycle on the maintainer box. Watch the watchdog respawn timing — if uvicorn takes >5 s to come back up the frontend may show a transient error during polling (currently silent via `retry:0`, but worth confirming nothing scary surfaces).
+2. **Trade Performance accounts UI** (carried from 2026-05-22). FilterBar still wraps poorly when many accounts are visible. With Settings now gating visibility, the wrap is partially mitigated (hidden accounts don't appear) — but a collapsible dropdown is still the right answer for users with 6+ visible accounts.
+3. **Finish or delete `Trade_Perf/dashboard/api/support.py`** (carried; still untracked from 2026-05-22). Module is complete but not wired into `main.py`; no frontend button yet.
+4. **Auto-analyzer status diagnostic** (carried). Surface `armed_vs_published` diff via `/api/auto-analysis/status` + Home page hint.
+5. **Re-ground the 6 new ATMs against actual data** (carried).
+6. **Dynamic indicator vocabulary from NS at trigger time** (carried).
+7. **Aggregate outcome refinement for scale-outs** (carried).
+
+**Carry-forward observations:**
+- **Watchdog respawn = service restart.** The NSSM service stays up throughout the update; only uvicorn (the watchdog's child) dies and restarts. End users see ~5 s of "dashboard unreachable" and an auto page-reload. This avoided needing to grant the service-running user `SERVICE_START`/`SERVICE_STOP` perms on the service.
+- **PS 5.1 writes UTF-8 BOM by default.** When PowerShell writes JSON for Python to read, the Python side must use `encoding="utf-8-sig"`. Plain `"utf-8"` would surface the BOM as `﻿` and break `json.loads`.
+
+---
+
+### 2026-05-22 — CME session attribution, drawdown tracker, 1c ATM family, accounts auto-discovery
+
+Long session with five distinct landings: a Trade Performance "Today" bug that turned out to need real trading-day infrastructure, a per-account drawdown feature, the 1-contract ATM family, README + Settings UX cleanups, and a half-built log-bundle endpoint that's still WIP.
+
+**Done:**
+
+1. **CME session attribution for "Today"** (commit `47e159a`). The Trade Performance "Today" panel was bucketing trades via UTC date — at 8 PM CDT 5/21 it silently dropped Trade A (afternoon) and Trade B (early evening) and showed -$22.50 for account 1832940 instead of the expected $17.50. Built a real trading-day primitive:
+   - `dashboard/api/trading_day.py` (new): `current_trading_day`, `trading_day_for_ts`, `trading_day_bounds_utc`. DST-aware via `zoneinfo`. Fixed roll at **6 PM in the operator's TZ** — trades closed at or after that bucket into the NEXT trading day's session.
+   - `dashboard/web/src/lib/trading_day.ts` (new): mirror using `Intl.DateTimeFormat`.
+   - `trades.compute_stats` — `daily_pnl` rekeyed on trading day; accepts a `tz` kwarg.
+   - `/api/trades` + `/api/stats` — new `trading_day` / `trading_day_from` / `trading_day_to` params via a `_resolve_date_window` helper. Legacy `date_from`/`date_to` still work.
+   - `home.py` — today's card uses `current_trading_day` + bounds for both the signals filter and the fills query.
+   - `drawdown.py` — daily-DD window switched from midnight calendar day to `trading_day_bounds_utc`.
+   - **Labels renamed everywhere**: `Today` → `Current CME Session` (Trade Perf, Home, Signal Analysis KPI), `Filtered` → `Calendar Day / Range`, drawdown card column `Today` → `Session`.
+   - **`tzdata` dep added** to `install.ps1` + README + `Trade_Perf/CLAUDE.md`. Mandatory on Windows — Python's `zoneinfo` ships without IANA data; without `tzdata` the helpers throw `ZoneInfoNotFoundError`.
+   - Sanity-verified against the 1832940 fills: trading day 5/21 = +$30 (Trade A only, closed pre-roll), trading day 5/22 = -$12.50 (Trades B + C + D, all post-roll). Sum = $17.50, matches manual calc.
+
+2. **Per-account drawdown tracker** (commit `5539097`). For prop-firm Evals + funded accounts with trailing DD limits.
+   - Backend `dashboard/api/drawdown.py` (new) + `Accounts.drawdowns: dict[account_id, DrawdownConfig]` in Settings. Opt-in per account. Defaults match a typical $50K Eval (start $50K, trailing $2,500, daily $1,500, profit target $3,000).
+   - `GET /api/drawdown/accounts` computes for each tracked account: current_balance, peak_balance, today_pnl, trailing+daily DD used/remaining, profit-target progress, traffic-light `status` (ok / warn / breach). Daily window uses trading-day bounds.
+   - Settings → Accounts gained a "Drawdown tracking" section with a dropdown to add any Live/Eval account + per-account fields.
+   - `DrawdownsCard` component in `panels.tsx`, rendered on Home page AND above the trades table in Trade Performance. Auto-refreshes every 10 s.
+   - CSS: status colors (warn = amber, breach = red), card border tinting, badge styling.
+
+3. **Eval quick-filter button fix** (same commit, `5539097`). FilterBar's Live/Eval/Simulation quick-buttons were bound to a static `ACCOUNT_GROUPS` const where Live and Eval were empty arrays. Clicking Eval silently called `setGroup([])` → `update({ account: [] })` which cleared the filter (same as "All"). FilterBar now reads `accounts.live/evals/simulation` from a live `/api/settings` query. Empty buckets render disabled with a tooltip pointing at Settings.
+
+4. **1-contract ATM family** (NT8 templates folder; not in repo). The user asked for 1c versions of yesterday's 2c scale-out ATMs, "same info" but single bracket with the runner-style SL + TP + BE-arm + trail. Six new XMLs created at `~/Documents/NinjaTrader 8/templates/AtmStrategy/`:
+   - `MES_SCALP_1c_6-15` (SL 6t / TP 15t / BE+1 at +6 / trail 2t freq, +8 trigger, 3t stop)
+   - `MES_INTRA_1c_16-40` (matches the existing 2c INTRA values — INTRA is held back from ATR re-grounding pending replay validation)
+   - `MES_SWING_1c_71-235` (ATR-grounded via random-walk scaling)
+   - `MCL_SCALP_1c_8-20`, `MCL_INTRA_1c_30-75`, `MCL_SWING_1c_96-320`
+   - Stop strategy templates renamed `{INSTR}_{STYLE}_1c_brk` for clarity.
+   - **8 legacy ATMs deleted**: the 7 pre-existing (`20 for 40`, `20 Runner -- trail 20`, `40 for 100 trail 10`, `40 for 400 trail 30`, `40 for 400 trail 40`, `40 Runner -- trail 30`, `SL 10 - RUN`) + the operator's own `MCL_1_SWING_50t_200` (per "get rid of the ATMs you didn't create" instruction). Final folder: 12 templates (6×2c + 6×1c).
+
+5. **README + repo cleanup**:
+   - Repo flipped to **public** 2026-05-22. README clone command switched from SSH (`git@github.com:...`) to HTTPS. SSH listed as alternative for push access. Commit `bead3cf`.
+   - Manual install prereq snippet replaced unconditional `winget install` with `if (-not (Get-Command X)) { winget install Y }` per tool. (`install.ps1` itself already does this conditionally; the README's docs were the lagging piece.)
+   - Quick install gained a one-liner noting `install.ps1` auto-checks for missing prereqs and winget-installs them — so a fresh machine starting from the zip bundle doesn't need git pre-installed.
+
+6. **Settings → Accounts auto-discovery** (commit `da55420`). The bucket lists for Live + Evals started empty, forcing the operator to manually retype every NT account ID even though `/api/dimensions` already had the list from `trades.db`. New "Detected accounts in trades.db" section sits above the bucket lists with one-click `→ Live / → Eval / → Sim` per row; reassignment is a single click (removes from any prior bucket on the same click). Already-assigned accounts show their current bucket label and disable the matching button.
+
+7. **Bedtime cleanup from yesterday**: committed the 2026-05-20 MIGRATION.md session log + Trade_Perf/CLAUDE.md gotchas + analyzer.txt VWAP magenta fix as `c1055dd`.
+
+**Diagnosed but not fixed (user-side config, no code change needed):**
+- **Auto-analyzer not running at interval.** Probed: armed in `auto_analysis_config` = MES @ 1h, MCL @ 1h. Published in `bars` = MES @ 5m, MCL @ 5m. Intersection empty → `is_armed()` returns False on every bar arrival → `auto_analyzer.submit()` never called → `worker_alive: false`, `run_count: 0`. Fix: change the Home page Auto Analysis card to 5m periods OR add `HelmFeed` to 1h charts so 1h bars publish. Flagged a diagnostic gap: `/api/auto-analysis/status` doesn't surface "configured but never matched" — could add an `armed_vs_published` diff. Item carried to next session.
+
+**Half-finished, not committed:**
+- `Trade_Perf/dashboard/api/support.py` (untracked) — log-bundle endpoint that streams a sanitized zip (logs + manifest with redacted API keys) for the user to email to the maintainer. Code in the file is complete, but **not wired into `main.py`** and **no frontend button yet**. User interrupted with the rebuild command, then pivoted to Accounts auto-discovery, then called bedtime. Decision needed next session: finish + ship, or delete.
+
+**Outstanding (next session pickup, priority order):**
+
+1. **Trade Performance accounts UI redesign.** User explicitly flagged at end of session: "It gets really messy when there are a bunch of accounts." Currently FilterBar renders one `<label>` checkbox per account in a wrap row; 6+ accounts wraps poorly. Options to consider: collapsible details by default, dropdown / multi-select picker (like a combobox), grouping under Live/Eval/Sim headers with collapse-per-group, search box for long lists.
+2. **Finish or delete `support.py`** (untracked). It's complete as a module — needs router include in `main.py` + a "Download log bundle" button on the Support page (Overview tab). Recommend finishing — privacy-conscious sanitized bundle is genuinely useful for distributed users sending bug reports.
+3. **Auto-analyzer status diagnostic.** Surface `armed_vs_published` diff via `/api/auto-analysis/status` + a hint on the Home page card so the next misconfiguration is obvious instead of silent. ~30 min.
+4. **Re-ground the 6 new ATMs against actual data.** SCALP/SWING values came from random-walk-scaling 5m ATR; INTRA is heuristic-only (held back from re-grounding pending replay). To validate properly: add `HelmFeed` to 1m + 15m MES/MCL charts for direct ATR measurement, then either Strategy Analyzer / Market Replay or fill-log mining.
+5. **Dynamic indicator vocabulary from NS at trigger time** (carried from 2026-05-20). `analyzer.txt` hardcodes plot colors; one drift caught (VWAP yellow→magenta). Proper fix: NS emits the chart's indicator stack + colors at trigger time, pipeline builds the CHART VOCABULARY block dynamically.
+6. **Aggregate outcome refinement for scale-outs** (carried). Mix of leg results → `partial`. Could split: `partial_target` / `partial_be` / `partial_trail` / `partial_stop`.
+
+**Carry-forward observations:**
+- **`tzdata` is mandatory on Windows.** Python 3.12's `zoneinfo` ships without IANA data; the first call to `ZoneInfo("America/Chicago")` throws `ZoneInfoNotFoundError` if `tzdata` isn't installed. Already added to install.ps1 + README + Trade_Perf/CLAUDE.md.
+- **Trading day = 6 PM CT roll, not midnight.** A trade closed at 5 PM CDT is today's session; closed at 7 PM CDT is tomorrow's. All "today" aggregations across home.py, drawdown.py, trades.compute_stats, signals_analysis KPI use this rule via `trading_day.current_trading_day`.
+- **Repo public 2026-05-22.** HTTPS clone URL works for anonymous users. Operator's SSH key still used for pushes. The `reference_github_helm` memory now reflects this; one user reported a "Permission denied (publickey)" error early in the session — they were still copying the SSH URL.
+
+---
+
 ### 2026-05-20 — Update infrastructure, Support page, scale-out ATM end-to-end, Trade Performance per-leg
 
 Long session, four landing initiatives + the scale-out architecture that's been deferred since the new 2c ATM templates were dropped earlier in the day.
