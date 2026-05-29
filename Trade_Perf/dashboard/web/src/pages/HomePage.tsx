@@ -12,13 +12,7 @@ import {
   type Signal,
 } from '../api'
 import { DrawdownsCard } from '../panels'
-
-interface ActionItem {
-  timestamp: string
-  instrument: string
-  confidence?: number
-  floor?: number
-}
+import { NewsCard } from '../NewsPanel'
 
 interface HomeData {
   today: {
@@ -30,11 +24,6 @@ interface HomeData {
     instruments: string[]
     trade_count: number
     trade_pnl: number
-  }
-  action_queue: {
-    below_floor: ActionItem[]
-    missing_journal: ActionItem[]
-    total: number
   }
   cumulative_earnings: {
     live: number
@@ -62,10 +51,10 @@ export function HomePage() {
 
   return (
     <>
+      <NewsCard />
       <div className="grid">
         <TodayCard t={d.today} />
         <CumulativeEarningsCard e={d.cumulative_earnings} />
-        <ActionQueueCard q={d.action_queue} />
         <AutoAnalysisCard />
       </div>
       <DrawdownsCard />
@@ -89,66 +78,6 @@ function TodayCard({ t }: { t: HomeData['today'] }) {
         <span className="big-sub"> net (NT fills)</span>
       </div>
       <div className="kv"><span>Trade count</span><span>{t.trade_count}</span></div>
-    </div>
-  )
-}
-
-function ActionQueueCard({ q }: { q: HomeData['action_queue'] }) {
-  if (q.total === 0) {
-    return (
-      <div className="card">
-        <h2>Action Queue</h2>
-        <p className="subtle">All clear — nothing waiting on you.</p>
-      </div>
-    )
-  }
-  return (
-    <div className="card">
-      <h2>Action Queue ({q.total})</h2>
-      {q.below_floor.length > 0 && (
-        <ActionGroup
-          title="Below confidence floor"
-          items={q.below_floor}
-          render={(s) => (
-            <Link to={`/signals/${encodeURIComponent(s.timestamp)}`}>
-              {s.timestamp.slice(0, 10)} {s.instrument} ·{' '}
-              {s.confidence !== undefined ? `${(s.confidence * 100).toFixed(0)}%` : '—'}
-              {s.floor !== undefined && (
-                <span className="subtle"> (floor {(s.floor * 100).toFixed(0)}%)</span>
-              )}
-            </Link>
-          )}
-        />
-      )}
-      {q.missing_journal.length > 0 && (
-        <ActionGroup
-          title="Needs journal entry"
-          items={q.missing_journal}
-          render={(s) => (
-            <Link to={`/signals/${encodeURIComponent(s.timestamp)}`}>
-              {s.timestamp.slice(0, 10)} {s.instrument}
-            </Link>
-          )}
-        />
-      )}
-    </div>
-  )
-}
-
-function ActionGroup({
-  title, items, render,
-}: {
-  title: string
-  items: ActionItem[]
-  render: (s: ActionItem) => React.ReactNode
-}) {
-  return (
-    <div className="action-group">
-      <h3>{title} ({items.length})</h3>
-      <ul>
-        {items.slice(0, 5).map((s) => <li key={s.timestamp}>{render(s)}</li>)}
-        {items.length > 5 && <li className="subtle">+ {items.length - 5} more</li>}
-      </ul>
     </div>
   )
 }

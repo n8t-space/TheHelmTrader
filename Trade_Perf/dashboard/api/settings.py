@@ -104,12 +104,34 @@ class Accounts(BaseModel):
     drawdowns: dict[str, DrawdownConfig] = Field(default_factory=dict)
 
 
+class News(BaseModel):
+    """Economic-calendar widget config. Two sources:
+
+      forexfactory  -- the public XML feed at
+                       https://nfs.faireconomy.media/ff_calendar_thisweek.xml.
+                       No AI required; works offline-ish (one HTTP call).
+      econoday      -- https://us.econoday.com/byweek scraped HTML, then
+                       extracted by the configured AI provider. AI must be
+                       reachable for this source to contribute.
+
+    Filter rules apply to the merged event list before render. Empty
+    impact_filter / currency_filter == no filter.
+    """
+    enabled: bool = True
+    forexfactory_enabled: bool = True
+    econoday_enabled: bool = True
+    impact_filter: list[str] = Field(default_factory=lambda: ["High"])
+    currency_filter: list[str] = Field(default_factory=lambda: ["USD"])
+    refresh_interval_minutes: int = Field(default=15, ge=5, le=180)
+
+
 class Settings(BaseModel):
     schema_version: int = SCHEMA_VERSION
     appearance: Appearance = Field(default_factory=Appearance)
     ai_backend: AiBackend = Field(default_factory=AiBackend)
     strategy: Strategy = Field(default_factory=Strategy)
     accounts: Accounts = Field(default_factory=Accounts)
+    news: News = Field(default_factory=News)
 
 
 # ---------------------------------------------------------------------------
