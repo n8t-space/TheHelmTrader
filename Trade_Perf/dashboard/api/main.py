@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from . import _tradebot_bridge as bridge, atm_strategies as atm_routes, auto_analysis as auto_analysis_routes, db, drawdown as drawdown_routes, feed as feed_routes, health as health_routes, home as home_routes, settings as settings_routes, signals as signals_routes, trades as tradelib, version as version_routes
+from . import _tradebot_bridge as bridge, atm_strategies as atm_routes, auto_analysis as auto_analysis_routes, db, drawdown as drawdown_routes, feed as feed_routes, health as health_routes, home as home_routes, news as news_routes, settings as settings_routes, signals as signals_routes, trades as tradelib, version as version_routes
 
 logger = logging.getLogger(__name__)
 
@@ -107,13 +107,14 @@ async def lifespan(app):
     prune_task   = asyncio.create_task(_prune_loop_forever(),                       name="feed.prune")
     outcome_task = asyncio.create_task(outcome_watcher.watcher_loop(bridge.SIGNALS_LOG), name="outcome.watcher")
     version_task = asyncio.create_task(version_routes.check_loop_forever(),         name="version.check")
-    logger.info("[startup] background tasks started: prune, outcome-watcher, version-check")
+    news_task    = asyncio.create_task(news_routes.refresh_loop_forever(),          name="news.refresh")
+    logger.info("[startup] background tasks started: prune, outcome-watcher, version-check, news-refresh")
     try:
         yield
     finally:
-        for t in (outcome_task, prune_task, version_task):
+        for t in (outcome_task, prune_task, version_task, news_task):
             t.cancel()
-        for t in (outcome_task, prune_task, version_task):
+        for t in (outcome_task, prune_task, version_task, news_task):
             try:
                 await t
             except (asyncio.CancelledError, Exception):
@@ -140,6 +141,7 @@ app.include_router(settings_routes.router)
 app.include_router(atm_routes.router)
 app.include_router(version_routes.router)
 app.include_router(drawdown_routes.router)
+app.include_router(news_routes.router)
 
 
 @app.get("/api/health")
@@ -391,7 +393,14 @@ if not _WEB_DIST.is_dir():
 @app.get("/{full_path:path}")
 def spa_or_static(full_path: str):
     """Catch-all for non-API GETs. Serves files from dist/ when present,
-    otherwise falls back to index.html (SPA client-side routing)."""
+    otherwise falls back to index.html (SPA client-side routing).
+
+    Hard-guards /api/* paths: if a request for /api/X falls through to here
+    it means no router registered that path -- return a real 404 instead of
+    handing back index.html, which would let the frontend's fetch().json()
+    explode with 'Unexpected token <, <!doctype ...'."""
+    if full_path.startswith("api/"):
+        raise HTTPException(404, f"no API route for /{full_path}")
     if not _WEB_DIST.is_dir():
         raise HTTPException(404, "frontend not built; run `npm run build` in dashboard/web/")
     target = _WEB_DIST / (full_path or "index.html")

@@ -1548,3 +1548,264 @@ tr.scale-out-detail td {
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+/* ---------- News card (Home page) ---------- */
+
+.news-card {
+  margin-bottom: 16px;
+}
+
+.news-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.news-head h2 {
+  margin: 0;
+}
+
+.news-day {
+  font-weight: normal;
+  font-size: 13px;
+  margin-left: 8px;
+}
+
+.news-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.news-refresh-btn {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.news-refresh-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.news-refresh-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.news-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 4px 0 12px;
+  font-size: 12px;
+}
+
+.news-source-chip {
+  display: inline-flex;
+  gap: 6px;
+  align-items: baseline;
+  padding: 3px 9px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.news-source-chip.ok {
+  border-color: var(--pos);
+}
+
+.news-source-chip.off {
+  opacity: 0.6;
+}
+
+.news-source-name {
+  font-weight: 600;
+}
+
+.news-source-detail {
+  color: var(--muted);
+}
+
+.news-ai-cta {
+  color: var(--neg);
+  text-decoration: none;
+  font-size: 12px;
+  margin-left: auto;
+}
+
+.news-ai-cta:hover {
+  text-decoration: underline;
+}
+
+.news-empty {
+  padding: 16px 8px;
+  text-align: center;
+}
+
+.news-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.news-table th {
+  text-align: left;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.news-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.news-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.news-time {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  white-space: nowrap;
+  width: 88px;
+}
+
+.news-ccy {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  width: 40px;
+  color: var(--muted);
+}
+
+.news-title {
+  font-weight: 500;
+}
+
+.news-num {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  text-align: right;
+  white-space: nowrap;
+  width: 80px;
+  color: var(--muted);
+}
+
+.news-actual {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.news-source {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.news-row.impact-high td:first-child {
+  border-left: 3px solid var(--neg);
+  padding-left: 6px;
+}
+
+.news-row.impact-medium td:first-child {
+  border-left: 3px solid rgba(255, 200, 80, 0.95);
+  padding-left: 6px;
+}
+
+.news-row.impact-low td:first-child {
+  border-left: 3px solid var(--border);
+  padding-left: 6px;
+}
+
+/* ---------- Impact badges + filter chips (shared) ---------- */
+
+.impact-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+}
+
+.impact-badge.impact-high {
+  background: rgba(248, 81, 73, 0.15);
+  color: var(--neg);
+  border-color: var(--neg);
+}
+
+.impact-badge.impact-medium {
+  background: rgba(255, 200, 80, 0.12);
+  color: rgba(255, 200, 80, 0.95);
+  border-color: rgba(255, 200, 80, 0.6);
+}
+
+.impact-badge.impact-low {
+  background: rgba(125, 133, 144, 0.12);
+  color: var(--muted);
+  border-color: var(--border);
+}
+
+.chip-row {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.chip:hover {
+  border-color: var(--accent);
+}
+
+.chip.on {
+  background: var(--accent);
+  color: #0e1116;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.chip.impact-high.on {
+  background: var(--neg);
+  border-color: var(--neg);
+  color: #fff;
+}
+
+.chip.impact-medium.on {
+  background: rgba(255, 200, 80, 0.95);
+  border-color: rgba(255, 200, 80, 0.95);
+  color: #0e1116;
+}
+
+.settings-checkbox {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  flex-direction: row !important;
+}
+
+.settings-checkbox input[type="checkbox"] {
+  cursor: pointer;
+  accent-color: var(--accent);
+}

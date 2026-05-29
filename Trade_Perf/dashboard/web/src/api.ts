@@ -512,12 +512,22 @@ export interface DrawdownResp {
   error?: string
 }
 
+export interface SettingsNews {
+  enabled: boolean
+  forexfactory_enabled: boolean
+  econoday_enabled: boolean
+  impact_filter: string[]
+  currency_filter: string[]
+  refresh_interval_minutes: number
+}
+
 export interface SettingsDoc {
   schema_version: number
   appearance: SettingsAppearance
   ai_backend: SettingsAiBackend
   strategy: SettingsStrategy
   accounts: SettingsAccounts
+  news: SettingsNews
 }
 
 export interface SettingsResp {

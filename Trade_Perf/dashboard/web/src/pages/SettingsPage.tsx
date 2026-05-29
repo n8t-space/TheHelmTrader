@@ -11,12 +11,12 @@ import {
   fetchJSON, postJSON, putJSON,
   type DimensionsResp, type DrawdownConfig, type OllamaTestResp,
   type SettingsAccounts, type SettingsAiBackend,
-  type SettingsAppearance, type SettingsDoc, type SettingsResp,
-  type SettingsStrategy,
+  type SettingsAppearance, type SettingsDoc, type SettingsNews,
+  type SettingsResp, type SettingsStrategy,
 } from '../api'
 import { applyAppearance, cacheAppearance } from '../lib/theme'
 
-type Tab = 'appearance' | 'ai' | 'strategy' | 'accounts'
+type Tab = 'appearance' | 'ai' | 'strategy' | 'accounts' | 'news'
 
 export function SettingsPage() {
   const qc = useQueryClient()
@@ -123,7 +123,7 @@ export function SettingsPage() {
       {save.error && <div className="card error">Save failed: {String(save.error)}</div>}
 
       <div className="card settings-tabs">
-        {(['appearance', 'ai', 'strategy', 'accounts'] as Tab[]).map((t) => (
+        {(['appearance', 'ai', 'strategy', 'accounts', 'news'] as Tab[]).map((t) => (
           <button
             key={t}
             type="button"
@@ -160,6 +160,12 @@ export function SettingsPage() {
             onChange={(a) => setDraft({ ...draft, accounts: a })}
           />
         )}
+        {tab === 'news' && (
+          <NewsTab
+            value={draft.news}
+            onChange={(n) => setDraft({ ...draft, news: n })}
+          />
+        )}
       </div>
 
       <div className="card">
@@ -183,7 +189,8 @@ function tabLabel(t: Tab): string {
   return t === 'appearance' ? 'Appearance'
     : t === 'ai' ? 'AI Backend'
     : t === 'strategy' ? 'Strategy'
-    : 'Accounts'
+    : t === 'accounts' ? 'Accounts'
+    : 'News'
 }
 
 // ---------- Appearance ----------
@@ -761,6 +768,110 @@ function DrawdownTrackingBlock({
       ) : (
         <p className="subtle"><em>All Live + Eval accounts are already tracked. Add more under Live / Evals above to track them here.</em></p>
       )}
+    </>
+  )
+}
+
+// ---------- News ----------
+
+const IMPACT_LEVELS = ['High', 'Medium', 'Low'] as const
+const CURRENCY_OPTS = ['USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF', 'NZD', 'CNY'] as const
+
+function NewsTab({ value, onChange }: {
+  value: SettingsNews
+  onChange: (v: SettingsNews) => void
+}) {
+  const toggleListMember = (list: string[], item: string): string[] =>
+    list.includes(item) ? list.filter((x) => x !== item) : [...list, item]
+
+  return (
+    <>
+      <h3 style={{ marginTop: 0 }}>News</h3>
+      <p className="subtle">
+        Economic-calendar widget on the Home page. ForexFactory pulls from the public XML feed and works offline-ish (one HTTP call). Econoday scrapes the rendered page and requires the configured AI backend to be reachable -- the chart shows a precheck hint if it isn't.
+      </p>
+
+      <div className="settings-row">
+        <label className="settings-checkbox">
+          <input
+            type="checkbox"
+            checked={value.enabled}
+            onChange={(e) => onChange({ ...value, enabled: e.target.checked })}
+          />
+          <span>Show News card on Home page</span>
+        </label>
+      </div>
+
+      <h4>Sources</h4>
+      <div className="settings-row">
+        <label className="settings-checkbox">
+          <input
+            type="checkbox"
+            checked={value.forexfactory_enabled}
+            onChange={(e) => onChange({ ...value, forexfactory_enabled: e.target.checked })}
+          />
+          <span>ForexFactory <span className="subtle">(XML feed, no AI required)</span></span>
+        </label>
+        <label className="settings-checkbox">
+          <input
+            type="checkbox"
+            checked={value.econoday_enabled}
+            onChange={(e) => onChange({ ...value, econoday_enabled: e.target.checked })}
+          />
+          <span>Econoday <span className="subtle">(scraped + AI-extracted; needs working AI backend)</span></span>
+        </label>
+      </div>
+
+      <h4>Impact filter</h4>
+      <p className="subtle">Events at or above the selected levels appear on the Home card. Unchecking all hides every event.</p>
+      <div className="settings-row chip-row">
+        {IMPACT_LEVELS.map((lvl) => {
+          const on = value.impact_filter.includes(lvl)
+          return (
+            <button
+              key={lvl}
+              type="button"
+              className={'chip impact-' + lvl.toLowerCase() + (on ? ' on' : '')}
+              onClick={() => onChange({ ...value, impact_filter: toggleListMember(value.impact_filter, lvl) })}
+            >
+              {lvl}
+            </button>
+          )
+        })}
+      </div>
+
+      <h4>Currency filter</h4>
+      <p className="subtle">Only events tagged with these currencies appear. Default USD for US futures; widen if you trade Globex products on other regions.</p>
+      <div className="settings-row chip-row">
+        {CURRENCY_OPTS.map((c) => {
+          const on = value.currency_filter.includes(c)
+          return (
+            <button
+              key={c}
+              type="button"
+              className={'chip' + (on ? ' on' : '')}
+              onClick={() => onChange({ ...value, currency_filter: toggleListMember(value.currency_filter, c) })}
+            >
+              {c}
+            </button>
+          )
+        })}
+      </div>
+
+      <h4>Refresh cadence</h4>
+      <div className="settings-row">
+        <label>
+          <span>Background refresh (minutes)</span>
+          <input
+            type="number"
+            min={5}
+            max={180}
+            value={value.refresh_interval_minutes}
+            onChange={(e) => onChange({ ...value, refresh_interval_minutes: Number(e.target.value) })}
+          />
+          <span className="subtle">How often the backend pulls fresh data. The Home card also auto-refreshes its view every 5 min and on manual click.</span>
+        </label>
+      </div>
     </>
   )
 }
