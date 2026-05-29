@@ -2,7 +2,7 @@
 
 > **Brand:** "The Helm", offered by **Lodestone & Purser**.
 >
-> **What it is:** A unified local-only web dashboard for NinjaTrader 8 analysis and automation. Three pages: **Home** (today's session at a glance + action queue), **Trade Performance** (real fills from NT8 with derived round-trip P/L + stats), **Signal Analysis** (LLM-driven chart proposals with journal, outcome, soft-delete, and snip-and-analyze).
+> **What it is:** A unified local-only web dashboard for NinjaTrader 8 analysis and automation. Three pages: **Home** (Economic Calendar pre-trade context, current CME session snapshot, cumulative earnings by bucket, Auto Analysis status, drawdowns), **Trade Performance** (real fills from NT8 with derived round-trip P/L + stats), **Signal Analysis** (LLM-driven chart proposals with journal, outcome, soft-delete, and snip-and-analyze).
 
 This file orients a fresh conversation in *current state*. For history, see [`../TradingBot/MIGRATION.md`](../TradingBot/MIGRATION.md).
 

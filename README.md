@@ -126,8 +126,10 @@ cd TheHelmTrader
 
 ```powershell
 python -m pip install --upgrade pip
-python -m pip install fastapi "uvicorn[standard]" pydantic requests Pillow httpx tzdata
+python -m pip install -r Trade_Perf\requirements.txt
 ```
+
+`Trade_Perf\requirements.txt` is the single source of truth for Python deps and is consumed by both the manual install path above and the in-app one-click updater (see [Update](#update) below).
 
 #### Build the frontend
 
@@ -186,7 +188,8 @@ Invoke-WebRequest http://127.0.0.1:8000/api/health    # Status 200 once NT8 is u
      - **Ollama** — set the URL (`http://127.0.0.1:11434/api/generate` if local, or `http://<host>:11434/api/generate` if LAN) and the model name (default `qwen2.5vl:7b`).
      - **Claude** — paste your API key; default model is `claude-sonnet-4-6`.
      - **OpenAI** — paste your API key; default model is `gpt-4o`.
-   - **Accounts** — map your NT account IDs into Live / Evals / Simulation buckets so the cumulative-earnings card on Home aggregates correctly.
+   - **Accounts** — Settings auto-discovers any NT account ID that has fills in `trades.db`. Each row gets a `Hidden | Live | Eval | Sim` radio; the union of Live + Eval + Sim is the site-wide visible set. NT-default sims (`Sim101`, `Playback101`, `Backtest`, `SimBetaSIM`) are pre-selected under Simulation. Hiding an account drops it from FilterBar / Home cards / Drawdown tracker without deleting fills — re-select to restore.
+   - **News** *(optional)* — Economic-calendar card on the Home page. ForexFactory works out of the box (XML feed, no AI required). Econoday adds Treasury auctions / Fed balance-sheet entries via the configured AI backend; the card shows a precheck hint if AI isn't reachable.
 5. Click **Test connection** on the AI Backend tab — green badge with latency + model present means you're good.
 6. Settings persist to `%USERPROFILE%\.helm\settings.json`.
 
@@ -198,6 +201,8 @@ Two ways analyses get into `signals.jsonl`:
 - **Auto Analysis (headless).** Configure cadence and instrument scope on the Settings page (Auto Analysis tab). `HelmFeed` publishes live bars + ticks, the bot polls them, and produces proposals on its own schedule. No hotkey needed.
 
 Trade fills are mirrored independently — `recorder.py` polls NT8's SQLite every few seconds, so executions show up on the Trade Performance page without any operator action.
+
+Pre-trade context sits at the top of the **Home** page in the **Economic Calendar** card — high-impact USD events for the current CME session pulled from ForexFactory + (optionally) Econoday. Filter levers (impact, currency, refresh cadence) live under Settings → News.
 
 ### Verify end-to-end
 
@@ -216,11 +221,29 @@ cd Trade_Perf\dashboard
 
 ### Update
 
-The dashboard runs a background check every 6 hours that compares the installed checkout against `origin/main`. When new commits are available, a banner appears at the top of every page showing the current and latest short SHAs, a **View update guide** link to the Support page, and a **Check now** button. Dismissing the banner remembers the latest SHA in `localStorage` — it reappears automatically when a newer commit lands. The endpoint is `GET /api/version`; force a re-check via `POST /api/version/check`.
+#### One-click (recommended)
 
-The **Support** page (in the top nav, or `http://127.0.0.1:8000/support`) breaks the same surface into four tabs — **Overview** (version + uninstall + help), **Update** (full procedure), **Troubleshooting** (FAQ + log locations), and **Configuration** (recommended settings, mirrored from [`CONFIGURATION.md`](CONFIGURATION.md)). Deep-linkable via `/support#update`, `/support#troubleshooting`, `/support#configuration`.
+The dashboard runs a background check every 6 hours that compares the installed checkout against `origin/main`. When new commits are available, a banner appears at the top of every page with the current + latest short SHAs and an **Update now** button.
 
-`install.ps1` is idempotent — re-running it after a fresh checkout picks up changes safely. From an **elevated** PowerShell:
+Click it. A confirm modal explains what'll happen; on confirm the backend:
+
+1. `git fetch && git reset --hard origin/main`
+2. Re-pips `Trade_Perf\requirements.txt` if it changed in the diff
+3. Re-`npm install`s if `package-lock.json` changed
+4. Re-builds the React frontend (`npm run build`)
+5. Restarts the dashboard (kills uvicorn; the watchdog respawns it within ~5s with the new code)
+
+The page reloads automatically once the new bundle is live (~30-60s total). Progress is shown in a modal with a step counter and log tail. Dismissing the banner remembers the latest SHA in `localStorage` — it reappears automatically when a newer commit lands.
+
+API surface: `GET /api/version`, `POST /api/version/check`, `POST /api/version/update`, `GET /api/version/update/status`.
+
+NS-side note: if anything under `_Helm Locker\*.cs` changed (the **HelmAnalyzer** / **HelmFeed** indicators), open NT and run **NinjaScript Editor (F11) → Compile (F5)** to pick up the new C#. The one-click updater handles the dashboard side but cannot drive NT's compiler.
+
+The **Support** page (`http://127.0.0.1:8000/support`) breaks the same surface into four tabs — **Overview** (version + uninstall + help), **Update** (full procedure), **Troubleshooting** (FAQ + log locations), and **Configuration** (recommended settings, mirrored from [`CONFIGURATION.md`](CONFIGURATION.md)). Deep-linkable via `/support#update`, `/support#troubleshooting`, `/support#configuration`.
+
+#### Manual (fallback)
+
+If the one-click flow fails (network policy blocking GitHub, AV quarantining the helper, etc.), the manual path is:
 
 ```powershell
 cd $HOME\Documents\Projects\TheHelmTrader
@@ -229,9 +252,7 @@ git pull
 Restart-Service HelmDashboardWatchdog          # picks up Python/API changes
 ```
 
-Then in NinjaTrader: **NinjaScript Editor (F11) -> Compile (F5)** — only required if anything under `_Helm Locker\*.cs` changed.
-
-Hard-refresh the dashboard tab (`Ctrl+F5`) to bust the cached SPA bundle.
+`install.ps1` is idempotent — re-runnable safely on a fresh checkout. Hard-refresh the dashboard tab (`Ctrl+F5`) to bust the cached SPA bundle.
 
 If you received a release zip instead of using git, unzip over the existing checkout and run the same two commands.
 
