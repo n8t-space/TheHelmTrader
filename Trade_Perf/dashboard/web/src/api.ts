@@ -512,6 +512,25 @@ export interface DrawdownResp {
   error?: string
 }
 
+export interface AtmStrategy {
+  name: string
+  bracket_count?: number
+  total_qty?: number
+  stop_ticks_min?: number
+  target_ticks_max?: number
+  AutoBreakEvenPlusProfit?: string
+  AutoTrail?: string
+  AutoChase?: string
+}
+
+export interface AtmStrategiesResp {
+  templates_dir: string
+  exists: boolean
+  count?: number
+  strategies: AtmStrategy[]
+  warning?: string
+}
+
 export interface SettingsNews {
   enabled: boolean
   forexfactory_enabled: boolean

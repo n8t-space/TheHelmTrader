@@ -120,9 +120,23 @@ function computeKpi(signals: Signal[]): SignalKpi {
   }
 }
 
+interface SignalFilters {
+  instruments: string[]            // empty == all
+  dayFrom:     string              // YYYY-MM-DD trading day; empty == no lower bound
+  dayTo:       string              // YYYY-MM-DD trading day; empty == no upper bound
+  direction:   '' | 'long' | 'short' | 'flat'
+}
+
+const EMPTY_FILTERS: SignalFilters = { instruments: [], dayFrom: '', dayTo: '', direction: '' }
+
+function filtersActive(f: SignalFilters): boolean {
+  return f.instruments.length > 0 || !!f.dayFrom || !!f.dayTo || !!f.direction
+}
+
 export function SignalAnalysisPage() {
   const [sort, setSort] = useState<Sort<SignalKey>>({ key: 'timestamp', dir: 'desc' })
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [filters, setFilters] = useState<SignalFilters>(EMPTY_FILTERS)
   const navigate = useNavigate()
   const qc = useQueryClient()
 
@@ -153,11 +167,6 @@ export function SignalAnalysisPage() {
     },
   })
 
-  const signals = useMemo(() => {
-    if (!q.data) return []
-    return sortBy(q.data.signals, sort, accessor)
-  }, [q.data, sort])
-
   // KPI derivation: parallel stats for the current CME session and the
   // full history. Both come from the same signal list so we don't need a
   // separate API. Session = current trading day per the operator's TZ +
@@ -169,6 +178,44 @@ export function SignalAnalysisPage() {
     staleTime: 60_000,
   })
   const tz = settingsQ.data?.settings.appearance.timezone ?? 'America/Chicago'
+
+  // Filtered + sorted table contents. KPI cards always use the unfiltered
+  // set so the global context above the table never shifts when the user
+  // drills in -- they're labelled "Current CME Session" / "All-Time" and
+  // would lie if they followed the filter.
+  const signals = useMemo(() => {
+    if (!q.data) return []
+    const filtered = q.data.signals.filter((s) => {
+      if (filters.instruments.length > 0) {
+        const ins = s.proposal?.instrument
+        if (!ins || !filters.instruments.includes(ins)) return false
+      }
+      if (filters.direction) {
+        if ((s.proposal?.direction || '').toLowerCase() !== filters.direction) return false
+      }
+      if (filters.dayFrom || filters.dayTo) {
+        const ts = s.timestamp
+        if (!ts) return false
+        const day = tradingDayFor(new Date(ts), tz)
+        if (filters.dayFrom && day < filters.dayFrom) return false
+        if (filters.dayTo   && day > filters.dayTo)   return false
+      }
+      return true
+    })
+    return sortBy(filtered, sort, accessor)
+  }, [q.data, sort, filters, tz])
+
+  // Instrument options for the filter chips -- derived from the loaded set
+  // so the user can only filter by tickers they actually have. Sorted to
+  // keep the chip order stable across renders.
+  const knownInstruments = useMemo(() => {
+    const set = new Set<string>()
+    for (const s of q.data?.signals ?? []) {
+      const ins = s.proposal?.instrument
+      if (ins) set.add(ins)
+    }
+    return Array.from(set).sort()
+  }, [q.data])
 
   const { todayKpi, allTimeKpi } = useMemo(() => {
     const today = currentTradingDay(tz)
@@ -276,7 +323,14 @@ export function SignalAnalysisPage() {
       </div>
     <div className="card">
       <div className="signals-header">
-        <h2>Signal Analysis {q.data && `(${q.data.count})`}</h2>
+        <h2>
+          Signal Analysis{' '}
+          {q.data && (
+            filtersActive(filters)
+              ? <span className="subtle">({signals.length} of {q.data.count})</span>
+              : <span className="subtle">({q.data.count})</span>
+          )}
+        </h2>
         <button
           type="button"
           className="primary capture-btn"
@@ -287,6 +341,13 @@ export function SignalAnalysisPage() {
           {capture.isPending ? 'Snipping… drag a rectangle on your chart' : 'Snip & Analyze'}
         </button>
       </div>
+
+      <SignalFilterBar
+        filters={filters}
+        setFilters={setFilters}
+        instruments={knownInstruments}
+      />
+
       {capture.error && (
         <div className="error" style={{ marginBottom: 12 }}>
           {String(capture.error)}
@@ -430,5 +491,88 @@ export function SignalAnalysisPage() {
       )}
     </div>
     </>
+  )
+}
+
+function SignalFilterBar({ filters, setFilters, instruments }: {
+  filters:     SignalFilters
+  setFilters:  (f: SignalFilters) => void
+  instruments: string[]
+}) {
+  const active = filtersActive(filters)
+  const toggleInstrument = (ins: string) => {
+    const next = filters.instruments.includes(ins)
+      ? filters.instruments.filter((x) => x !== ins)
+      : [...filters.instruments, ins]
+    setFilters({ ...filters, instruments: next })
+  }
+  const setDirection = (d: SignalFilters['direction']) =>
+    setFilters({ ...filters, direction: filters.direction === d ? '' : d })
+
+  return (
+    <div className="signal-filter-bar">
+      <div className="signal-filter-row">
+        <span className="signal-filter-label">Instrument</span>
+        {instruments.length === 0 ? (
+          <span className="subtle">no signals yet</span>
+        ) : (
+          <div className="chip-row">
+            {instruments.map((ins) => (
+              <button
+                key={ins}
+                type="button"
+                className={'chip' + (filters.instruments.includes(ins) ? ' on' : '')}
+                onClick={() => toggleInstrument(ins)}
+              >
+                {ins}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="signal-filter-row">
+        <span className="signal-filter-label">Direction</span>
+        <div className="chip-row">
+          {(['long', 'short', 'flat'] as const).map((d) => (
+            <button
+              key={d}
+              type="button"
+              className={'chip' + (filters.direction === d ? ' on' : '')}
+              onClick={() => setDirection(d)}
+            >
+              {d}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="signal-filter-row">
+        <span className="signal-filter-label">Trading day</span>
+        <input
+          type="date"
+          value={filters.dayFrom}
+          onChange={(e) => setFilters({ ...filters, dayFrom: e.target.value })}
+          aria-label="From trading day"
+        />
+        <span className="subtle">to</span>
+        <input
+          type="date"
+          value={filters.dayTo}
+          onChange={(e) => setFilters({ ...filters, dayTo: e.target.value })}
+          aria-label="To trading day"
+        />
+      </div>
+
+      {active && (
+        <button
+          type="button"
+          className="signal-filter-clear"
+          onClick={() => setFilters(EMPTY_FILTERS)}
+        >
+          Clear filters
+        </button>
+      )}
+    </div>
   )
 }

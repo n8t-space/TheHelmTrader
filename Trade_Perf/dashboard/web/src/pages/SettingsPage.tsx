@@ -9,6 +9,7 @@ declare global {
 }
 import {
   fetchJSON, postJSON, putJSON,
+  type AtmStrategiesResp, type AtmStrategy,
   type DimensionsResp, type DrawdownConfig, type OllamaTestResp,
   type SettingsAccounts, type SettingsAiBackend,
   type SettingsAppearance, type SettingsDoc, type SettingsNews,
@@ -538,6 +539,150 @@ function StrategyTab({ value, onChange }: {
           <span className="subtle">Bars older than this skip auto-analysis (backfill safety).</span>
         </label>
       </div>
+
+      <ExistingStrategiesBlock />
+    </>
+  )
+}
+
+// ---------- Existing ATM strategies (read from NT8) ----------
+
+interface ParsedStrategyName {
+  instrument?: string
+  style?:      string
+  contracts?:  number
+  stopTicks?:  number
+  targetTicks?: number
+  isStopOnly?: boolean
+}
+
+// Convention from the 2026-05-22 ATM family:
+//   {INSTR}_{STYLE}_{N}c_{stop}-{target}      e.g. MES_SCALP_2c_6-15
+//   {INSTR}_{STYLE}_1c_brk                    e.g. MCL_INTRA_1c_brk  (stop-only sibling)
+// Legacy hand-named templates fall through the regex and only carry name+XML data.
+function parseStrategyName(name: string): ParsedStrategyName {
+  const m = name.match(/^([A-Z]+)_([A-Z]+)_(\d+)c(?:_(\d+)-(\d+)|_brk)$/i)
+  if (!m) return {}
+  const [, instrument, style, qty, stop, target] = m
+  return {
+    instrument,
+    style:       style.toUpperCase(),
+    contracts:   Number(qty),
+    stopTicks:   stop  ? Number(stop)  : undefined,
+    targetTicks: target ? Number(target) : undefined,
+    isStopOnly:  !target,
+  }
+}
+
+const STYLE_BLURBS: Record<string, string> = {
+  SCALP: 'Fast in/out -- intraday move catcher, tight stop',
+  INTRA: 'Intraday swing -- multi-hour hold inside the session',
+  SWING: 'Multi-session hold -- wider stop, larger target',
+  RUN:   'Runner -- minimal stop, ride the trend with trail',
+}
+
+function describeStrategy(s: AtmStrategy): string {
+  const p = parseStrategyName(s.name)
+  const parts: string[] = []
+
+  if (p.instrument && p.style && p.contracts) {
+    const scaleNote = p.contracts > 1 ? `${p.contracts}-contract scale-out` : '1-contract single bracket'
+    const styleBlurb = STYLE_BLURBS[p.style] || p.style.toLowerCase()
+    parts.push(`${p.instrument} ${scaleNote} ${styleBlurb.toLowerCase()}.`)
+  } else if (s.total_qty && s.bracket_count) {
+    parts.push(`${s.total_qty}-contract template, ${s.bracket_count} bracket${s.bracket_count > 1 ? 's' : ''}.`)
+  }
+
+  const stop   = p.stopTicks   ?? s.stop_ticks_min
+  const target = p.targetTicks ?? s.target_ticks_max
+  if (stop && target) {
+    const rr = (target / stop).toFixed(target / stop >= 10 ? 0 : 1)
+    parts.push(`${stop}t stop / ${target}t target (1:${rr}).`)
+  } else if (stop) {
+    parts.push(`${stop}t stop -- stop-only sibling, runner trails to a stop.`)
+  }
+
+  const flags: string[] = []
+  if (s.AutoBreakEvenPlusProfit && s.AutoBreakEvenPlusProfit !== '0') flags.push(`BE+${s.AutoBreakEvenPlusProfit}`)
+  if (s.AutoTrail  && s.AutoTrail  !== '0') flags.push(`trail ${s.AutoTrail}`)
+  if (s.AutoChase  && s.AutoChase  !== '0') flags.push(`chase ${s.AutoChase}`)
+  if (flags.length) parts.push(`Auto: ${flags.join(', ')}.`)
+
+  return parts.join(' ') || 'Legacy template -- no derived description.'
+}
+
+function ExistingStrategiesBlock() {
+  const q = useQuery<AtmStrategiesResp>({
+    queryKey: ['atm-strategies'],
+    queryFn:  () => fetchJSON<AtmStrategiesResp>('/api/atm-strategies'),
+    staleTime: 30_000,
+  })
+
+  if (q.isLoading) return (
+    <>
+      <h4 style={{ marginTop: 24 }}>Existing ATM strategies (NT8)</h4>
+      <p className="subtle">Loading templates from NT8...</p>
+    </>
+  )
+
+  if (q.error || !q.data) return (
+    <>
+      <h4 style={{ marginTop: 24 }}>Existing ATM strategies (NT8)</h4>
+      <p className="subtle">Could not read NT8 templates: {String(q.error)}</p>
+    </>
+  )
+
+  const data = q.data
+  if (!data.exists) return (
+    <>
+      <h4 style={{ marginTop: 24 }}>Existing ATM strategies (NT8)</h4>
+      <p className="subtle">{data.warning || 'NT8 templates folder not found.'}</p>
+    </>
+  )
+
+  // Group by instrument prefix when the convention applies; ungrouped fall in 'Other'.
+  const groups: Record<string, AtmStrategy[]> = {}
+  for (const s of data.strategies) {
+    const p = parseStrategyName(s.name)
+    const key = p.instrument ?? 'Other'
+    groups[key] = groups[key] ?? []
+    groups[key].push(s)
+  }
+  const groupKeys = Object.keys(groups).sort((a, b) => a === 'Other' ? 1 : b === 'Other' ? -1 : a.localeCompare(b))
+
+  return (
+    <>
+      <h4 style={{ marginTop: 24 }}>Existing ATM strategies (NT8)</h4>
+      <p className="subtle">
+        Templates parsed from <code>{data.templates_dir}</code>. {data.count ?? data.strategies.length} found.
+        These are what the bot's proposals are pinned to and what the Signal Analysis table's <code>ATM Strategy</code> column references. NT8 is the source of truth -- edit / add templates in the NT8 ATM editor and refresh this page.
+      </p>
+
+      {data.strategies.length === 0 ? (
+        <p className="subtle"><em>No ATM templates found in that folder.</em></p>
+      ) : (
+        <div className="atm-strategy-groups">
+          {groupKeys.map((g) => (
+            <div key={g} className="atm-strategy-group">
+              <h5 className="atm-strategy-group-head">{g}</h5>
+              <div className="atm-strategy-list">
+                {groups[g].map((s) => (
+                  <div key={s.name} className="atm-strategy-card">
+                    <div className="atm-strategy-name">{s.name}</div>
+                    <div className="atm-strategy-desc">{describeStrategy(s)}</div>
+                    <div className="atm-strategy-meta subtle">
+                      {s.bracket_count !== undefined && <span>{s.bracket_count} bracket{s.bracket_count === 1 ? '' : 's'}</span>}
+                      {s.total_qty !== undefined && <span>{s.total_qty}c qty</span>}
+                      {s.stop_ticks_min !== undefined && <span>stop {s.stop_ticks_min}t</span>}
+                      {s.target_ticks_max !== undefined && <span>target {s.target_ticks_max}t</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </>
   )
 }
