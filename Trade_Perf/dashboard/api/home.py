@@ -42,8 +42,8 @@ def home() -> dict[str, Any]:
     """Single endpoint serving everything the home page needs."""
     visible = _load_visible_signals()
     config = instruments.load_config()
-    # Trading-day "today" -- CME-style 6 PM CT roll. Trades closed after the
-    # local 6 PM roll are attributed to the NEXT trading day. See trading_day.py.
+    # Trading-day "today" -- CME-style 5 PM CT roll. Trades closed after the
+    # local 5 PM roll are attributed to the NEXT trading day. See trading_day.py.
     tz_name = settings_mod.get_settings().appearance.timezone
     today = current_trading_day(tz_name)
     today_start_utc, today_end_utc = trading_day_bounds_utc(today, tz_name)

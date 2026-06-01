@@ -1,11 +1,12 @@
 // Trading-day helper for the frontend. Mirrors the backend convention:
-// trading day boundary = 6 PM in the operator's configured timezone, so a
-// trade closed at 7 PM local rolls into the NEXT trading day (CME-style).
+// trading day boundary = 5 PM in the operator's configured timezone (CME
+// Globex session start, post-maintenance-halt). A trade closed at 6 PM
+// local rolls into the NEXT trading day.
 //
 // Uses Intl.DateTimeFormat with the configured TZ to extract local-clock
 // pieces, avoids manual UTC offset math, and stays DST-correct.
 
-const ROLL_HOUR = 18
+const ROLL_HOUR = 17
 
 /** Return the current trading day as YYYY-MM-DD per the configured tz. */
 export function currentTradingDay(tz: string, now: Date = new Date()): string {

@@ -131,7 +131,7 @@ def list_drawdowns() -> dict[str, Any]:
         return {"accounts": [], "warn_threshold": WARN_THRESHOLD, "tz": settings_mod.get_settings().appearance.timezone}
 
     tz_name = settings_mod.get_settings().appearance.timezone
-    # Daily DD window = current trading day (CME-style 6 PM CT roll), not the
+    # Daily DD window = current trading day (CME-style 5 PM CT roll), not the
     # calendar day. Trades closed after the local 6 PM roll bucket into the
     # NEW trading day's daily-DD allowance.
     today = current_trading_day(tz_name)
