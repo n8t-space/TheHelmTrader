@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 
 declare global {
@@ -10,7 +10,7 @@ declare global {
 import {
   fetchJSON, postJSON, putJSON,
   type AtmStrategiesResp, type AtmStrategy,
-  type DimensionsResp, type DrawdownConfig, type OllamaTestResp,
+  type DimensionsResp, type DrawdownConfig, type ModelsResp, type OllamaTestResp,
   type SettingsAccounts, type SettingsAiBackend,
   type SettingsAppearance, type SettingsDoc, type SettingsNews,
   type SettingsResp, type SettingsStrategy,
@@ -281,6 +281,7 @@ function AiTab({ value, onChange }: {
   value: SettingsAiBackend
   onChange: (v: SettingsAiBackend) => void
 }) {
+  const qc = useQueryClient()
   const [test, setTest] = useState<OllamaTestResp | null>(null)
   const [testing, setTesting] = useState(false)
   const runTest = async () => {
@@ -288,6 +289,9 @@ function AiTab({ value, onChange }: {
     try {
       const r = await postJSON<OllamaTestResp>('/api/settings/test/ollama')
       setTest(r)
+      // Test endpoint also refreshes the catalog -- bust the models cache so
+      // dropdowns reflect any new model that just showed up.
+      qc.invalidateQueries({ queryKey: ['models'] })
     } catch (e) {
       setTest({ ok: false, error: String(e) })
     } finally {
@@ -295,6 +299,18 @@ function AiTab({ value, onChange }: {
     }
   }
   const provider = value.provider
+
+  // Fetch the live model catalog from whichever provider is currently
+  // configured on the SAVED settings doc -- the route reads
+  // get_settings(), not the draft. So the dropdown reflects what's
+  // actually installed on disk; tweaking the URL/key in the draft and
+  // saving will refresh the list on the next render.
+  const modelsQ = useQuery<ModelsResp>({
+    queryKey: ['models', provider],
+    queryFn:  () => fetchJSON<ModelsResp>(`/api/settings/models?provider=${provider}`),
+    staleTime: 60_000,
+    retry: 0,
+  })
   return (
     <>
       <h3 style={{ marginTop: 0 }}>AI Backend</h3>
@@ -346,24 +362,20 @@ function AiTab({ value, onChange }: {
                 Local: <code>http://127.0.0.1:11434/api/generate</code>. LAN GPU: <code>http://&lt;host&gt;:11434/api/generate</code>.
               </span>
             </label>
-            <label>
-              <span>Model</span>
-              <input
-                type="text"
-                value={value.model}
-                onChange={(e) => onChange({ ...value, model: e.target.value })}
-              />
-              <span className="subtle">Vision-capable model. Default: <code>qwen2.5vl:7b</code>.</span>
-            </label>
-            <label>
-              <span>Fallback model</span>
-              <input
-                type="text"
-                value={value.fallback_model}
-                onChange={(e) => onChange({ ...value, fallback_model: e.target.value })}
-              />
-              <span className="subtle">Tried if primary times out. Use a smaller variant (e.g. <code>qwen2.5vl:3b</code>).</span>
-            </label>
+            <ModelPicker
+              label="Model"
+              hint={<>Vision-capable model. Default: <code>qwen2.5vl:7b</code>.</>}
+              value={value.model}
+              onChange={(m) => onChange({ ...value, model: m })}
+              models={modelsQ}
+            />
+            <ModelPicker
+              label="Fallback model"
+              hint={<>Tried if primary times out. Use a smaller variant (e.g. <code>qwen2.5vl:3b</code>).</>}
+              value={value.fallback_model}
+              onChange={(m) => onChange({ ...value, fallback_model: m })}
+              models={modelsQ}
+            />
             <label>
               <span>num_ctx (tokens)</span>
               <input
@@ -395,16 +407,14 @@ function AiTab({ value, onChange }: {
               />
               <span className="subtle">Stored at <code>~/.helm/settings.json</code>. Never committed to git.</span>
             </label>
-            <label>
-              <span>Model</span>
-              <input
-                type="text"
-                value={value.claude_model}
-                onChange={(e) => onChange({ ...value, claude_model: e.target.value })}
-                placeholder="claude-sonnet-4-6"
-              />
-              <span className="subtle">Default: <code>claude-sonnet-4-6</code>. Use <code>claude-opus-4-7</code> for max quality at higher cost.</span>
-            </label>
+            <ModelPicker
+              label="Model"
+              hint={<>Default: <code>claude-sonnet-4-6</code>. Use <code>claude-opus-4-7</code> for max quality at higher cost.</>}
+              value={value.claude_model}
+              onChange={(m) => onChange({ ...value, claude_model: m })}
+              models={modelsQ}
+              placeholder="claude-sonnet-4-6"
+            />
             <label>
               <span>Max tokens</span>
               <input
@@ -436,16 +446,14 @@ function AiTab({ value, onChange }: {
               />
               <span className="subtle">Stored at <code>~/.helm/settings.json</code>. Never committed to git.</span>
             </label>
-            <label>
-              <span>Model</span>
-              <input
-                type="text"
-                value={value.openai_model}
-                onChange={(e) => onChange({ ...value, openai_model: e.target.value })}
-                placeholder="gpt-4o"
-              />
-              <span className="subtle">Default: <code>gpt-4o</code>. <code>gpt-4o-mini</code> is ~5x cheaper but noticeably weaker on charts.</span>
-            </label>
+            <ModelPicker
+              label="Model"
+              hint={<>Default: <code>gpt-4o</code>. <code>gpt-4o-mini</code> is ~5x cheaper but noticeably weaker on charts.</>}
+              value={value.openai_model}
+              onChange={(m) => onChange({ ...value, openai_model: m })}
+              models={modelsQ}
+              placeholder="gpt-4o"
+            />
             <label>
               <span>Max tokens</span>
               <input
@@ -472,6 +480,78 @@ function AiTab({ value, onChange }: {
         )}
       </div>
     </>
+  )
+}
+
+// ---------- Model picker (shared by AI tab) ----------
+
+function ModelPicker({
+  label, hint, value, onChange, models, placeholder,
+}: {
+  label:       string
+  hint?:       React.ReactNode
+  value:       string
+  onChange:    (m: string) => void
+  models:      UseQueryResult<ModelsResp>
+  placeholder?: string
+}) {
+  const qc = useQueryClient()
+  const r  = models.data
+  const ok = !!r && r.ok && r.models.length > 0
+  // Make sure the currently-saved value shows up in the dropdown even if it
+  // isn't in the fetched catalog (custom local Ollama model, model deprecated
+  // upstream but still working, etc.). Prepending vs appending shouldn't
+  // matter since we de-dupe -- list goes: current first, then the catalog.
+  const options = ok
+    ? Array.from(new Set([value, ...r!.models].filter(Boolean)))
+    : []
+
+  return (
+    <label>
+      <span>{label}</span>
+      {ok ? (
+        <div className="model-picker-row">
+          <select value={value} onChange={(e) => onChange(e.target.value)}>
+            {options.map((m) => (
+              <option key={m} value={m}>{m}{m === value && !r!.models.includes(m) ? ' (not in catalog)' : ''}</option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="model-picker-refresh"
+            title="Refetch the model catalog from the provider"
+            onClick={() => qc.invalidateQueries({ queryKey: ['models'] })}
+            disabled={models.isFetching}
+          >
+            {models.isFetching ? '...' : '↻'}
+          </button>
+        </div>
+      ) : (
+        <div className="model-picker-row">
+          <input
+            type="text"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={placeholder}
+          />
+          <button
+            type="button"
+            className="model-picker-refresh"
+            title={models.isFetching ? 'Loading...' : r?.error || 'Click to fetch the model catalog'}
+            onClick={() => qc.invalidateQueries({ queryKey: ['models'] })}
+            disabled={models.isFetching}
+          >
+            {models.isFetching ? '...' : '↻'}
+          </button>
+        </div>
+      )}
+      {hint && <span className="subtle">{hint}</span>}
+      {!ok && r?.error && (
+        <span className="subtle" style={{ color: 'var(--neg)' }}>
+          Catalog fetch failed: {r.error}. Save the API key/URL above and click ↻ to retry.
+        </span>
+      )}
+    </label>
   )
 }
 

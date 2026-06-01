@@ -234,6 +234,58 @@ def reset_settings() -> dict[str, Any]:
     return {"settings": defaults.model_dump(), "path": str(SETTINGS_PATH)}
 
 
+@router.get("/models")
+def list_models(provider: str | None = None) -> dict[str, Any]:
+    """Return the live model catalog for whichever provider is configured (or
+    the one supplied via ?provider=...). Used by the Settings AI tab to render
+    model dropdowns instead of free-text inputs.
+
+    Cheaper than /test/ollama: no timing, no model-presence checks, just the
+    catalog. Safe-fails to {ok: false, models: []} on any error so the
+    frontend's dropdown falls back to a text input cleanly.
+    """
+    import requests
+    ai = get_settings().ai_backend
+    p  = (provider or ai.provider).lower()
+
+    try:
+        if p == "ollama":
+            url = ai.ollama_url
+            probe = (url[: -len("/api/generate")] + "/api/tags") if url.endswith("/api/generate") else url
+            r = requests.get(probe, timeout=5)
+            r.raise_for_status()
+            models = [m["name"] for m in r.json().get("models", [])]
+            return {"ok": True, "provider": p, "models": sorted(models)}
+
+        if p == "claude":
+            if not ai.claude_api_key:
+                return {"ok": False, "provider": p, "models": [], "error": "no API key"}
+            r = requests.get(
+                "https://api.anthropic.com/v1/models",
+                headers={"x-api-key": ai.claude_api_key, "anthropic-version": "2023-06-01"},
+                timeout=10,
+            )
+            r.raise_for_status()
+            models = [m["id"] for m in r.json().get("data", [])]
+            return {"ok": True, "provider": p, "models": sorted(models)}
+
+        if p == "openai":
+            if not ai.openai_api_key:
+                return {"ok": False, "provider": p, "models": [], "error": "no API key"}
+            r = requests.get(
+                "https://api.openai.com/v1/models",
+                headers={"Authorization": f"Bearer {ai.openai_api_key}"},
+                timeout=10,
+            )
+            r.raise_for_status()
+            models = [m["id"] for m in r.json().get("data", [])]
+            return {"ok": True, "provider": p, "models": sorted(models)}
+
+        return {"ok": False, "provider": p, "models": [], "error": f"unknown provider: {p}"}
+    except Exception as e:  # noqa: BLE001 -- want to surface any failure to the UI
+        return {"ok": False, "provider": p, "models": [], "error": str(e)}
+
+
 @router.post("/test/ollama")
 def test_provider() -> dict[str, Any]:
     """Probe the currently-selected AI provider with a cheap, no-credit call.

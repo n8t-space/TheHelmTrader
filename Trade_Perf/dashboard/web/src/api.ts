@@ -512,6 +512,13 @@ export interface DrawdownResp {
   error?: string
 }
 
+export interface ModelsResp {
+  ok:       boolean
+  provider: string
+  models:   string[]
+  error?:   string
+}
+
 export interface AtmStrategy {
   name: string
   bracket_count?: number
