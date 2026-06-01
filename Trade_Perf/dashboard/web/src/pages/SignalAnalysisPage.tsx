@@ -170,7 +170,7 @@ export function SignalAnalysisPage() {
   // KPI derivation: parallel stats for the current CME session and the
   // full history. Both come from the same signal list so we don't need a
   // separate API. Session = current trading day per the operator's TZ +
-  // 6 PM CT roll (matches the home.py "today" rule). Falls back to
+  // 5 PM CT roll (matches the home.py "today" rule). Falls back to
   // America/Chicago while settings load.
   const settingsQ = useQuery({
     queryKey: ['settings'],

@@ -7,21 +7,20 @@ already begun.
 
 This module exposes the trading-day primitives the rest of the dashboard
 uses for "today" filters + by_day rollups. The boundary is fixed at
-ROLL_HOUR (default 18 = 6 PM) in the operator's configured timezone -- so a
-timestamp at or after 6 PM local belongs to the *next* trading day. DST
+ROLL_HOUR (default 17 = 5 PM) in the operator's configured timezone -- so a
+timestamp at or after 5 PM local belongs to the *next* trading day. DST
 transitions are handled by ZoneInfo.
 
-The exchange's actual maintenance halt is 4-5 PM CT (Mon-Thu), so 5 PM CT
-is the conventional CME roll. 6 PM is a slightly later cutoff some
-operators prefer to keep the late-afternoon close in the same trading day.
-Change ROLL_HOUR (or surface it via Settings) if needed.
+5 PM CT matches the actual CME Globex session start (post-maintenance-halt,
+Sun-Fri). Change ROLL_HOUR (or surface it via Settings) if you need a
+different cutoff.
 """
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-ROLL_HOUR = 18  # 6 PM in the operator's local TZ; everything at-or-after rolls to next trading day
+ROLL_HOUR = 17  # 5 PM in the operator's local TZ; everything at-or-after rolls to next trading day
 DEFAULT_TZ = "America/Chicago"
 
 

@@ -150,8 +150,8 @@ def derive_trades(fills: list[dict]) -> list[dict]:
 def compute_stats(trades: list[dict], *, tz: str | None = None) -> dict:
     """Aggregate stats for a set of trades, plus equity curve and breakdowns.
 
-    Keys ``daily_pnl`` by **trading day** (CME-style 6 PM CT roll) instead of
-    raw UTC date, so trades that close after the operator's local 6 PM but
+    Keys ``daily_pnl`` by **trading day** (CME-style 5 PM CT roll) instead of
+    raw UTC date, so trades that close after the operator's local 5 PM but
     before UTC midnight don't end up booked to the wrong calendar day.
     """
     if not trades:
