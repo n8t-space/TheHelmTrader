@@ -8,14 +8,31 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 
 from . import _tradebot_bridge as bridge  # noqa: F401  -- side-effect: sys.path
+from . import settings as settings_mod
 from src import signal_storage  # type: ignore[import-not-found]  # via bridge
 
 router = APIRouter(prefix="/api/health", tags=["health"])
 logger = logging.getLogger(__name__)
 
 
+def _configured_model(ai) -> str:
+    """Pick the model field that matches the active provider, so the Bot
+    Health card reflects what the NEXT inference call will actually use --
+    not the model the LAST signal happened to run on."""
+    if ai.provider == "ollama":   return ai.model
+    if ai.provider == "claude":   return ai.claude_model
+    if ai.provider == "openai":   return ai.openai_model
+    return ""
+
+
 def compute_bot_health(sample: int = 50) -> dict[str, Any]:
-    """Latency stats from the last N signals' duration_s field."""
+    """Live AI config + latency stats from the last N signals' duration_s.
+
+    The provider / configured_model fields reflect what's in Settings RIGHT
+    NOW (so a Settings change shows up instantly on the Health card). The
+    last_used_model field shows what the last actually-captured signal
+    ran on, which lags by one inference call after a config swap and is
+    surfaced as a divergence hint when the two don't match."""
     raw = signal_storage.load_all(bridge.SIGNALS_LOG)
     signals = sorted(
         (rec for rec in raw.values() if not rec.get("deleted")),
@@ -24,13 +41,36 @@ def compute_bot_health(sample: int = 50) -> dict[str, Any]:
     )
     durations = [s.get("duration_s") for s in signals[:sample]
                  if isinstance(s.get("duration_s"), (int, float))]
+
+    ai = settings_mod.get_settings().ai_backend
+    configured = _configured_model(ai)
+    last_used  = signals[0].get("model") if signals else None
+
+    # Per-provider extras the UI surfaces.
+    ollama_url       = ai.ollama_url    if ai.provider == "ollama" else None
+    fallback_model   = ai.fallback_model if ai.provider == "ollama" else None
+    api_key_configured = (
+        (ai.provider == "claude" and bool(ai.claude_api_key)) or
+        (ai.provider == "openai" and bool(ai.openai_api_key))
+    )
+
     out: dict[str, Any] = {
-        "model": signals[0].get("model") if signals else None,
-        "sample_size": len(durations),
-        "latency_p50_s": None,
-        "latency_p95_s": None,
-        "latency_min_s": None,
-        "latency_max_s": None,
+        # Live config (Settings is source of truth):
+        "provider":               ai.provider,
+        "configured_model":       configured,
+        "configured_fallback":    fallback_model,
+        "ollama_url":             ollama_url,
+        "api_key_configured":     api_key_configured,
+        "request_timeout_s":      ai.request_timeout_s,
+        # Latest signal's model -- diverges from configured after a swap:
+        "last_used_model":        last_used,
+        # Back-compat: keep `model` so older SPA builds still render.
+        "model":                  last_used,
+        "sample_size":            len(durations),
+        "latency_p50_s":          None,
+        "latency_p95_s":          None,
+        "latency_min_s":          None,
+        "latency_max_s":          None,
     }
     if durations:
         sorted_d = sorted(durations)
