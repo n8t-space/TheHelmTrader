@@ -306,3 +306,54 @@ def update_status() -> dict[str, Any]:
     """Poll target. Returns the helper's last-written progress snapshot, or
     {stage: 'idle'} if no update has ever been attempted on this install."""
     return _read_status()
+
+
+# ---------------------------------------------------------------------------
+# Restart endpoint -- kick uvicorn without re-deploying code
+# ---------------------------------------------------------------------------
+
+# Refuse to restart while these update stages are in flight -- the updater
+# is going to restart uvicorn at its own tail step, so racing it is pointless
+# (best case) or destroys mid-flight state (worst case).
+_UPDATE_BUSY_STAGES = {"queued", "fetching", "pip", "npm", "build"}
+
+
+@router.post("/restart")
+def restart_uvicorn() -> dict[str, Any]:
+    """Kill uvicorn so the watchdog respawns it within ~5s. Used to clear
+    wedged FastAPI state without re-deploying code -- the dashboard's
+    'Restart Helm' button on Support/Overview hits this.
+
+    Spawns a detached PowerShell that sleeps briefly then Stop-Process's
+    the uvicorn PID; the brief sleep lets the response flush back to the
+    client before the kill lands. Watchdog (running as the NSSM service)
+    notices the dead uvicorn within its 5s poll and spawns a fresh one
+    against the same code on disk."""
+    status = _read_status()
+    stage  = status.get("stage")
+    if stage in _UPDATE_BUSY_STAGES:
+        raise HTTPException(
+            409,
+            f"update in progress (stage={stage}); restart blocked. Wait for the update to finish.",
+        )
+
+    pwsh = shutil.which("pwsh") or shutil.which("powershell")
+    if not pwsh:
+        raise HTTPException(500, "neither pwsh nor powershell.exe is on PATH")
+
+    pid = os.getpid()
+    cmd = [
+        pwsh, "-NoProfile", "-Command",
+        f"Start-Sleep -Milliseconds 750; Stop-Process -Id {pid} -Force",
+    ]
+    creationflags = 0x00000008 | 0x00000200 if sys.platform == "win32" else 0
+    subprocess.Popen(
+        cmd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=creationflags,
+        close_fds=True,
+    )
+    logger.info("[version] restart triggered for uvicorn pid=%s", pid)
+    return {"restarting": True, "pid": pid, "eta_seconds": 7}

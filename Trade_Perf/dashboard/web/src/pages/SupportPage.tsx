@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { fetchJSON, postJSON } from '../api'
@@ -84,6 +84,7 @@ function OverviewTab({ onJump }: { onJump: (t: Tab) => void }) {
   return (
     <>
       <VersionCard />
+      <RestartCard />
       <div className="card support-card">
         <h2>Where to go next</h2>
         <ul className="support-list">
@@ -450,6 +451,84 @@ function VersionCard() {
           </div>
         </>
       )}
+    </div>
+  )
+}
+
+interface RestartResp { restarting: boolean; pid: number; eta_seconds: number }
+
+function RestartCard() {
+  const qc = useQueryClient()
+  const [restarting, setRestarting] = useState(false)
+  const [comingBack, setComingBack] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  // Poll health once a restart is in flight so we can flip the card to a
+  // success state the moment uvicorn responds again. Health endpoint is
+  // cheap and 200s as soon as the new process binds the port.
+  const health = useQuery({
+    queryKey: ['health-restart-watch'],
+    queryFn:  () => fetchJSON<{ status: string }>('/api/health'),
+    enabled:  comingBack,
+    refetchInterval: 1000,
+    retry: 0,
+    staleTime: 0,
+  })
+
+  useEffect(() => {
+    if (comingBack && health.data?.status === 'ok') {
+      setRestarting(false)
+      setComingBack(false)
+      qc.invalidateQueries({ queryKey: ['version'] })
+    }
+  }, [comingBack, health.data?.status, qc])
+
+  const trigger = useMutation({
+    mutationFn: () => postJSON<RestartResp>('/api/version/restart'),
+    onSuccess: () => {
+      setErr(null)
+      setRestarting(true)
+      // Give uvicorn ~1.5s to die before we start health-polling -- otherwise
+      // we'd see the LAST successful response from the old process and
+      // declare success prematurely.
+      setTimeout(() => setComingBack(true), 1500)
+    },
+    onError: (e) => {
+      setErr(String(e))
+      setRestarting(false)
+    },
+  })
+
+  return (
+    <div className="card support-card">
+      <h2>Restart Helm</h2>
+      <p className="support-prose">
+        Kicks the dashboard process (uvicorn) without re-deploying code or touching git. Useful when the API gets wedged, a Settings change isn't taking effect, or after a manual edit to <code>~/.helm/settings.json</code>. The watchdog respawns uvicorn within about 5 seconds; the page reload is automatic.
+      </p>
+      <p className="support-prose subtle">
+        Not the same as <strong>Update now</strong> -- that pulls the latest commit, rebuilds the frontend, and restarts uvicorn as the last step. Restart only does the last step.
+      </p>
+      <div className="support-actions">
+        <button
+          type="button"
+          onClick={() => {
+            if (!window.confirm('Restart the Helm dashboard? The API will be unreachable for ~5-10 seconds. Open trades and NT8 are not affected.')) return
+            trigger.mutate()
+          }}
+          disabled={restarting || trigger.isPending}
+        >
+          {trigger.isPending ? 'Sending...'
+            : restarting
+              ? (comingBack ? 'Waiting for uvicorn...' : 'Restarting...')
+              : 'Restart Helm'}
+        </button>
+        {restarting && !err && (
+          <span className="subtle">
+            {comingBack ? 'health-checking once per second' : 'kill signal sent; uvicorn will die in ~750 ms'}
+          </span>
+        )}
+      </div>
+      {err && <div className="error" style={{ marginTop: 8 }}>{err}</div>}
     </div>
   )
 }
