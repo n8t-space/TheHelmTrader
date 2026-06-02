@@ -1926,6 +1926,56 @@ tr.scale-out-detail td {
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
 }
 
+.atm-stop-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-family: ui-sans-serif, system-ui;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: rgba(63, 185, 80, 0.15);
+  color: var(--pos);
+  border: 1px solid rgba(63, 185, 80, 0.5);
+  vertical-align: middle;
+}
+
+.atm-bracket-detail {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.atm-bracket-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.atm-bracket-tag {
+  font-weight: 600;
+  color: var(--accent);
+  min-width: 50px;
+}
+
+.atm-bracket-body {
+  color: var(--muted);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.atm-bracket-body code {
+  font-size: 10px;
+  background: var(--bg);
+  padding: 0 4px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+
 /* ---------- Settings > AI: model picker ---------- */
 
 .model-picker-row {

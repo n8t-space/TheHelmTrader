@@ -9,7 +9,7 @@ declare global {
 }
 import {
   fetchJSON, postJSON, putJSON,
-  type AtmStrategiesResp, type AtmStrategy,
+  type AtmXmlBracket, type AtmStrategiesResp, type AtmStrategy,
   type DimensionsResp, type DrawdownConfig, type ModelsResp, type OllamaTestResp,
   type SettingsAccounts, type SettingsAiBackend,
   type SettingsAppearance, type SettingsDoc, type SettingsNews,
@@ -682,13 +682,46 @@ function describeStrategy(s: AtmStrategy): string {
     parts.push(`${stop}t stop -- stop-only sibling, runner trails to a stop.`)
   }
 
-  const flags: string[] = []
-  if (s.AutoBreakEvenPlusProfit && s.AutoBreakEvenPlusProfit !== '0') flags.push(`BE+${s.AutoBreakEvenPlusProfit}`)
-  if (s.AutoTrail  && s.AutoTrail  !== '0') flags.push(`trail ${s.AutoTrail}`)
-  if (s.AutoChase  && s.AutoChase  !== '0') flags.push(`chase ${s.AutoChase}`)
-  if (flags.length) parts.push(`Auto: ${flags.join(', ')}.`)
+  // Aggregate stop-strategy behavior across brackets. For 1c (single
+  // bracket) templates we just quote the bracket's BE+trail inline; for
+  // multi-bracket scale-outs we let the per-bracket detail block below the
+  // card carry the specifics and just say what kind of management is on.
+  if (s.brackets && s.brackets.length === 1) {
+    const b = s.brackets[0]
+    const inline = describeBracketBehavior(b)
+    if (inline) parts.push(inline + '.')
+  } else if (s.brackets && s.brackets.length > 1) {
+    const activeRunners = s.brackets.filter(b => bracketHasManagement(b))
+    if (activeRunners.length > 0) {
+      parts.push(`Scale-out: ${s.brackets.length - activeRunners.length} passive TP bracket(s) + ${activeRunners.length} runner with BE+trail.`)
+    }
+  }
 
   return parts.join(' ') || 'Legacy template -- no derived description.'
+}
+
+function bracketHasManagement(b: AtmXmlBracket): boolean {
+  return (b.break_even_offset_ticks ?? 0) > 0 || b.trail_steps.length > 0
+}
+
+function describeBracketBehavior(b: AtmXmlBracket): string {
+  const out: string[] = []
+  if (b.break_even_offset_ticks && b.break_even_trigger_ticks) {
+    out.push(`BE+${b.break_even_offset_ticks}t arms at +${b.break_even_trigger_ticks}t profit`)
+  } else if (b.break_even_offset_ticks) {
+    out.push(`BE+${b.break_even_offset_ticks}t arms`)
+  }
+  if (b.trail_steps.length > 0) {
+    const s = b.trail_steps[0]
+    if (s.profit_trigger_ticks && s.frequency_ticks && s.stop_loss_ticks) {
+      out.push(`trails @+${s.profit_trigger_ticks}t (freq ${s.frequency_ticks}t, stop ${s.stop_loss_ticks}t)`)
+    }
+    if (b.trail_steps.length > 1) out.push(`+${b.trail_steps.length - 1} more trail step(s)`)
+  }
+  if (b.stop_strategy_template && out.length === 0) {
+    out.push(`stop strategy "${b.stop_strategy_template}" (no inline BE/trail)`)
+  }
+  return out.join(', ')
 }
 
 function ExistingStrategiesBlock() {
@@ -748,7 +781,12 @@ function ExistingStrategiesBlock() {
               <div className="atm-strategy-list">
                 {groups[g].map((s) => (
                   <div key={s.name} className="atm-strategy-card">
-                    <div className="atm-strategy-name">{s.name}</div>
+                    <div className="atm-strategy-name">
+                      {s.name}
+                      {s.has_stop_strategy && (
+                        <span className="atm-stop-badge" title="At least one bracket has a stop strategy (BE arm and/or trail steps)">stop-strat</span>
+                      )}
+                    </div>
                     <div className="atm-strategy-desc">{describeStrategy(s)}</div>
                     <div className="atm-strategy-meta subtle">
                       {s.bracket_count !== undefined && <span>{s.bracket_count} bracket{s.bracket_count === 1 ? '' : 's'}</span>}
@@ -756,6 +794,26 @@ function ExistingStrategiesBlock() {
                       {s.stop_ticks_min !== undefined && <span>stop {s.stop_ticks_min}t</span>}
                       {s.target_ticks_max !== undefined && <span>target {s.target_ticks_max}t</span>}
                     </div>
+                    {s.brackets && s.brackets.length > 1 && (
+                      <div className="atm-bracket-detail">
+                        {s.brackets.map((b, i) => (
+                          <div key={i} className="atm-bracket-row">
+                            <span className="atm-bracket-tag">
+                              {bracketHasManagement(b) ? 'Runner' : `TP${i + 1}`}
+                            </span>
+                            <span className="atm-bracket-body">
+                              {b.quantity ?? '?'}c, stop {b.stop_loss_ticks ?? '?'}t / target {b.target_ticks ?? '?'}t
+                              {b.stop_strategy_template && (
+                                <> &middot; <code>{b.stop_strategy_template}</code></>
+                              )}
+                              {describeBracketBehavior(b) && (
+                                <> &middot; {describeBracketBehavior(b)}</>
+                              )}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

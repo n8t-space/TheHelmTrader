@@ -519,15 +519,33 @@ export interface ModelsResp {
   error?:   string
 }
 
+export interface AtmXmlTrailStep {
+  profit_trigger_ticks: number | null
+  frequency_ticks:      number | null
+  stop_loss_ticks:      number | null
+}
+
+// Bracket as parsed from the NT8 ATM XML template file (Settings -> Strategy
+// "Existing ATM Strategies" block). Distinct from AtmBracket above, which is
+// the bot's runtime per-bracket plan stored on a Signal/Proposal.
+export interface AtmXmlBracket {
+  quantity:                 number | null
+  stop_loss_ticks:          number | null
+  target_ticks:             number | null
+  stop_strategy_template:   string | null
+  break_even_offset_ticks:  number | null
+  break_even_trigger_ticks: number | null
+  trail_steps:              AtmXmlTrailStep[]
+}
+
 export interface AtmStrategy {
   name: string
   bracket_count?: number
   total_qty?: number
   stop_ticks_min?: number
   target_ticks_max?: number
-  AutoBreakEvenPlusProfit?: string
-  AutoTrail?: string
-  AutoChase?: string
+  has_stop_strategy?: boolean
+  brackets?: AtmXmlBracket[]
 }
 
 export interface AtmStrategiesResp {

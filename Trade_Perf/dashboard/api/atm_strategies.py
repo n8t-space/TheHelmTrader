@@ -28,9 +28,73 @@ router = APIRouter(prefix="/api/atm-strategies", tags=["atm-strategies"])
 ATM_TEMPLATES_DIR = Path.home() / "Documents" / "NinjaTrader 8" / "templates" / "AtmStrategy"
 
 
+def _int_or_none(s: str | None) -> int | None:
+    if s is None or s == "":
+        return None
+    try:
+        return int(s)
+    except ValueError:
+        return None
+
+
+def _parse_bracket(b: ET.Element) -> dict[str, Any]:
+    """Parse one <Bracket> -- quantity, stop, target, and the embedded
+    <StopStrategy> (template name + AutoBreakEven + AutoTrailSteps).
+
+    NT8 schema (the actual one, not the one the old parser guessed at):
+        <Bracket>
+          <Quantity/> <StopLoss/> <Target/>
+          <StopStrategy>
+            <AutoBreakEvenPlus/>              tick offset moved to entry
+            <AutoBreakEvenProfitTrigger/>     profit ticks at which BE arms
+            <AutoTrailSteps>
+              <AutoTrailStep>
+                <Frequency/>                  step size (ticks)
+                <ProfitTrigger/>              profit ticks at which step fires
+                <StopLoss/>                   new stop distance after firing
+              </AutoTrailStep>
+              ...
+            </AutoTrailSteps>
+            <Template/>                       sibling stop-strategy template
+          </StopStrategy>
+        </Bracket>
+    """
+    out: dict[str, Any] = {
+        "quantity":                 _int_or_none(b.findtext("Quantity")),
+        "stop_loss_ticks":          _int_or_none(b.findtext("StopLoss")),
+        "target_ticks":             _int_or_none(b.findtext("Target")),
+        "stop_strategy_template":   None,
+        "break_even_offset_ticks":  None,
+        "break_even_trigger_ticks": None,
+        "trail_steps":              [],
+    }
+    ss = b.find("StopStrategy")
+    if ss is None:
+        return out
+    tpl = (ss.findtext("Template") or "").strip()
+    if tpl:
+        out["stop_strategy_template"] = tpl
+    be_off = _int_or_none(ss.findtext("AutoBreakEvenPlus"))
+    be_trg = _int_or_none(ss.findtext("AutoBreakEvenProfitTrigger"))
+    if be_off and be_off != 0:
+        out["break_even_offset_ticks"] = be_off
+    if be_trg and be_trg != 0:
+        out["break_even_trigger_ticks"] = be_trg
+    steps: list[dict[str, int | None]] = []
+    for st in ss.findall("AutoTrailSteps/AutoTrailStep"):
+        steps.append({
+            "profit_trigger_ticks": _int_or_none(st.findtext("ProfitTrigger")),
+            "frequency_ticks":      _int_or_none(st.findtext("Frequency")),
+            "stop_loss_ticks":      _int_or_none(st.findtext("StopLoss")),
+        })
+    out["trail_steps"] = steps
+    return out
+
+
 def _parse_one(xml_path: Path) -> dict[str, Any]:
-    """Best-effort parse of an ATM strategy XML. Returns name + a handful of
-    summary fields. Unknown structure / parse errors yield name-only."""
+    """Best-effort parse of an ATM strategy XML. Returns name + summary
+    fields + per-bracket detail (incl. embedded StopStrategy). Unknown
+    structure / parse errors yield name-only."""
     info: dict[str, Any] = {"name": xml_path.stem}
     try:
         tree = ET.parse(xml_path)
@@ -39,37 +103,26 @@ def _parse_one(xml_path: Path) -> dict[str, Any]:
         # first child uniformly.
         node = root if root.tag.lower().endswith("atmstrategy") else next(iter(root), root)
 
-        # NT8 schema: <NinjaTrader>/<AtmStrategy>/<Brackets>/<Bracket>
-        # Each bracket carries Quantity, StopLoss, Target. Sum up the qty,
-        # capture min stop ticks and max target ticks across brackets.
         brackets = node.findall(".//Brackets/Bracket")
-        if brackets:
-            total_qty   = 0
-            stop_ticks  = []
-            target_ticks = []
-            for b in brackets:
-                qty = b.findtext("Quantity")
-                if qty:
-                    try: total_qty += int(qty)
-                    except ValueError: pass
-                sl = b.findtext("StopLoss")
-                tp = b.findtext("Target")
-                if sl:
-                    try: stop_ticks.append(int(sl))
-                    except ValueError: pass
-                if tp:
-                    try: target_ticks.append(int(tp))
-                    except ValueError: pass
-            info["bracket_count"] = len(brackets)
-            info["total_qty"]    = total_qty
-            if stop_ticks:    info["stop_ticks_min"]   = min(stop_ticks)
-            if target_ticks:  info["target_ticks_max"] = max(target_ticks)
+        parsed_brackets = [_parse_bracket(b) for b in brackets]
+        info["brackets"]      = parsed_brackets
+        info["bracket_count"] = len(parsed_brackets)
+        info["total_qty"]     = sum((b["quantity"] or 0) for b in parsed_brackets)
 
-        # Break-even and trailing flags, if present.
-        for tag in ("AutoBreakEvenPlusProfit", "AutoTrail", "AutoChase"):
-            v = node.findtext(tag)
-            if v is not None:
-                info[tag] = v
+        stops   = [b["stop_loss_ticks"] for b in parsed_brackets if b["stop_loss_ticks"] is not None]
+        targets = [b["target_ticks"]    for b in parsed_brackets if b["target_ticks"]    is not None]
+        if stops:   info["stop_ticks_min"]   = min(stops)
+        if targets: info["target_ticks_max"] = max(targets)
+
+        # 'has_stop_strategy' = any bracket references a stop-strategy template
+        # OR has a non-zero BE offset OR has any trail steps. Surfaces the
+        # bracket-level reality so the UI doesn't have to re-derive it.
+        info["has_stop_strategy"] = any(
+            (b["stop_strategy_template"] is not None)
+            or (b["break_even_offset_ticks"] not in (None, 0))
+            or bool(b["trail_steps"])
+            for b in parsed_brackets
+        )
     except (ET.ParseError, OSError) as e:
         logger.warning("[atm-strategies] could not parse %s: %s", xml_path.name, e)
     return info
