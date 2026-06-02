@@ -209,7 +209,16 @@ def _ai_extract_econoday(html: str) -> tuple[list[dict[str, Any]], str | None]:
     # but precise selectors would need a parser. Capping at 60k chars keeps
     # cloud-API costs reasonable; FF feed covers the must-have High events
     # so trimming Econoday is acceptable degradation.
-    prompt = ECONODAY_PROMPT.format(today=today_iso, html=html[:60000])
+    #
+    # str.replace, not str.format -- Econoday's HTML contains stray `{` / `}`
+    # in inline CSS + JS, which str.format treats as positional placeholders
+    # and explodes on. Bit us on 2026-05-29 with a KeyError crash every 15 min
+    # in the background refresh loop.
+    prompt = (
+        ECONODAY_PROMPT
+        .replace("{today}", today_iso)
+        .replace("{html}", html[:60000])
+    )
 
     try:
         if provider == "ollama":
@@ -480,8 +489,12 @@ async def refresh_loop_forever() -> None:
     while True:
         try:
             await asyncio.to_thread(_refresh_once)
-        except Exception:
-            logger.exception("[news] background refresh failed")
+        except Exception as e:
+            # Lead the log line with the exception class + message so a `grep
+            # news.*ERROR` shows the cause inline without having to chase the
+            # multi-line traceback that follows.
+            logger.exception("[news] background refresh failed: %s: %s",
+                             type(e).__name__, e)
         interval_min = max(5, settings_mod.get_settings().news.refresh_interval_minutes)
         await asyncio.sleep(interval_min * 60)
 
