@@ -1,14 +1,29 @@
 import { useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import { fetchJSON } from '../api'
 
 interface BotStats {
+  provider: 'ollama' | 'claude' | 'openai'
+  configured_model: string
+  configured_fallback: string | null
+  ollama_url: string | null
+  api_key_configured: boolean
+  request_timeout_s: number
+  last_used_model: string | null
+  // Back-compat alias for last_used_model -- still emitted by the API.
   model: string | null
   sample_size: number
   latency_p50_s: number | null
   latency_p95_s: number | null
   latency_min_s: number | null
   latency_max_s: number | null
+}
+
+const PROVIDER_LABEL: Record<BotStats['provider'], string> = {
+  ollama: 'Ollama (local / LAN)',
+  claude: 'Anthropic Claude (cloud)',
+  openai: 'OpenAI / ChatGPT (cloud)',
 }
 
 interface LogsResp {
@@ -37,27 +52,86 @@ export function HealthPage() {
 }
 
 function BotHealthCard({ h, loading }: { h: BotStats | null; loading: boolean }) {
+  if (loading || !h) {
+    return (
+      <div className="card">
+        <h2>Bot Health</h2>
+        <div className="subtle">Loading…</div>
+      </div>
+    )
+  }
+
+  // Divergence hint: when the last actually-captured signal ran on a
+  // different model than what Settings now points at, surface it so the
+  // user knows the change hasn't taken effect on a real call yet.
+  const diverged = h.last_used_model && h.configured_model
+    && h.last_used_model !== h.configured_model
+
+  const needsKey  = (h.provider === 'claude' || h.provider === 'openai') && !h.api_key_configured
+
   return (
     <div className="card">
       <h2>Bot Health</h2>
-      {loading || !h ? (
-        <div className="subtle">Loading…</div>
-      ) : (
-        <>
-          <div className="kv"><span>Model</span><span>{h.model || '—'}</span></div>
-          <div className="kv"><span>Sample size</span><span>{h.sample_size} calls</span></div>
-          <div className="kv"><span>Latency p50</span><span>{fmtSec(h.latency_p50_s)}</span></div>
-          <div className="kv"><span>Latency p95</span><span>{fmtSec(h.latency_p95_s)}</span></div>
-          <div className="kv">
-            <span>Min / Max</span>
-            <span>
-              {h.latency_min_s !== null
-                ? `${h.latency_min_s.toFixed(2)} / ${(h.latency_max_s ?? 0).toFixed(2)} s`
-                : '—'}
-            </span>
-          </div>
-        </>
+      <div className="kv">
+        <span>Provider</span>
+        <span>{PROVIDER_LABEL[h.provider]}</span>
+      </div>
+      <div className="kv">
+        <span>Model (configured)</span>
+        <span>
+          {h.configured_model || <em className="subtle">none</em>}
+          {' '}<Link to="/settings" className="subtle" title="Edit on the Settings &gt; AI Backend tab">(edit)</Link>
+        </span>
+      </div>
+      {h.configured_fallback && (
+        <div className="kv">
+          <span>Fallback model</span>
+          <span>{h.configured_fallback}</span>
+        </div>
       )}
+      {h.ollama_url && (
+        <div className="kv">
+          <span>Ollama URL</span>
+          <span><code>{h.ollama_url}</code></span>
+        </div>
+      )}
+      {(h.provider === 'claude' || h.provider === 'openai') && (
+        <div className="kv">
+          <span>API key</span>
+          <span className={needsKey ? 'pnl-neg' : 'ok'}>
+            {needsKey ? 'NOT SET' : 'configured'}
+          </span>
+        </div>
+      )}
+      <div className="kv">
+        <span>Request timeout</span>
+        <span>{h.request_timeout_s} s</span>
+      </div>
+      <div className="kv">
+        <span>Last used model</span>
+        <span>
+          {h.last_used_model || <em className="subtle">no signals yet</em>}
+          {diverged && (
+            <>
+              {' '}
+              <span className="pnl-neg" title="Settings was changed -- next inference call will pick up the new model">
+                (differs)
+              </span>
+            </>
+          )}
+        </span>
+      </div>
+      <div className="kv"><span>Sample size</span><span>{h.sample_size} calls</span></div>
+      <div className="kv"><span>Latency p50</span><span>{fmtSec(h.latency_p50_s)}</span></div>
+      <div className="kv"><span>Latency p95</span><span>{fmtSec(h.latency_p95_s)}</span></div>
+      <div className="kv">
+        <span>Min / Max</span>
+        <span>
+          {h.latency_min_s !== null
+            ? `${h.latency_min_s.toFixed(2)} / ${(h.latency_max_s ?? 0).toFixed(2)} s`
+            : '—'}
+        </span>
+      </div>
     </div>
   )
 }
