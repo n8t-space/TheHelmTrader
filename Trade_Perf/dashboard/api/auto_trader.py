@@ -177,14 +177,53 @@ def set_enabled(update: EnableUpdate) -> dict:
     return {"enabled": cfg.enabled, "account": cfg.account}
 
 
+# Last account equity the NT8 strategy reported (runtime state, not persisted).
+# {account: {"balance": float, "at": iso}}
+_last_balance: dict[str, dict] = {}
+
+
 @router.get("/auto-trader/account")
 def auto_trader_account() -> dict:
     """Single source of truth for the auto-trade account (Settings > Auto-Trader).
     HelmAutoTrader fetches this on start and uses it as its allowed account, so
     the strategy's 'Allowed account' and the dashboard's 'Setup > Account' can
-    never drift. Empty string when unset."""
+    never drift. Also surfaces the balance floor + last-reported equity."""
     cfg = settings_mod.auto_trader_config()
-    return {"account": cfg.account or "", "enabled": cfg.enabled}
+    bal = _last_balance.get(cfg.account or "")
+    return {
+        "account":             cfg.account or "",
+        "enabled":             cfg.enabled,
+        "min_account_balance": cfg.min_account_balance,
+        "balance":             bal["balance"] if bal else None,
+        "balance_at":          bal["at"] if bal else None,
+    }
+
+
+class BalanceUpdate(BaseModel):
+    account: str
+    balance: float
+
+
+@router.post("/auto-trader/balance")
+def report_balance(update: BalanceUpdate) -> dict:
+    """The NT8 strategy reports the account's live equity here each poll. FAIL-SAFE:
+    if equity is at/below the configured floor (min_account_balance > 0), force the
+    master switch OFF -- new entries stop and the queue empties. We do NOT flatten
+    the open position; it keeps its own ATM stop. Requires manual re-enable."""
+    _last_balance[update.account] = {"balance": update.balance, "at": _now_iso()}
+    cfg = settings_mod.auto_trader_config()
+    floor = cfg.min_account_balance
+    # Only act on a plausible POSITIVE equity -- a 0/garbage reading (account not
+    # ready) must never trip the kill-switch. NS already guards, but enforce here.
+    tripped = (floor > 0 and update.balance > 0 and update.balance <= floor
+               and update.account == cfg.account)
+    if tripped and cfg.enabled:
+        settings_mod.set_auto_trader_enabled(False)
+        logger.warning("[auto-trader] BALANCE FLOOR hit: %s equity %.2f <= floor %.2f "
+                       "-- auto-trading forced OFF (manual re-enable required)",
+                       update.account, update.balance, floor)
+    return {"ok": True, "floor": floor, "tripped": tripped,
+            "enabled": settings_mod.auto_trader_config().enabled}
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +241,14 @@ def exec_queue(account: str) -> dict:
     cfg = settings_mod.auto_trader_config()
     if not cfg.enabled or not cfg.account or account != cfg.account:
         return {"account": account, "count": 0, "signals": []}
+
+    # Fail-safe: hold the queue while reported equity is at/below the balance
+    # floor (the balance report also forces the master switch OFF; this covers
+    # the window between reports).
+    floor = cfg.min_account_balance
+    bal = _last_balance.get(account)
+    if floor > 0 and bal and 0 < bal["balance"] <= floor:
+        return {"account": account, "count": 0, "signals": [], "held_balance_floor": bal["balance"]}
 
     raw = signal_storage.load_all(bridge.SIGNALS_LOG)
     now = datetime.now()
