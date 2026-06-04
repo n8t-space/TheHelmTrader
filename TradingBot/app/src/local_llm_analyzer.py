@@ -45,19 +45,20 @@ Reply with ONLY this JSON:
  "reasoning": "<1-2 sentences explaining what you saw, especially whether entry was reached>"}}"""
 
 
-def analyze(image_path: Path, prompt: str) -> dict:
+def analyze(image_path: Path, prompt: str, instrument: str | None = None) -> dict:
     """Returns {proposal, raw_response, duration_s}. Raises on HTTP or parse error.
     Dispatches to the configured provider (ollama / claude / openai)."""
     image_b64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
 
-    # Inject the ATM strategy menu the LLM must pick from. Prepended to the
-    # prompt so it's visible BEFORE the schema instructions at the bottom.
-    atm_strategies = _load_atm_strategies()
+    # Inject the ATM strategy menu the LLM must pick from, scoped to this
+    # instrument so it can't pick a crude-oil bracket for an MES trade.
+    # Prepended so it's visible BEFORE the schema instructions at the bottom.
+    atm_strategies = _filter_atm_for_instrument(_load_atm_strategies(), instrument)
     full_prompt = _format_atm_block(atm_strategies) + "\n\n---\n\n" + prompt
 
     provider = runtime_config.provider()
-    logger.info("Analyze via %s (image=%s, atm_strategies=%d)",
-                provider, image_path.name, len(atm_strategies))
+    logger.info("Analyze via %s (image=%s, instrument=%s, atm_strategies=%d)",
+                provider, image_path.name, instrument, len(atm_strategies))
 
     if provider == "claude":
         raw, duration_s, model_used = _call_claude(image_b64, full_prompt)
@@ -90,12 +91,12 @@ def analyze_text(prompt: str, instrument: str | None = None) -> dict:
     ({proposal, raw_response, duration_s}) plus the model/provider keys the
     headless caller logs.
     """
-    atm_strategies = _load_atm_strategies()
+    atm_strategies = _filter_atm_for_instrument(_load_atm_strategies(), instrument)
     full_prompt = _format_atm_block(atm_strategies) + "\n\n---\n\n" + prompt
 
     provider = runtime_config.provider()
-    logger.info("Analyze (text-only) via %s (atm_strategies=%d)",
-                provider, len(atm_strategies))
+    logger.info("Analyze (text-only) via %s (instrument=%s, atm_strategies=%d)",
+                provider, instrument, len(atm_strategies))
     if provider == "claude":
         raw, duration_s, model_used = _call_claude(None, full_prompt)
     elif provider == "openai":
@@ -369,6 +370,28 @@ def _format_atm_block(strategies: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _atm_root(name: str) -> str:
+    """Instrument root an ATM template is scoped to -- the prefix before the
+    first underscore (e.g. 'MES_INTRA_1c_16-40' -> 'MES'). Every template in
+    NinjaTrader 8/templates/AtmStrategy follows this {ROOT}_... convention."""
+    return name.split("_", 1)[0].upper()
+
+
+def _filter_atm_for_instrument(strategies: list[dict], instrument: str | None) -> list[dict]:
+    """Keep only templates whose root matches *instrument* so the LLM can't pick
+    a crude-oil bracket for an MES trade. Returns the matched subset (possibly
+    empty -- the menu then shows 'none' and the proposal is dismissed rather
+    than trading a wrong-instrument template). Falls back to the full list only
+    when the instrument is unknown; the _derive_stop_target guard still rejects
+    a cross-instrument pick in that case."""
+    if not instrument:
+        return strategies
+    root = (instruments.normalize_symbol(instrument) or "").upper()
+    if not root:
+        return strategies
+    return [s for s in strategies if _atm_root(s["name"]) == root]
+
+
 def _derive_stop_target(proposal: dict, strategies: list[dict]) -> None:
     """After the LLM picks an atm_strategy, fill in stop and target prices
     from the strategy's tick offsets + the entry + the direction + the
@@ -417,12 +440,25 @@ def _derive_stop_target(proposal: dict, strategies: list[dict]) -> None:
                     stop_ticks, target_ticks)
     else:
         strat = next((s for s in strategies if s["name"] == atm_name), None)
+        # Reject a template scoped to a different instrument (e.g. the LLM
+        # picking MCL_SCALP for an MES trade) -- its tick offsets are wrong and
+        # the auto-trader would place a crude-oil bracket on equities.
+        inst_root = (instruments.normalize_symbol(proposal.get("instrument") or "") or "").upper()
+        if strat is not None and inst_root and _atm_root(strat["name"]) != inst_root:
+            logger.warning("LLM picked cross-instrument atm_strategy=%r for %s; rejecting",
+                           atm_name, inst_root)
+            strat = None
         if strat is None:
-            logger.warning("LLM picked unknown atm_strategy=%r (not in %s); "
-                           "falling back to a 1:2 default",
-                           atm_name, [s["name"] for s in strategies])
-            stop_ticks, target_ticks = 10, 20
+            # Unknown or wrong-instrument template: we cannot place it and its
+            # risk is undefined. Clear the ATM so sanity_check dismisses this
+            # directional proposal rather than trading a guessed 1:2 default.
+            logger.warning("atm_strategy=%r is not a valid %s template; clearing so "
+                           "the proposal is dismissed", atm_name, inst_root or "instrument")
+            proposal["atm_strategy"]          = ""
             proposal["atm_strategy_resolved"] = False
+            proposal["atm_brackets"]          = []
+            proposal["atm_total_qty"]         = 0
+            return
         else:
             stop_ticks   = int(strat["stop_ticks"])
             target_ticks = int(strat["target_ticks"])

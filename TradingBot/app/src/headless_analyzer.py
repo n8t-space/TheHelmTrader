@@ -165,7 +165,7 @@ def _analyze_visual(instrument: str, period: str, bar_ts: int,
 
     started = time.monotonic()
     try:
-        result = local_llm_analyzer.analyze(shot_path, full_prompt)
+        result = local_llm_analyzer.analyze(shot_path, full_prompt, instrument)
     except Exception:
         logger.exception("[headless-vision] analyze() failed for %s %s",
                          instrument, period)

@@ -55,7 +55,10 @@ def run_pipeline(
     if market_context:
         full_prompt = _format_context_for_prompt(market_context) + "\n\n---\n\n" + prompt
 
-    result = analyze(image_path, full_prompt)
+    # Scope the ATM menu to the charted instrument when context names it; None
+    # (unknown) keeps the full menu and the _derive_stop_target guard rejects a
+    # cross-instrument pick.
+    result = analyze(image_path, full_prompt, (market_context or {}).get("instrument"))
 
     # Sanity-check the LLM's proposed prices against the latest reference in
     # feed.db. Catches hallucinations where the model misread the price axis
