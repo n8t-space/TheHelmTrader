@@ -123,7 +123,7 @@ def analyze(instrument: str, period: str, bar_ts: int,
     # a flood of HTTP errors against api.anthropic.com / api.openai.com /
     # localhost-without-Ollama, and avoids burning resources building the
     # prompt + reading the screenshot for a call that can't happen.
-    ok, why = runtime_config.is_provider_configured()
+    ok, why = runtime_config.is_provider_configured("signal")
     if not ok:
         logger.info("[headless] %s @ %s: %s -- skipping", instrument, period, why)
         return None

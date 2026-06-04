@@ -56,7 +56,7 @@ def analyze(image_path: Path, prompt: str, instrument: str | None = None) -> dic
     atm_strategies = _filter_atm_for_instrument(_load_atm_strategies(), instrument)
     full_prompt = _format_atm_block(atm_strategies) + "\n\n---\n\n" + prompt
 
-    provider = runtime_config.provider()
+    provider = runtime_config.provider("signal")
     logger.info("Analyze via %s (image=%s, instrument=%s, atm_strategies=%d)",
                 provider, image_path.name, instrument, len(atm_strategies))
 
@@ -94,7 +94,7 @@ def analyze_text(prompt: str, instrument: str | None = None) -> dict:
     atm_strategies = _filter_atm_for_instrument(_load_atm_strategies(), instrument)
     full_prompt = _format_atm_block(atm_strategies) + "\n\n---\n\n" + prompt
 
-    provider = runtime_config.provider()
+    provider = runtime_config.provider("signal")
     logger.info("Analyze (text-only) via %s (instrument=%s, atm_strategies=%d)",
                 provider, instrument, len(atm_strategies))
     if provider == "claude":

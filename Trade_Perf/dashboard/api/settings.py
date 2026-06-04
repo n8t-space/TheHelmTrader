@@ -81,8 +81,13 @@ class Appearance(BaseModel):
 
 
 class AiBackend(BaseModel):
-    # Provider selector. Picks which vendor's vision API the analyzer hits.
+    # Global provider selector + per-component overrides. Each component falls
+    # back to `provider` when its override is "". Lets News (large HTML
+    # extraction) run on a cloud model while signal analysis stays on local
+    # Ollama, etc. Credentials/models below are shared per provider.
     provider: str = Field(default="ollama", pattern="^(ollama|claude|openai)$")
+    news_provider:   str = Field(default="", pattern="^(ollama|claude|openai|)$")
+    signal_provider: str = Field(default="", pattern="^(ollama|claude|openai|)$")
     # Shared
     request_timeout_s: int = Field(default=300, ge=10, le=1800)
 

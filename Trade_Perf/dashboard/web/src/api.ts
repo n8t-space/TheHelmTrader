@@ -461,6 +461,9 @@ export interface SettingsAppearance {
 
 export interface SettingsAiBackend {
   provider: 'ollama' | 'claude' | 'openai'
+  // Per-component provider overrides; '' = inherit `provider`.
+  news_provider?: '' | 'ollama' | 'claude' | 'openai'
+  signal_provider?: '' | 'ollama' | 'claude' | 'openai'
   request_timeout_s: number
   // Ollama
   ollama_url: string
