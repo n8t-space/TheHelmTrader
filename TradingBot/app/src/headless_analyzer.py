@@ -286,6 +286,12 @@ def _format_visual_context_block(instrument: str, period: str, context: dict) ->
     pipeline._format_context_for_prompt produces for the manual snip flow,
     but smaller -- the LLM has the chart bitmap so we don't need to dump
     every level."""
+    # Indicator-neutral anchors only: price, recent range, and ATR (volatility,
+    # for stop/target sizing). We do NOT assert a specific indicator (e.g. a
+    # particular EMA) here -- the trader's chart shows whatever indicators they
+    # currently use, and the prompt reads those off the image. Asserting a fixed
+    # indicator the trader may have removed led the model to cite levels that
+    # weren't on the chart.
     lines = [
         "## Authoritative Market Context (from HelmFeed bars)",
         f"Instrument: {instrument}",
@@ -293,12 +299,12 @@ def _format_visual_context_block(instrument: str, period: str, context: dict) ->
         f"Current price (last close): {context.get('current_price')}",
         f"Recent {context.get('bar_count')}-bar high: {context.get('period_high')}",
         f"Recent {context.get('bar_count')}-bar low:  {context.get('period_low')}",
-        f"EMA({EMA_PERIOD}): {context.get('ema_value')}",
-        f"ATR({ATR_PERIOD}): {context.get('atr_value')}",
+        f"ATR({ATR_PERIOD}) (volatility, for stop/target sizing): {context.get('atr_value')}",
         "",
-        "Use the prices above as authoritative -- do not re-read them from the chart axis. "
-        "Use the chart screenshot for structural interpretation (trend, pullbacks, "
-        "support/resistance) only.",
+        "These are exact numeric anchors -- use them instead of reading prices off the "
+        "axis. Read the trend, levels, and ALL indicators from the chart image itself "
+        "(whatever the trader has applied); cite only indicators/levels you can actually "
+        "see on the chart or that appear above.",
     ]
     return "\n".join(lines)
 
