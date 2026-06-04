@@ -247,13 +247,19 @@ def _ai_extract_econoday(html: str) -> tuple[list[dict[str, Any]], str | None]:
                 json={
                     "model": ai.claude_model,
                     "max_tokens": ai.claude_max_tokens,
-                    "messages": [{"role": "user", "content": prompt}],
+                    # Prefill the assistant turn with "{" so the model continues a
+                    # pure JSON object -- no prose, no markdown fences. We prepend
+                    # the "{" back below before parsing.
+                    "messages": [
+                        {"role": "user", "content": prompt},
+                        {"role": "assistant", "content": "{"},
+                    ],
                 },
                 timeout=AI_TIMEOUT_S,
             )
             r.raise_for_status()
             blocks = r.json().get("content", [])
-            text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+            text = "{" + "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
 
         elif provider == "openai":
             if not ai.openai_api_key:
@@ -284,14 +290,28 @@ def _ai_extract_econoday(html: str) -> tuple[list[dict[str, Any]], str | None]:
         return [], f"AI response shape unexpected ({provider}): {e}"
 
     # Strip stray markdown fences if any model added them despite the prompt.
+    # (No MULTILINE: anchor ^/$ to the whole string, not every line, or backticks
+    # inside the JSON would get mangled.)
     text = text.strip()
     if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.MULTILINE)
+        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text).strip()
 
+    parsed = None
     try:
         parsed = json.loads(text)
-    except json.JSONDecodeError as e:
-        return [], f"AI JSON parse failed: {e}"
+    except json.JSONDecodeError:
+        # Model wrapped the object in prose/notes despite the prompt -- fall back
+        # to the outermost {...} span.
+        m = re.search(r"\{.*\}", text, re.DOTALL)
+        if m:
+            try:
+                parsed = json.loads(m.group(0))
+            except json.JSONDecodeError:
+                parsed = None
+    if parsed is None:
+        logger.warning("[news] Econoday AI JSON parse failed (%s); raw[:300]=%r",
+                       provider, text[:300])
+        return [], "AI JSON parse failed"
 
     events_raw = parsed.get("events") if isinstance(parsed, dict) else None
     if not isinstance(events_raw, list):

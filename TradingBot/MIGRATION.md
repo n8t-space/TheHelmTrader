@@ -296,7 +296,7 @@ Long session with five distinct landings: a Trade Performance "Today" bug that t
 
 **Done:**
 
-1. **CME session attribution for "Today"** (commit `47e159a`). The Trade Performance "Today" panel was bucketing trades via UTC date — at 8 PM CDT 5/21 it silently dropped Trade A (afternoon) and Trade B (early evening) and showed -$22.50 for account <redacted-acct> instead of the expected $17.50. Built a real trading-day primitive:
+1. **CME session attribution for "Today"** (commit `47e159a`). The Trade Performance "Today" panel was bucketing trades via UTC date — at 8 PM CDT 5/21 it silently dropped Trade A (afternoon) and Trade B (early evening) and showed -$22.50 for account <live-account> instead of the expected $17.50. Built a real trading-day primitive:
    - `dashboard/api/trading_day.py` (new): `current_trading_day`, `trading_day_for_ts`, `trading_day_bounds_utc`. DST-aware via `zoneinfo`. Fixed roll at **6 PM in the operator's TZ** — trades closed at or after that bucket into the NEXT trading day's session.
    - `dashboard/web/src/lib/trading_day.ts` (new): mirror using `Intl.DateTimeFormat`.
    - `trades.compute_stats` — `daily_pnl` rekeyed on trading day; accepts a `tz` kwarg.
@@ -305,7 +305,7 @@ Long session with five distinct landings: a Trade Performance "Today" bug that t
    - `drawdown.py` — daily-DD window switched from midnight calendar day to `trading_day_bounds_utc`.
    - **Labels renamed everywhere**: `Today` → `Current CME Session` (Trade Perf, Home, Signal Analysis KPI), `Filtered` → `Calendar Day / Range`, drawdown card column `Today` → `Session`.
    - **`tzdata` dep added** to `install.ps1` + README + `Trade_Perf/CLAUDE.md`. Mandatory on Windows — Python's `zoneinfo` ships without IANA data; without `tzdata` the helpers throw `ZoneInfoNotFoundError`.
-   - Sanity-verified against the <redacted-acct> fills: trading day 5/21 = +$30 (Trade A only, closed pre-roll), trading day 5/22 = -$12.50 (Trades B + C + D, all post-roll). Sum = $17.50, matches manual calc.
+   - Sanity-verified against the <live-account> fills: trading day 5/21 = +$30 (Trade A only, closed pre-roll), trading day 5/22 = -$12.50 (Trades B + C + D, all post-roll). Sum = $17.50, matches manual calc.
 
 2. **Per-account drawdown tracker** (commit `5539097`). For prop-firm Evals + funded accounts with trailing DD limits.
    - Backend `dashboard/api/drawdown.py` (new) + `Accounts.drawdowns: dict[account_id, DrawdownConfig]` in Settings. Opt-in per account. Defaults match a typical $50K Eval (start $50K, trailing $2,500, daily $1,500, profit target $3,000).

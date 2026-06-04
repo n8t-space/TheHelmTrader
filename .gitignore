@@ -19,13 +19,16 @@ __pycache__/
 *.pem
 secrets/
 
-# Helm runtime settings file lives at ~/.helm/settings.json (outside this
-# repo by design). Belt-and-suspenders: block any in-tree copies too --
-# this is where AI provider API keys (Claude / OpenAI) get stored.
+# Helm runtime settings live at ~/.helm/ (outside this repo by design).
+# settings.json holds only non-sensitive config; credentials.json holds the
+# AI provider API keys + broker account IDs and must NEVER be committed.
+# Belt-and-suspenders: block any in-tree copies too.
 .helm/
 **/.helm/
 helm-settings.json
 helm-settings*.json
+credentials.json
+**/credentials.json
 *.api-keys
 
 # Build artifacts

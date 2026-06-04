@@ -25,6 +25,37 @@ logger = logging.getLogger(__name__)
 SETTINGS_PATH = Path.home() / ".helm" / "settings.json"
 SCHEMA_VERSION = 1
 
+# Sensitive, machine-specific config kept OUT of settings.json so the latter is
+# safe to share / commit / bundle: API keys + inference URLs (ai_backend) and
+# the user's broker account IDs (accounts). These live in credentials.json
+# beside settings.json, which is git-ignored, never overwritten by install/
+# update, and never included in support bundles.
+_CREDENTIAL_SECTIONS = ("ai_backend", "accounts")
+
+
+def _credentials_path() -> Path:
+    """Path to credentials.json, derived from SETTINGS_PATH so that tests which
+    redirect SETTINGS_PATH to a temp dir automatically isolate credentials too
+    (do NOT make this a module constant -- it must follow SETTINGS_PATH)."""
+    return SETTINGS_PATH.with_name("credentials.json")
+
+
+def _read_json(path: Path) -> dict:
+    if not path.is_file():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        logger.warning("[settings] failed to read %s (%s)", path, e)
+        return {}
+
+
+def _write_json_atomic(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp.replace(path)  # atomic on Windows + POSIX
+
 
 # ---------------------------------------------------------------------------
 # Schema
@@ -171,19 +202,45 @@ _cache: Settings | None = None
 _cache_lock = Lock()
 
 
+def _migrate_credentials(raw: dict) -> dict:
+    """One-time split: legacy settings.json carried ai_backend/accounts inline.
+    If there's no credentials.json yet but settings.json holds those sections,
+    move them into credentials.json and strip settings.json of them, so secrets
+    live in exactly one git-ignored place. Returns the (possibly stripped) raw
+    settings dict. This runs on every load, so it also covers the post-update
+    restart -- it's the precheck that exports an already-configured AI backend."""
+    creds_path = _credentials_path()
+    if creds_path.is_file():
+        return raw
+    present = {k: raw[k] for k in _CREDENTIAL_SECTIONS if k in raw}
+    if not present:
+        return raw
+    try:
+        _write_json_atomic(creds_path, present)
+        stripped = {k: v for k, v in raw.items() if k not in _CREDENTIAL_SECTIONS}
+        _write_json_atomic(SETTINGS_PATH, stripped)
+        logger.info("[settings] migrated %s out of settings.json into %s",
+                    list(present), creds_path)
+        return stripped
+    except OSError as e:
+        logger.warning("[settings] credentials migration failed (%s); leaving inline", e)
+        return raw
+
+
 def _load_from_disk() -> Settings:
-    if not SETTINGS_PATH.is_file():
-        logger.info("[settings] no file at %s; using defaults", SETTINGS_PATH)
+    raw = _read_json(SETTINGS_PATH)
+    raw = _migrate_credentials(raw)
+    # Overlay credentials.json over settings -- credentials are authoritative for
+    # their sections. A missing credentials file just leaves the defaults.
+    creds = _read_json(_credentials_path())
+    merged = {**raw, **{k: v for k, v in creds.items() if k in _CREDENTIAL_SECTIONS}}
+    if not merged:
+        logger.info("[settings] no settings/credentials on disk; using defaults")
         return Settings()
     try:
-        raw = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as e:
-        logger.warning("[settings] failed to read %s (%s); using defaults", SETTINGS_PATH, e)
-        return Settings()
-    try:
-        s = Settings.model_validate(raw)
+        s = Settings.model_validate(merged)
     except ValidationError as e:
-        logger.warning("[settings] invalid file at %s (%s); using defaults", SETTINGS_PATH, e)
+        logger.warning("[settings] invalid settings/credentials (%s); using defaults", e)
         return Settings()
     # Safety: if auto-trading is already ON but carries no enable timestamp (first
     # load after this feature shipped, or any fresh process), stamp it NOW so
@@ -235,10 +292,14 @@ def set_auto_trader_enabled(enabled: bool) -> AutoTrader:
 
 
 def _save_to_disk(settings: Settings) -> None:
-    SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = SETTINGS_PATH.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(settings.model_dump(), indent=2), encoding="utf-8")
-    tmp.replace(SETTINGS_PATH)  # atomic on Windows + POSIX
+    """Persist split across two files: secrets (ai_backend + accounts) to the
+    git-ignored credentials.json, everything else to settings.json. settings.json
+    therefore never contains an API key or account ID and is safe to share."""
+    full = settings.model_dump()
+    creds  = {k: full[k] for k in _CREDENTIAL_SECTIONS if k in full}
+    public = {k: v for k, v in full.items() if k not in _CREDENTIAL_SECTIONS}
+    _write_json_atomic(SETTINGS_PATH, public)
+    _write_json_atomic(_credentials_path(), creds)
 
 
 def _replace(settings: Settings) -> None:
