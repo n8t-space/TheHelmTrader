@@ -440,12 +440,30 @@ namespace NinjaTrader.NinjaScript.Strategies
                         Print($"[HelmAuto] FILLED {t.AtmId} @ {avg} x{t.Qty}");
                         PostExec(t.SignalTs, "filled", t.ExecTag, avg, t.Qty, dryRun: false, note: null);
                     }
-                    else if ((DateTime.Now - t.PlacedAt).TotalMinutes > EntryWindowMinutes)
+                    else
                     {
-                        bool cancelled = AtmStrategyCancelEntryOrder(t.OrderId);
-                        Print($"[HelmAuto] entry window expired for {t.AtmId}; cancel={cancelled}");
-                        PostExec(t.SignalTs, "cancelled", t.ExecTag, null, null, dryRun: false, note: "entry window expired");
-                        done.Add(t.ExecTag);
+                        // Manual cancel on the chart: the entry order's state goes
+                        // Cancelled while unfilled. GetAtmStrategyEntryOrderStatus
+                        // returns [avgFillPrice, filledQty, orderState]; the state
+                        // string distinguishes Cancelled from a still-Working order,
+                        // so a normal pending entry does NOT false-fire. (Scan the
+                        // array for "Cancelled" to stay robust to element order.)
+                        string[] est = GetAtmStrategyEntryOrderStatus(t.OrderId);
+                        bool cancelledOnChart = est != null
+                            && est.Any(e => string.Equals(e, "Cancelled", StringComparison.OrdinalIgnoreCase));
+                        if (cancelledOnChart)
+                        {
+                            Print($"[HelmAuto] entry cancelled on chart for {t.AtmId}");
+                            PostExec(t.SignalTs, "cancelled", t.ExecTag, null, null, dryRun: false, note: "cancelled on chart");
+                            done.Add(t.ExecTag);
+                        }
+                        else if ((DateTime.Now - t.PlacedAt).TotalMinutes > EntryWindowMinutes)
+                        {
+                            bool cancelled = AtmStrategyCancelEntryOrder(t.OrderId);
+                            Print($"[HelmAuto] entry window expired for {t.AtmId}; cancel={cancelled}");
+                            PostExec(t.SignalTs, "cancelled", t.ExecTag, null, null, dryRun: false, note: "entry window expired");
+                            done.Add(t.ExecTag);
+                        }
                     }
                 }
                 else if (pos == MarketPosition.Flat)

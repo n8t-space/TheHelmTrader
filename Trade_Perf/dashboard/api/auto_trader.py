@@ -328,6 +328,18 @@ def update_exec(timestamp: str, update: ExecUpdate) -> dict:
     fields: dict = {"exec": exec_obj}
     if update.state == "filled":
         fields["entry_triggered"] = True
+    elif update.state == "cancelled":
+        # An unfilled entry was cancelled (on the chart or via entry-window
+        # expiry). Mark it a no-fill so it's excluded from realized P&L and the
+        # outcome resolver stops walking it -- but keep the signal on the board
+        # (no soft-delete). Don't clobber an outcome that's already final.
+        fields["entry_triggered"] = False
+        if not (rec.get("outcome") or {}).get("result"):
+            fields["outcome"] = {
+                "result": "no_fill",
+                "note": exec_obj.get("note") or "order cancelled",
+                "closing_price": None,
+            }
     signal_storage.append_update(bridge.SIGNALS_LOG, timestamp, **fields)
     logger.info("[auto-trader] EXEC %s -> %s%s", timestamp, update.state,
                 " (dry-run)" if update.dry_run else "")
