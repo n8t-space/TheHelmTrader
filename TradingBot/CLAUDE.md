@@ -82,6 +82,20 @@ The user's 5-minute charts use the **same indicator stack regardless of instrume
 
 NS-driven publish of bars + ticks → bot ingestion at `/api/feed/{bar,ticks}` → outcome resolver + auto-analysis. Phase 1 done 2026-05-08; Phases 2–4 outstanding. See [`MIGRATION.md`](MIGRATION.md) latest session-log entries for design decisions and current state.
 
+## Auto-analysis rules (durable, 2026-06-03)
+
+- **A directional proposal MUST carry an `atm_strategy`.** `proposal_sanity.sanity_check` rejects long/short with an empty ATM → auto-dismissed (never "entered"). Flat clears `atm_strategy`/brackets. ATM is empty ONLY on flat.
+- **The ATM menu is injected by code**, not the prompt file. Both `analyze()` (visual) and `analyze_text()` (text-only) prepend `_format_atm_block()`; both run `_derive_stop_target()`. The LLM picks a real template; stop/target derive from it (LLM's stop/target are advisory). Keep the two paths at parity.
+- **Auto-analysis skips an instrument that holds a live trade** (`headless_analyzer._has_active_trade` — entry_triggered OR exec working/filled, not resolved). This is **per-instrument, not per-timeframe**: an open MCL trade blocks ALL MCL auto-analysis regardless of armed period. A hung/unresolved trade therefore starves new signals — watch the outcome-watcher.
+- **Prompt files** (`app/prompts/`): `analyzer.txt` (vision; used by manual snip AND visual auto-analysis), `headless_analyzer.txt` (text-only fallback, no fresh screenshot). Read **per-call** → edits are live with NO restart. `.format()`-rendered? `headless_analyzer.txt` yes (double literal braces); `analyzer.txt` is concatenated (single braces OK).
+- **Stale-bar gate**: `/api/feed/bar` drops bars arriving >120s after their close ts (backfill) and the first bar after any >30 min gap (post-gap warmup, skips chaotic session open). A "no signals" report is often one of these or the active-trade skip — check before assuming a bug.
+
+## Restart mechanism (durable, 2026-06-03)
+
+- **In-app "Restart Helm" button works** (`POST /api/version/restart`): uvicorn **self-exits** (`os._exit`), watchdog respawns. Do NOT revert to `Stop-Process` against the uvicorn PID — it runs Session-0 as the NSSM service account and refuses with Access denied.
+- **`watchdog.ps1` `Write-Log` must use `Write-Host`, never `Write-Output`** — Write-Output leaks onto the success pipeline, so any function that logs then returns an object (`Start-Dashboard`) returns an array and downstream `.HasExited`/`.WaitForExit()` blow up on a `[String]`.
+- **Bootstrap after editing version.py/watchdog.ps1**: one elevated `Restart-Service HelmDashboardWatchdog` (reloads the watchdog + a fresh uvicorn). After that, the in-app button suffices. Out-of-process `Stop-Process`/`Restart-Service` still need elevation (NSSM ACL).
+
 ## Don't propose
 
 - Cloud/SaaS endpoints. Not negotiable.
