@@ -46,7 +46,8 @@ from .trading_day import (
 router = APIRouter(prefix="/api/news", tags=["news"])
 logger = logging.getLogger(__name__)
 
-CACHE_PATH      = Path.home() / ".helm" / "news-cache.json"
+from .settings import HELM_HOME  # honors HELM_HOME for isolated dev instances
+CACHE_PATH      = HELM_HOME / "news-cache.json"
 FF_FEED_URL     = "https://nfs.faireconomy.media/ff_calendar_thisweek.xml"
 ECONODAY_URL    = "https://us.econoday.com/byweek?cust=us&lid=0"
 USER_AGENT      = "TheHelm/1.0 (+local dashboard; personal trade decisioning)"

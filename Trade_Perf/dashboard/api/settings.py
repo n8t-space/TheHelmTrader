@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -22,7 +23,10 @@ from pydantic import BaseModel, Field, ValidationError
 
 logger = logging.getLogger(__name__)
 
-SETTINGS_PATH = Path.home() / ".helm" / "settings.json"
+# Per-user config dir. Override with HELM_HOME to run an isolated instance
+# (dev environment) that won't touch the live ~/.helm settings/credentials.
+HELM_HOME = Path(os.environ.get("HELM_HOME") or (Path.home() / ".helm"))
+SETTINGS_PATH = HELM_HOME / "settings.json"
 SCHEMA_VERSION = 1
 
 # Sensitive, machine-specific config kept OUT of settings.json so the latter is

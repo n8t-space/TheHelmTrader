@@ -201,7 +201,8 @@ async def force_check() -> dict[str, Any]:
 
 # Status file: persists across the uvicorn restart triggered at the end of
 # the update, so the frontend's poll resumes cleanly against the new instance.
-UPDATE_STATUS_PATH = Path.home() / ".helm" / "update-status.json"
+from .settings import HELM_HOME  # honors HELM_HOME for isolated dev instances
+UPDATE_STATUS_PATH = HELM_HOME / "update-status.json"
 UPDATE_SCRIPT_PATH = REPO_ROOT / "Trade_Perf" / "runtime" / "update.ps1"
 
 
