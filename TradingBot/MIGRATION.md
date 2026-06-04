@@ -126,6 +126,28 @@ In order, after each phase:
 
 ## 9. Session Log
 
+### 2026-06-03 — Auto-analysis ATM invariant, active-trade guard, restart-path fixes, aggressive prompt
+
+Hardened the auto-analysis path and fixed the in-app restart, which had been a silent no-op. Diagnosed a reported "auto signals not generating" report twice: first was a crude-oil CME maintenance halt (16:00-17:00 CT) + post-gap warmup skip (working as designed); second (after switching the armed config to 5m) was the new active-trade guard correctly skipping MCL 5m because an open MCL short was live. Committed and pushed everything (main is clean, 0/0 with origin), plus folded in the pre-existing uncommitted pile (Auto-Trader v1, fill linker, support bundle, tick-first resolver, confidence-floor removal) as grouped conventional commits. Bootstrapped the restart fixes live via one elevated `Restart-Service HelmDashboardWatchdog`, then verified the in-app "Restart Helm" button now works (pid changes, watchdog respawns).
+
+Key changes this session:
+- **Directional proposals must carry an ATM** (`proposal_sanity.sanity_check` rejects empty `atm_strategy` on long/short -> auto-dismissed, never "entered"). Flat clears `atm_strategy`/brackets.
+- **Text-only headless path reached ATM parity** with the visual path: `local_llm_analyzer.analyze_text(prompt, instrument)` now injects the ATM menu, picks a real template, derives stop/target. The root bug behind a 17:46 MES trade that entered with a blank ATM (auto-trader rejected "no ATM template", outcome-watcher paper-resolved it anyway).
+- **Active-trade guard**: `headless_analyzer._has_active_trade(instrument)` skips auto-analysis for any instrument holding a live directional trade (entry_triggered OR exec working/filled, not resolved). Per-instrument, NOT per-timeframe.
+- **Restart reliability**: `/api/version/restart` now self-exits (`os._exit(0)`) instead of `Stop-Process` (which hit Access denied on the Session-0 NSSM uvicorn); `watchdog.ps1` `Write-Log` switched `Write-Output` -> `Write-Host` (Write-Output leaked log strings onto the success pipeline, so `$dashboard` became an array and `Stop-Dashboard`'s `$proc.WaitForExit()` threw on a `[String]`).
+- **New analyzer.txt prompt** (two iterations, ATM kept both times): final version is aggressive — flat is NOT default, 2-of-3 direction rule, entry within ~0.5x ATR of last, hard >=2:1 reward:risk gate via template `target_ticks/stop_ticks`.
+- Fixed time-rotted `test_feed_router.py` (hardcoded 2024 `BASE_TS` tripped the 120s stale-bar gate); anchored to `now`.
+
+**Outstanding (next session pickup, priority order):**
+1. **Watch the active-trade guard in practice** — it is per-instrument, so a single unresolved trade starves all new auto-signals for that instrument (any timeframe). If the outcome-watcher ever stalls (feed gap, no ticks/bars), auto-analysis for that instrument halts until manual resolution. Consider a staleness escape hatch if trades hang open.
+2. **MES 5m feed gap** — MES 5m bars stopped ~22:00 while MES 15m + MNQ 5m kept flowing. NinjaTrader/HelmFeed side: confirm the HelmFeed indicator is applied on the chart/series the user wants auto-analyzed. The dashboard config only filters; it does not drive what NT publishes.
+3. **Validate the new aggressive prompt** at market open — it was tuned to stop over-filtering to flat; watch that it does not over-trade marginal setups. Ground the ATM-template picks against ATR + replay before trusting.
+4. **`analyzer_v2.txt`** committed as a draft but unreferenced — decide whether to adopt or delete.
+
+**Carried forward / known issues:**
+- The one-time elevated `Restart-Service HelmDashboardWatchdog` was needed to bootstrap the restart fixes (a process cannot reload code that fixes its own restart). Future restarts use the now-working in-app button — no elevation.
+- `Restart-Service` / out-of-process `Stop-Process` against the uvicorn still require elevation (Windows NSSM ACL, not a code bug). Self-restart and the watchdog path do not.
+
 ### 2026-06-02 — Auto-Trader v1 (Sim-only, per-signal manual arm) + fill linker
 
 Built the opt-in **Auto-Trader**: the bot automates the mechanical ATM entry for signals the user explicitly arms, hard-locked to one user-selected account, **Sim-only**, master switch OFF by default. This amends the prior "No auto-execution... Forever" stance in both CLAUDE.md files to "no *autonomous* execution" (flagged, not silent).
