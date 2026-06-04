@@ -28,7 +28,12 @@ $null        = New-Item -ItemType Directory -Force -Path (Split-Path $logFile) |
 function Write-Log {
     param([string]$Msg, [string]$Level = 'INFO')
     $line = '{0} {1} {2}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Level, $Msg
-    Write-Output $line
+    # Write-Host (not Write-Output): Write-Output emits onto the success
+    # pipeline, so any function that logs then returns an object (Start-Dashboard)
+    # leaks the log strings into its return value. $dashboard then became
+    # @(string, string, Process) and Stop-Dashboard's $proc.WaitForExit() blew up
+    # on a [String]. Write-Host goes to the host stream and never pollutes returns.
+    Write-Host $line
     try { Add-Content -Path $logFile -Value $line -ErrorAction Stop } catch { }
 }
 
@@ -104,6 +109,12 @@ function Start-Dashboard {
 
 function Stop-Dashboard($proc) {
     if ($null -eq $proc) { return }
+    # Defensive: if a caller ever hands a polluted value (array/string), dig out
+    # the real Process so we never invoke .HasExited/.WaitForExit on a [String].
+    if ($proc -isnot [System.Diagnostics.Process]) {
+        $proc = @($proc) | Where-Object { $_ -is [System.Diagnostics.Process] } | Select-Object -First 1
+        if ($null -eq $proc) { Write-Log 'stop skipped: no Process handle' 'ERROR'; return }
+    }
     if ($proc.HasExited) {
         Write-Log "dashboard already exited (PID=$($proc.Id), exit=$($proc.ExitCode))"
         return

@@ -320,15 +320,15 @@ _UPDATE_BUSY_STAGES = {"queued", "fetching", "pip", "npm", "build"}
 
 @router.post("/restart")
 def restart_uvicorn() -> dict[str, Any]:
-    """Kill uvicorn so the watchdog respawns it within ~5s. Used to clear
-    wedged FastAPI state without re-deploying code -- the dashboard's
-    'Restart Helm' button on Support/Overview hits this.
+    """Restart uvicorn so it reloads on-disk code, without re-deploying. The
+    dashboard's 'Restart Helm' button on Support/Overview hits this.
 
-    Spawns a detached PowerShell that sleeps briefly then Stop-Process's
-    the uvicorn PID; the brief sleep lets the response flush back to the
-    client before the kill lands. Watchdog (running as the NSSM service)
-    notices the dead uvicorn within its 5s poll and spawns a fresh one
-    against the same code on disk."""
+    The process exits ITSELF (after the response flushes); the watchdog, which
+    owns this uvicorn as a child, sees the port go quiet within its 5s poll and
+    spawns a fresh one against the current code. We self-exit rather than
+    Stop-Process an external PID: this uvicorn runs in Session 0 as the NSSM
+    service account, so an out-of-process Stop-Process against it is refused
+    with 'Access is denied' -- but a process can always terminate itself."""
     status = _read_status()
     stage  = status.get("stage")
     if stage in _UPDATE_BUSY_STAGES:
@@ -337,23 +337,15 @@ def restart_uvicorn() -> dict[str, Any]:
             f"update in progress (stage={stage}); restart blocked. Wait for the update to finish.",
         )
 
-    pwsh = shutil.which("pwsh") or shutil.which("powershell")
-    if not pwsh:
-        raise HTTPException(500, "neither pwsh nor powershell.exe is on PATH")
-
     pid = os.getpid()
-    cmd = [
-        pwsh, "-NoProfile", "-Command",
-        f"Start-Sleep -Milliseconds 750; Stop-Process -Id {pid} -Force",
-    ]
-    creationflags = 0x00000008 | 0x00000200 if sys.platform == "win32" else 0
-    subprocess.Popen(
-        cmd,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        creationflags=creationflags,
-        close_fds=True,
-    )
-    logger.info("[version] restart triggered for uvicorn pid=%s", pid)
+
+    def _self_terminate() -> None:
+        # Brief grace so the HTTP response reaches the client before we die.
+        # os._exit (not sys.exit) guarantees the interpreter goes down now --
+        # equivalent to the -Force kill the watchdog would have done.
+        time.sleep(0.75)
+        os._exit(0)
+
+    threading.Thread(target=_self_terminate, name="helm-restart", daemon=True).start()
+    logger.info("[version] restart: uvicorn pid=%s self-exiting; watchdog respawns", pid)
     return {"restarting": True, "pid": pid, "eta_seconds": 7}
