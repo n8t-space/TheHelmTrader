@@ -34,6 +34,7 @@
 #region Using declarations
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Globalization;
 using System.Linq;
@@ -120,8 +121,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         //  Parameters
         // =================================================================
         [NinjaScriptProperty]
+        [TypeConverter(typeof(HelmAccountNameConverter))]
         [Display(Name = "Allowed account", Order = 1, GroupName = "Helm Auto-Trader",
-                 Description = "The strategy refuses to act unless its own account name matches this exactly.")]
+                 Description = "Account this strategy is allowed to trade. Pick from the connected accounts; the strategy refuses to act unless its own account name matches exactly.")]
         public string AllowedAccount { get; set; }
 
         [NinjaScriptProperty]
@@ -626,5 +628,34 @@ namespace NinjaTrader.NinjaScript.Strategies
         }
 
         protected override void OnBarUpdate() { /* logic is timer-driven; nothing per-bar */ }
+    }
+
+    // Renders the "Allowed account" property as a dropdown. Lists connected
+    // accounts first; falls back to every known account when none are connected
+    // yet (e.g. configuring before login) so the list is never empty. Non-
+    // exclusive: an account name can still be typed if it isn't in the list.
+    public class HelmAccountNameConverter : TypeConverter
+    {
+        public override bool GetStandardValuesSupported(ITypeDescriptorContext context) { return true; }
+        public override bool GetStandardValuesExclusive(ITypeDescriptorContext context) { return false; }
+
+        public override StandardValuesCollection GetStandardValues(ITypeDescriptorContext context)
+        {
+            var names = new List<string>();
+            try
+            {
+                lock (Account.All)
+                {
+                    foreach (Account a in Account.All)
+                        if (a.Connection != null && a.Connection.Status == ConnectionStatus.Connected)
+                            names.Add(a.Name);
+                    if (names.Count == 0)
+                        foreach (Account a in Account.All)
+                            names.Add(a.Name);
+                }
+            }
+            catch { /* account list not ready during type discovery */ }
+            return new StandardValuesCollection(names.Distinct().ToList());
+        }
     }
 }
