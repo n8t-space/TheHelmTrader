@@ -126,6 +126,29 @@ In order, after each phase:
 
 ## 9. Session Log
 
+### 2026-06-04 — Credentials split, per-component AI, per-instrument auto-trading, dev env, queue rework
+
+Heavy feature day. 15 commits, all pushed (main 0/0 with origin); working tree clean. Everything went live via the in-app restart + a user NinjaScript recompile. Headline changes:
+
+- **Secrets split out of settings.json -> `~/.helm/credentials.json`** (`_CREDENTIAL_SECTIONS = ai_backend + accounts`). Git-ignored, never overwritten by install/update, excluded from support bundles; migrate-on-load moves inline secrets out (the "update precheck export"). Scrubbed a leaked live account (`1832940`) from this file's history at HEAD -- full history rewrite still pending the user's call. See [[project-helm-credentials-split]].
+- **Per-component AI provider** (`ai_backend.news_provider` / `signal_provider`, "" = inherit `provider`). `runtime_config.provider(component)` + `is_provider_configured(component)`. Set **News -> Claude** to fix Econoday (Ollama returns `{` because the 60K HTML overflows num_ctx); signals stay on the default.
+- **Econoday parse hardened**: removed the claude assistant-prefill (claude-opus-4-8 returns 400 "conversation must end with a user message"), kept fence-strip + `{...}` extraction + raw-on-failure logging. Verified live: econoday count 20.
+- **Auto-trader concurrency is now PER-INSTRUMENT**, not global. `exec_queue` skips only instruments with an open trade (one per instrument); `max_concurrent` is the overall ceiling (set to 2 for MES+MCL). Queue is also collapsed to <=1 per instrument with supersede-expiry. Cancel-on-chart of an unfilled entry -> `no_fill` (kept on board, excluded from P&L). **Each NS HelmAutoTrader instance trades ONE instrument and self-caps at MaxConcurrent=1**, so per-instrument trading requires one instance per instrument.
+- **Account is dashboard-driven**: `GET /api/auto-trader/account`; the strategy fetches it on the poll tick (worker thread, not State.Realtime -> avoids the boot-race permanent-disable) and uses it as the allowed account, property = offline fallback. "Allowed account" NS property is now a `TypeConverter` dropdown of connected accounts.
+- **Cross-instrument ATM fix**: ATM menu scoped to the instrument; `_derive_stop_target` rejects a wrong-instrument template (clears it -> sanity dismisses).
+- **Signal Analysis**: Qty + Time-in-trade columns; Entered column reads "hit" once a leg resolves (was showing "pending" while P&L showed a number).
+- **Update page**: the button now performs the in-app update (pull -> rebuild -> restart, with progress + auto-reload), not just a check; instructions rewritten to one-click + F5-only-if-NS-changed.
+- **Dev environment**: `HELM_HOME` env override (settings/news/version) + `setup-dev-env.ps1` (git worktree on `dev` + seed `~/.helm-dev` + snapshot live data) + `run-dev.ps1` (foreground :8001, --reload, not the NSSM service). See [[project-helm-credentials-split]] / TradingBot CLAUDE.md.
+- Set `main` to track `origin/main` (bare `git pull`/`push` work now). Fixed Sim101 visibility (config) and time-rotted `test_feed_router` BASE_TS.
+
+**Outstanding (next session pickup, priority order):**
+1. **Per-instrument auto-trading needs an MCL strategy instance.** Confirmed MES executes; MCL needs its own HelmAutoTrader instance on an MCL chart, account `DEMO7359034` (one instance trades one instrument).
+2. **NT8 hang stalls feeds (operational).** 2026-06-04: NinjaTrader hung -> MCL bars froze (ticks stayed live off the market-data subscription; bars didn't publish). Reboot fixed it. Pattern to recognize: an instrument's bars freeze while ticks stay 0-min-old -> NT/chart hung, not a Helm bug. Reconnect produces a stale backfill burst that the 120s stale-gate skips, so only the next CLEAN live bar resumes analysis.
+3. **Avoid clustering uvicorn restarts** -- each resets `_last_bar_ts`, so the first bar per instrument after a restart is post-gap-skipped (plus brief downtime). Several restarts in a row created a visible analysis gap (11:45->13:00 today).
+4. **exec staleness + phantom paper P&L** (carried from 2026-06-03): `exec=working` can stay set after the resolver closes a trade; the Independent-Confirmation resolver shows outcomes/P&L for signals that never really executed. Reconcile exec lifecycle with the resolver.
+5. **Optional:** move `auto_trader.account` into the credentials split if a LIVE account is ever set (offered; currently a sim account, lives in settings.json by design).
+6. **Optional:** rewrite git history to purge the leaked `1832940` from the public repo (redacted at HEAD only).
+
 ### 2026-06-03 — Auto-analysis ATM invariant, active-trade guard, restart-path fixes, aggressive prompt
 
 Hardened the auto-analysis path and fixed the in-app restart, which had been a silent no-op. Diagnosed a reported "auto signals not generating" report twice: first was a crude-oil CME maintenance halt (16:00-17:00 CT) + post-gap warmup skip (working as designed); second (after switching the armed config to 5m) was the new active-trade guard correctly skipping MCL 5m because an open MCL short was live. Committed and pushed everything (main is clean, 0/0 with origin), plus folded in the pre-existing uncommitted pile (Auto-Trader v1, fill linker, support bundle, tick-first resolver, confidence-floor removal) as grouped conventional commits. Bootstrapped the restart fixes live via one elevated `Restart-Service HelmDashboardWatchdog`, then verified the in-app "Restart Helm" button now works (pid changes, watchdog respawns).
