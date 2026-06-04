@@ -35,8 +35,6 @@ class Defaults:
     openai_model:      str = "gpt-4o"
     openai_max_tokens: int = 2048
     # Strategy
-    confidence_floor:   float = 0.75
-    max_attempts:       int = 2
     reconciliation_cap: int = 3
     stale_bar_seconds:  int = 120
     retention_days:     int = 7
@@ -155,16 +153,6 @@ def request_timeout_s() -> int:
 def num_ctx() -> int:
     s = _live()
     return s.ai_backend.num_ctx if s else _D.num_ctx
-
-
-def confidence_floor() -> float:
-    s = _live()
-    return s.strategy.confidence_floor if s else _D.confidence_floor
-
-
-def max_attempts() -> int:
-    s = _live()
-    return s.strategy.max_attempts if s else _D.max_attempts
 
 
 def reconciliation_cap() -> int:
