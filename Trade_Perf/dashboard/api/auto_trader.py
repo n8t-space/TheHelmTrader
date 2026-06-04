@@ -235,6 +235,10 @@ def exec_queue(account: str) -> dict:
         direction = (proposal.get("direction") or "").lower()
         if direction not in ("long", "short"):
             continue
+        # Already resolved or expired (superseded / no_fill / target / stop) ->
+        # never offer it again.
+        if (rec.get("outcome") or {}).get("result") not in (None, "", "pending"):
+            continue
         # The ATM template fixes order size; never offer one over the cap.
         if _template_qty(proposal) > cfg.max_contracts_per_order:
             continue
@@ -272,7 +276,30 @@ def exec_queue(account: str) -> dict:
             "qty": _template_qty(proposal),   # TRUE template size (not a clamp)
         })
     out.sort(key=lambda r: r["ts"])
-    return {"account": account, "count": len(out), "signals": out}
+
+    # One live signal per instrument. Keep only the NEWEST offerable per
+    # instrument and expire the older same-instrument ones (mark no_fill
+    # "superseded") -- so a queued entry that never triggered is cleared the
+    # moment a fresher signal for that instrument exists. Net: queue <= 1 per
+    # instrument, with built-in expiry as the next signal arrives.
+    newest_by_instr: dict[str, dict] = {}
+    for item in out:                       # ascending by ts -> last wins = newest
+        newest_by_instr[item["instrument"]] = item
+    live_ts = {item["ts"] for item in newest_by_instr.values()}
+    for item in out:
+        if item["ts"] in live_ts:
+            continue
+        signal_storage.append_update(
+            bridge.SIGNALS_LOG, item["ts"],
+            entry_triggered=False,
+            outcome={"result": "no_fill", "note": "superseded by newer signal",
+                     "closing_price": None},
+        )
+        logger.info("[auto-trader] expired superseded queue entry %s (%s)",
+                    item["ts"], item["instrument"])
+
+    signals = sorted(newest_by_instr.values(), key=lambda r: r["ts"])
+    return {"account": account, "count": len(signals), "signals": signals}
 
 
 class ExecUpdate(BaseModel):
