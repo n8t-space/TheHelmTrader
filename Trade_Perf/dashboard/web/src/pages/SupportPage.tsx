@@ -123,33 +123,31 @@ function UpdateTab() {
       <div className="card support-card">
         <h2>How to update</h2>
         <p className="support-prose">
-          The dashboard checks for updates every 6 hours and shows a banner at the top of every page when new commits are available on <code>main</code>. To install an update:
+          When new commits land on <code>main</code>, an <strong>Update available</strong> banner appears at the top of every page and the <strong>Installed version</strong> card above shows an <strong>Update now</strong> button. Click it — the in-app updater pulls the latest code, rebuilds the dashboard, and restarts the service automatically. This tab reloads when the new build is live. No PowerShell, no manual git.
         </p>
-        <ol className="support-steps">
-          <li>Open <strong>PowerShell as Administrator</strong>.</li>
-          <li>
-            Pull the latest code and re-run the idempotent installer:
-            <pre className="support-code">{`cd $HOME\\Documents\\Projects\\TheHelmTrader
+        <p className="support-prose">
+          <strong>One manual step, only if NinjaScript changed</strong> (anything under <code>_Helm Locker\\*.cs</code>): open NinjaTrader, press <kbd>F11</kbd> for the NinjaScript Editor, then <kbd>F5</kbd> to compile and look for "Compile succeeded" — the updater can't drive NinjaTrader's compiler.
+        </p>
+        <details>
+          <summary className="support-prose">Manual update (release-zip installs, or if the in-app updater fails)</summary>
+          <ol className="support-steps">
+            <li>Open <strong>PowerShell as Administrator</strong>.</li>
+            <li>
+              Pull the latest code and re-run the idempotent installer:
+              <pre className="support-code">{`cd $HOME\\Documents\\Projects\\TheHelmTrader
 git pull
 .\\install.ps1`}</pre>
-          </li>
-          <li>
-            Restart the dashboard service so it loads the new Python/API code:
-            <pre className="support-code">{`Restart-Service HelmDashboardWatchdog`}</pre>
-          </li>
-          <li>
-            <strong>Only if NinjaScript files changed</strong> (anything under <code>_Helm Locker\\*.cs</code>): open NinjaTrader, press <kbd>F11</kbd> to open the NinjaScript Editor, then <kbd>F5</kbd> to compile. Look for "Compile succeeded" in the bottom panel.
-          </li>
-          <li>
-            Hard-refresh this dashboard tab with <kbd>Ctrl</kbd>+<kbd>F5</kbd> to bust the cached SPA bundle.
-          </li>
-        </ol>
-        <p className="support-prose subtle">
-          Received a release zip instead of using git? Unzip over the existing checkout, then run the same commands from step 2 onward. The update banner won't appear on zip installs (no <code>.git</code> directory to query) — check this tab manually after major changes.
-        </p>
-        <p className="support-prose subtle">
-          Partial reruns: pass <code>-SkipPrereqs -SkipService</code> to <code>install.ps1</code> for a frontend-only refresh, or any combination of <code>-SkipPrereqs / -SkipNsIndicators / -SkipRecorder / -SkipService</code>.
-        </p>
+            </li>
+            <li>
+              Restart the dashboard service:
+              <pre className="support-code">{`Restart-Service HelmDashboardWatchdog`}</pre>
+            </li>
+            <li>Hard-refresh this tab with <kbd>Ctrl</kbd>+<kbd>F5</kbd> to bust the cached SPA bundle.</li>
+          </ol>
+          <p className="support-prose subtle">
+            Release-zip installs have no <code>.git</code>, so the banner/Update button won't appear — use these steps after major changes. Partial reruns: <code>-SkipPrereqs -SkipService</code> for a frontend-only refresh, or any of <code>-SkipPrereqs / -SkipNsIndicators / -SkipRecorder / -SkipService</code>.
+          </p>
+        </details>
       </div>
       <div className="card support-card">
         <h2>What's preserved across updates</h2>
@@ -471,19 +469,50 @@ function ConfigurationTab() {
 
 // ---------- Shared cards ----------
 
+interface UpdateStatus {
+  stage: 'idle' | 'queued' | 'fetching' | 'pip' | 'npm' | 'build' | 'done' | 'failed' | 'unknown'
+  message?: string
+  error?: string | null
+  target_sha?: string | null
+}
+
 function VersionCard() {
   const qc = useQueryClient()
+  const [updating, setUpdating] = useState(false)
   const v = useQuery<VersionResp>({
     queryKey: ['version'],
     queryFn:  () => fetchJSON<VersionResp>('/api/version'),
-    refetchInterval: 10 * 60 * 1000,
+    refetchInterval: updating ? 3000 : 10 * 60 * 1000,
     staleTime: 60 * 1000,
     retry: 0,
+  })
+  const status = useQuery<UpdateStatus>({
+    queryKey: ['update-status'],
+    queryFn:  () => fetchJSON<UpdateStatus>('/api/version/update/status'),
+    enabled:  updating,
+    refetchInterval: 1500,
+    retry: 0,
+    staleTime: 0,
   })
   const checkNow = useMutation({
     mutationFn: () => postJSON<VersionResp>('/api/version/check'),
     onSuccess: (data) => qc.setQueryData(['version'], data),
   })
+  const startUpdate = useMutation({
+    mutationFn: () => postJSON<{ started: boolean; pid: number }>('/api/version/update'),
+    onSuccess: () => { setUpdating(true); qc.invalidateQueries({ queryKey: ['update-status'] }) },
+  })
+
+  const s = status.data
+  // Reload once the helper finishes AND the running API reports the new build,
+  // so we don't reload into the ~5s restart window.
+  useEffect(() => {
+    if (!updating || !s || s.stage !== 'done') return
+    if (s.target_sha && v.data?.current_sha && s.target_sha === v.data.current_sha) {
+      const t = setTimeout(() => window.location.reload(), 1500)
+      return () => clearTimeout(t)
+    }
+  }, [updating, s, v.data?.current_sha])
 
   const d = v.data
   return (
@@ -512,14 +541,41 @@ function VersionCard() {
             <div className="kv"><span>Last error</span><span style={{ color: 'var(--neg)' }}>{d.last_error}</span></div>
           )}
           <div className="support-actions">
+            {d.is_git_checkout && d.update_available ? (
+              <button
+                type="button"
+                onClick={() => startUpdate.mutate()}
+                disabled={startUpdate.isPending || updating}
+              >
+                {updating ? 'Updating...' : startUpdate.isPending ? 'Starting...'
+                  : `Update now (${d.commits_behind} new)`}
+              </button>
+            ) : d.is_git_checkout ? (
+              <button type="button" disabled>Up to date</button>
+            ) : null}
             <button
               type="button"
+              className="link-button"
               onClick={() => checkNow.mutate()}
-              disabled={checkNow.isPending}
+              disabled={checkNow.isPending || updating}
             >
-              {checkNow.isPending ? 'Checking...' : 'Check for updates now'}
+              {checkNow.isPending ? 'Checking...' : 'check for updates'}
             </button>
           </div>
+          {updating && s && (
+            <p className="support-prose subtle">
+              {s.stage === 'failed'
+                ? <span style={{ color: 'var(--neg)' }}>Update failed: {s.error || 'unknown error'}. Use the manual steps below.</span>
+                : s.stage === 'done'
+                  ? 'Update applied -- restarting the service. This tab reloads automatically when the new build is live.'
+                  : `Updating (${s.stage})${s.message ? ': ' + s.message : ''} -- pulling, rebuilding, restarting. Don't close this tab.`}
+            </p>
+          )}
+          {startUpdate.isError && (
+            <p className="support-prose" style={{ color: 'var(--neg)' }}>
+              Couldn't start the update. Use the manual steps below.
+            </p>
+          )}
         </>
       )}
     </div>
