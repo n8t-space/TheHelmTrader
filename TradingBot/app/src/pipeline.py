@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from . import proposal_sanity
-from .local_llm_analyzer import MODEL, analyze_with_floor
+from .local_llm_analyzer import MODEL, analyze
 from .screenshot_capturer import capture_via_snip
 from .signal_storage import append_signal
 
@@ -55,7 +55,7 @@ def run_pipeline(
     if market_context:
         full_prompt = _format_context_for_prompt(market_context) + "\n\n---\n\n" + prompt
 
-    result = analyze_with_floor(image_path, full_prompt)
+    result = analyze(image_path, full_prompt)
 
     # Sanity-check the LLM's proposed prices against the latest reference in
     # feed.db. Catches hallucinations where the model misread the price axis

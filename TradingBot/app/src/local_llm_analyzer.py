@@ -21,9 +21,6 @@ OLLAMA_URL = runtime_config.ollama_url()
 MODEL = runtime_config.model()
 TIMEOUT = runtime_config.request_timeout_s()
 
-CONFIDENCE_FLOOR = runtime_config.confidence_floor()
-MAX_ATTEMPTS = runtime_config.max_attempts()
-
 RECONCILE_PROMPT = """You previously analyzed a {instrument} chart and proposed:
 - Direction: {direction}
 - Entry:  {entry}
@@ -45,7 +42,6 @@ in this order:
 
 Reply with ONLY this JSON:
 {{"result": "no_fill" | "target" | "stop" | "neither" | "uncertain",
- "confidence": <0.0-1.0>,
  "reasoning": "<1-2 sentences explaining what you saw, especially whether entry was reached>"}}"""
 
 
@@ -83,20 +79,45 @@ def analyze(image_path: Path, prompt: str) -> dict:
     return {"proposal": proposal, "raw_response": raw, "duration_s": duration_s}
 
 
-def analyze_text(prompt: str) -> dict:
+def analyze_text(prompt: str, instrument: str | None = None) -> dict:
     """Text-only sibling of analyze(). Used by the headless analyzer when no
-    fresh chart screenshot is available. Same provider dispatch + same
-    return shape (raw_response, duration_s, model, provider).
+    fresh chart screenshot is available.
+
+    Parity with analyze(): injects the same ATM strategy menu so the model
+    picks a real template, then derives stop/target from it. A directional
+    proposal MUST carry an ATM -- the auto-trader places ATM templates, so a
+    proposal without one has nothing to execute. Returns the analyze() shape
+    ({proposal, raw_response, duration_s}) plus the model/provider keys the
+    headless caller logs.
     """
+    atm_strategies = _load_atm_strategies()
+    full_prompt = _format_atm_block(atm_strategies) + "\n\n---\n\n" + prompt
+
     provider = runtime_config.provider()
-    logger.info("Analyze (text-only) via %s", provider)
+    logger.info("Analyze (text-only) via %s (atm_strategies=%d)",
+                provider, len(atm_strategies))
     if provider == "claude":
-        raw, duration_s, model_used = _call_claude(None, prompt)
+        raw, duration_s, model_used = _call_claude(None, full_prompt)
     elif provider == "openai":
-        raw, duration_s, model_used = _call_openai(None, prompt)
+        raw, duration_s, model_used = _call_openai(None, full_prompt)
     else:
-        raw, duration_s, model_used = _call_ollama(None, prompt)
+        raw, duration_s, model_used = _call_ollama(None, full_prompt)
+
+    proposal = _parse_json(raw)
+    proposal["model"] = model_used
+    proposal["provider"] = provider
+    # The prompt has the LLM echo "instrument", but trust the caller's value
+    # when given so the tick-size lookup in _derive_stop_target can't miss.
+    if instrument:
+        proposal["instrument"] = instrument
+
+    # Derive stop/target from the picked ATM (before tick rounding, like analyze()).
+    _derive_stop_target(proposal, atm_strategies)
+    instruments.apply_tick_rounding(proposal, instruments.load_config())
+    proposal["risk_reward"] = _compute_rr(proposal)
+
     return {
+        "proposal":     proposal,
         "raw_response": raw,
         "duration_s":   duration_s,
         "model":        model_used,
@@ -208,51 +229,9 @@ def _call_openai(image_b64: str | None, prompt: str) -> tuple[str, float, str]:
     return raw, _t.monotonic() - t0, model_name
 
 
-def analyze_with_floor(
-    image_path: Path,
-    prompt: str,
-    floor: float | None = None,
-    max_attempts: int | None = None,
-) -> dict:
-    """Run analyze(); if confidence < floor, retry up to max_attempts. Keep best.
-
-    Annotates the returned proposal with:
-        attempts: int             -- how many times the model was called
-        reassessed: bool          -- whether at least one retry happened
-        attempt_confidences: list -- confidence from each attempt
-        confidence_floor: float   -- the threshold in effect
-    """
-    if floor is None:
-        floor = runtime_config.confidence_floor()
-    if max_attempts is None:
-        max_attempts = runtime_config.max_attempts()
-    best = None
-    confidences: list[float] = []
-    for attempt in range(1, max_attempts + 1):
-        result = analyze(image_path, prompt)
-        confidence = float(result["proposal"].get("confidence") or 0)
-        confidences.append(confidence)
-        if best is None or confidence > float(best["proposal"].get("confidence") or 0):
-            best = result
-        if confidence >= floor:
-            break
-        if attempt < max_attempts:
-            logger.warning(
-                "Confidence %.2f < floor %.2f on attempt %d/%d — reassessing",
-                confidence, floor, attempt, max_attempts,
-            )
-
-    proposal = best["proposal"]
-    proposal["attempts"] = len(confidences)
-    proposal["reassessed"] = len(confidences) > 1
-    proposal["attempt_confidences"] = confidences
-    proposal["confidence_floor"] = floor
-    return best
-
-
 def reconcile(image_path: Path, prior_proposal: dict) -> dict:
     """Ask the model whether a prior trade has resolved, given a NEW chart of
-    the same instrument. Returns {result, confidence, reasoning}.
+    the same instrument. Returns {result, reasoning}.
 
     Dispatches to the configured provider (ollama / claude / openai)."""
     image_b64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
@@ -396,6 +375,15 @@ def _derive_stop_target(proposal: dict, strategies: list[dict]) -> None:
     instrument's tick size. Mutates proposal in place. No-op for flat trades."""
     direction = proposal.get("direction")
     if direction == "flat":
+        # Flat = no trade taken, so no ATM template applies. Clear whatever the
+        # LLM emitted (it often still names one) so the record never implies a
+        # bracket that can't fire and the dashboard shows it blank.
+        proposal["atm_strategy"]          = ""
+        proposal["atm_strategy_resolved"] = False
+        proposal["atm_brackets"]          = []
+        proposal["atm_total_qty"]         = 0
+        proposal.pop("atm_stop_ticks", None)
+        proposal.pop("atm_target_ticks", None)
         proposal.setdefault("stop", proposal.get("entry"))
         proposal.setdefault("target", proposal.get("entry"))
         return

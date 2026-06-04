@@ -12,15 +12,13 @@ pipeline still owns the manual case.
 """
 from __future__ import annotations
 
-import json
 import logging
-import re
 import sqlite3
 import time
 from datetime import datetime
 from pathlib import Path
 
-from . import instruments, proposal_sanity, runtime_config, signal_storage
+from . import proposal_sanity, runtime_config, signal_storage
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +70,35 @@ def _latest_auto_screenshot(instrument: str, period: str) -> Path | None:
     return path
 
 
+def _has_active_trade(instrument: str) -> bool:
+    """True if a directional trade for *instrument* is currently live.
+
+    "Live" = entry has triggered (or an order is working/filled) and no final
+    outcome has been recorded yet. Auto-analysis uses this to skip generating a
+    new signal on an instrument we're already in, so the bot doesn't stack
+    positions. Flat proposals and resolved/deleted trades never count.
+    """
+    try:
+        signals = signal_storage.load_all(SIGNALS_LOG)
+    except FileNotFoundError:
+        return False
+    for rec in signals.values():
+        if rec.get("deleted"):
+            continue
+        proposal = rec.get("proposal") or {}
+        if proposal.get("direction") == "flat":
+            continue
+        if (rec.get("instrument") or proposal.get("instrument")) != instrument:
+            continue
+        result = (rec.get("outcome") or {}).get("result")
+        if result and result != "pending":
+            continue  # resolved -> not active
+        exec_state = (rec.get("exec") or {}).get("state")
+        if rec.get("entry_triggered") or exec_state in ("working", "filled"):
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Public entry point — called by auto_analyzer._run_analysis
 # ---------------------------------------------------------------------------
@@ -99,6 +126,13 @@ def analyze(instrument: str, period: str, bar_ts: int,
     ok, why = runtime_config.is_provider_configured()
     if not ok:
         logger.info("[headless] %s @ %s: %s -- skipping", instrument, period, why)
+        return None
+
+    # Don't analyze an instrument we already hold a live trade in -- avoids
+    # stacking signals (and auto-exec orders) on top of an open position.
+    if _has_active_trade(instrument):
+        logger.info("[headless] %s @ %s: active trade open for this instrument "
+                    "-- skipping analysis", instrument, period)
         return None
 
     bars = _recent_bars(instrument, period, bar_ts, bar_count)
@@ -185,9 +219,8 @@ def _analyze_visual(instrument: str, period: str, bar_ts: int,
                        instrument, period, reason)
     persisted = signal_storage.append_signal(SIGNALS_LOG, record)
     logger.info(
-        "[headless-vision] proposal stored: %s %s direction=%s confidence=%.2f atm=%s",
-        instrument, period, proposal.get("direction"),
-        proposal.get("confidence", 0), proposal.get("atm_strategy"))
+        "[headless-vision] proposal stored: %s %s direction=%s atm=%s",
+        instrument, period, proposal.get("direction"), proposal.get("atm_strategy"))
     return persisted
 
 
@@ -203,23 +236,18 @@ def _analyze_text(instrument: str, period: str, bar_ts: int,
 
     started = time.monotonic()
     try:
-        result = local_llm_analyzer.analyze_text(prompt)
+        result = local_llm_analyzer.analyze_text(prompt, instrument)
     except Exception:
         logger.exception("[headless] LLM call failed for %s %s", instrument, period)
         return None
 
+    # analyze_text already parsed, picked an ATM, derived stop/target, rounded,
+    # and computed R:R -- mirror of the visual path. We only stamp metadata.
+    proposal = result["proposal"]
     raw = result["raw_response"]
-    try:
-        proposal = _parse_json(raw)
-    except Exception:
-        logger.exception("[headless] proposal JSON parse failed for %s %s", instrument, period)
-        return None
-
-    proposal["headless"]      = True
-    proposal["bar_ts"]        = bar_ts
-    proposal["instrument"]    = instrument
-    instruments.apply_tick_rounding(proposal, instruments.load_config())
-    proposal["risk_reward"]   = _compute_rr(proposal)
+    proposal["headless"]   = True
+    proposal["bar_ts"]     = bar_ts
+    proposal["instrument"] = instrument
 
     is_valid, reason = proposal_sanity.sanity_check(proposal)
 
@@ -248,8 +276,8 @@ def _analyze_text(instrument: str, period: str, bar_ts: int,
         )
     persisted = signal_storage.append_signal(SIGNALS_LOG, record)
     logger.info(
-        "[headless] proposal stored: %s %s direction=%s confidence=%.2f",
-        instrument, period, proposal.get("direction"), proposal.get("confidence", 0))
+        "[headless] proposal stored: %s %s direction=%s atm=%s",
+        instrument, period, proposal.get("direction"), proposal.get("atm_strategy"))
     return persisted
 
 
@@ -376,31 +404,3 @@ def _atr(highs: list[float], lows: list[float], closes: list[float],
     for tr in trs[period:]:
         atr = (atr * (period - 1) + tr) / period
     return atr
-
-
-# ---------------------------------------------------------------------------
-# Raw-response parsing -- providers normally honor format=json / response_format
-# but qwen and friends occasionally wrap in fences. Be defensive.
-# ---------------------------------------------------------------------------
-
-def _parse_json(raw: str) -> dict:
-    """Defensive parse — qwen sometimes wraps in fences even with format=json."""
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
-        if m: return json.loads(m.group(1))
-        m = re.search(r"\{.*\}", raw, re.DOTALL)
-        if m: return json.loads(m.group(0))
-        raise
-
-
-def _compute_rr(p: dict) -> float:
-    if p.get("direction") == "flat":
-        return 0.0
-    try:
-        e = float(p["entry"]); s = float(p["stop"]); t = float(p["target"])
-        risk = abs(e - s)
-        return round(abs(t - e) / risk, 2) if risk else 0.0
-    except (KeyError, TypeError, ValueError):
-        return 0.0
