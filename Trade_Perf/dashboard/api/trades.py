@@ -31,7 +31,16 @@ def _build_trade(group: list[dict]) -> dict | None:
     if not entries or not exits:
         return None
 
-    direction = "Long" if entries[0]["order_action"] in LONG_OPEN_ACTIONS else "Short"
+    # Direction from the entry fill's resulting signed `position`, NOT the raw
+    # order_action. NT8 can label an ATM short's entry "BuyToCover" (which
+    # LONG_OPEN_ACTIONS would mis-read as Long, flipping the P&L sign) while the
+    # `position` field correctly shows the short as negative. Fall back to
+    # order_action only when position is absent/zero (older fills).
+    entry_pos = entries[0].get("position")
+    if entry_pos:
+        direction = "Long" if entry_pos > 0 else "Short"
+    else:
+        direction = "Long" if entries[0]["order_action"] in LONG_OPEN_ACTIONS else "Short"
 
     entry_qty = sum(f["qty"] for f in entries)
     exit_qty = sum(f["qty"] for f in exits)
