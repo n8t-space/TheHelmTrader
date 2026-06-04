@@ -156,13 +156,15 @@ interface SignalFilters {
   instruments: string[]            // empty == all
   dayFrom:     string              // YYYY-MM-DD trading day; empty == no lower bound
   dayTo:       string              // YYYY-MM-DD trading day; empty == no upper bound
+  fromTs:      string              // datetime-local (YYYY-MM-DDTHH:MM) lower bound on the signal timestamp; empty == none
+  toTs:        string              // datetime-local upper bound; empty == none
   direction:   '' | 'long' | 'short' | 'flat'
 }
 
-const EMPTY_FILTERS: SignalFilters = { instruments: [], dayFrom: '', dayTo: '', direction: '' }
+const EMPTY_FILTERS: SignalFilters = { instruments: [], dayFrom: '', dayTo: '', fromTs: '', toTs: '', direction: '' }
 
 function filtersActive(f: SignalFilters): boolean {
-  return f.instruments.length > 0 || !!f.dayFrom || !!f.dayTo || !!f.direction
+  return f.instruments.length > 0 || !!f.dayFrom || !!f.dayTo || !!f.fromTs || !!f.toTs || !!f.direction
 }
 
 export function SignalAnalysisPage() {
@@ -218,6 +220,14 @@ export function SignalAnalysisPage() {
         const day = tradingDayFor(new Date(ts), tz)
         if (filters.dayFrom && day < filters.dayFrom) return false
         if (filters.dayTo   && day > filters.dayTo)   return false
+      }
+      // Date+time range on the actual signal timestamp (independent of the
+      // trading-day filter). Both bounds parse as local time, like the timestamp.
+      if (filters.fromTs || filters.toTs) {
+        const t = Date.parse(s.timestamp)
+        if (isNaN(t)) return false
+        if (filters.fromTs && t < Date.parse(filters.fromTs)) return false
+        if (filters.toTs   && t > Date.parse(filters.toTs))   return false
       }
       return true
     })
@@ -530,6 +540,33 @@ function SignalFilterBar({ filters, setFilters, instruments }: {
           onChange={(e) => setFilters({ ...filters, dayTo: e.target.value })}
           aria-label="To trading day"
         />
+      </div>
+
+      <div className="signal-filter-row">
+        <span className="signal-filter-label">Date + time</span>
+        <input
+          type="datetime-local"
+          value={filters.fromTs}
+          onChange={(e) => setFilters({ ...filters, fromTs: e.target.value })}
+          aria-label="From date and time"
+        />
+        <span className="subtle">to</span>
+        <input
+          type="datetime-local"
+          value={filters.toTs}
+          onChange={(e) => setFilters({ ...filters, toTs: e.target.value })}
+          aria-label="To date and time"
+        />
+        {(filters.fromTs || filters.toTs) && (
+          <button
+            type="button"
+            className="chip"
+            onClick={() => setFilters({ ...filters, fromTs: '', toTs: '' })}
+            aria-label="Clear date and time range"
+          >
+            clear
+          </button>
+        )}
       </div>
 
       {active && (
