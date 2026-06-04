@@ -82,6 +82,8 @@ namespace NinjaTrader.NinjaScript.Strategies
         private bool  disabled;            // account-lock failure -> hard no-op
         private bool  haltedByLoss;        // daily-loss cutoff tripped
         private double sessionRealized;    // running realized P&L of ATMs we placed (for the cutoff)
+        private string effectiveAllowedAccount;  // account this strategy may trade; resolved from the dashboard (Setup > Account) on the poll tick, falls back to the AllowedAccount property when offline
+        private bool   loggedAccountWait;         // throttles the "dashboard unreachable, holding" log to once per wait
 
         // Tracked ATM strategies we created, keyed by exec_tag.
         private readonly Dictionary<string, Tracked> tracked = new Dictionary<string, Tracked>();
@@ -186,19 +188,19 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
             else if (State == State.Realtime)
             {
-                // Account is only meaningful by Realtime. Enforce the lock here.
-                string acct = Account != null ? Account.Name : "(null)";
-                if (Account == null || !string.Equals(acct, AllowedAccount, StringComparison.Ordinal))
-                {
-                    disabled = true;
-                    Print($"[HelmAuto] DISABLED: running account '{acct}' != AllowedAccount '{AllowedAccount}'. "
-                        + "Attach this strategy to the locked account, or fix the parameter. No orders will be placed.");
-                    return;
-                }
+                // The locked account's single source of truth is the dashboard
+                // (Settings > Auto-Trader > Account). We do NOT fetch it here:
+                // blocking HTTP belongs on the timer worker thread (see header),
+                // and NT often reaches Realtime before the dashboard is up, so a
+                // fetch here would race and could cache a permanent disable.
+                // Seed provisionally from the property; the poll tick resolves the
+                // real allowed account from the dashboard and gates placement.
+                effectiveAllowedAccount = AllowedAccount;
                 running = true;
-                Print($"[HelmAuto] armed and watching account '{acct}' "
-                    + $"(dryRun={DryRun}, poll={PollSeconds}s, maxQty={MaxContractsPerOrder}, maxConc={MaxConcurrent}). "
-                    + "Per-signal manual arm only.");
+                string acct0 = Account != null ? Account.Name : "(null)";
+                Print($"[HelmAuto] armed on account '{acct0}' (resolving allowed account from dashboard; "
+                    + $"provisional='{effectiveAllowedAccount}', dryRun={DryRun}, poll={PollSeconds}s, "
+                    + $"maxQty={MaxContractsPerOrder}, maxConc={MaxConcurrent}). Per-signal manual arm only.");
                 StartTimer();
             }
             else if (State == State.Terminated)
@@ -239,6 +241,35 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 string acct = Account != null ? Account.Name : null;
                 if (string.IsNullOrEmpty(acct)) return;
+
+                // Resolve the allowed account from the dashboard (source of truth);
+                // fall back to the AllowedAccount property only while it's
+                // unreachable. Worker thread, so this blocking GET is by design.
+                string fetched = FetchDashboardAccount();
+                string allowed = !string.IsNullOrEmpty(fetched) ? fetched : AllowedAccount;
+                effectiveAllowedAccount = allowed;
+                if (!string.Equals(acct, allowed, StringComparison.Ordinal))
+                {
+                    // Hard-disable ONLY on a definitive dashboard answer. A transient
+                    // fetch miss just holds and retries next tick, so the lock self-
+                    // heals when the dashboard comes up after NT.
+                    if (!string.IsNullOrEmpty(fetched))
+                    {
+                        if (!disabled)
+                        {
+                            disabled = true;
+                            Print($"[HelmAuto] DISABLED: running account '{acct}' != dashboard account '{allowed}'. "
+                                + "Set Settings > Auto-Trader to this account, or attach the strategy to that account. No orders will be placed.");
+                        }
+                    }
+                    else if (!loggedAccountWait)
+                    {
+                        loggedAccountWait = true;
+                        Print($"[HelmAuto] holding: dashboard unreachable and running account '{acct}' != fallback '{allowed}'. Retrying each poll.");
+                    }
+                    return;
+                }
+                loggedAccountWait = false;  // account matches -> clear the wait throttle
 
                 string url = BotBaseUrl.TrimEnd('/') + "/api/exec/queue?account=" + Uri.EscapeDataString(acct);
                 string body;
@@ -425,6 +456,48 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
             }
             foreach (var tag in done) tracked.Remove(tag);
+        }
+
+        // =================================================================
+        //  Fetch the dashboard's configured auto-trade account (the single
+        //  source of truth). Returns null on any failure so the caller can
+        //  fall back to the AllowedAccount property.
+        // =================================================================
+        private string FetchDashboardAccount()
+        {
+            try
+            {
+                string url = BotBaseUrl.TrimEnd('/') + "/api/auto-trader/account";
+                string body = Http.GetStringAsync(url).GetAwaiter().GetResult();
+                string acct = ExtractJsonString(body, "account");
+                return string.IsNullOrEmpty(acct) ? null : acct;
+            }
+            catch { return null; }
+        }
+
+        // Pull "<key>":"<value>" from a flat JSON object. Returns null if the key
+        // is missing or its value isn't a string (e.g. null). Avoids pulling in a
+        // full parser for a one-field read.
+        private static string ExtractJsonString(string json, string key)
+        {
+            if (string.IsNullOrEmpty(json)) return null;
+            string needle = "\"" + key + "\"";
+            int i = json.IndexOf(needle, StringComparison.Ordinal);
+            if (i < 0) return null;
+            i = json.IndexOf(':', i + needle.Length);
+            if (i < 0) return null;
+            i++;
+            while (i < json.Length && char.IsWhiteSpace(json[i])) i++;
+            if (i >= json.Length || json[i] != '"') return null;
+            i++;
+            var sb = new StringBuilder();
+            while (i < json.Length && json[i] != '"')
+            {
+                if (json[i] == '\\' && i + 1 < json.Length) i++;  // skip escape
+                sb.Append(json[i]);
+                i++;
+            }
+            return sb.ToString();
         }
 
         // =================================================================
