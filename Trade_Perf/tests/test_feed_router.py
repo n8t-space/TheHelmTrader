@@ -7,6 +7,8 @@ and clean up any test bars they wrote.
 """
 from __future__ import annotations
 
+import time
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -29,7 +31,11 @@ def client():
 
 # ---------------- warmup gate ----------------
 
-BASE_TS = 1_715_200_000  # arbitrary unix s
+# Anchored near wall-clock now so the "+300" live bar lands inside feed.py's
+# STALE_BAR_SECONDS freshness window (a fixed past timestamp would be rejected
+# as backfill and never arm). Post-gap tests still work: they trip the >30 min
+# gap gate, which is checked before the freshness gate.
+BASE_TS = int(time.time()) - 300
 
 
 def _bar(client, ts, instrument="WGT_TEST", period="5m"):
