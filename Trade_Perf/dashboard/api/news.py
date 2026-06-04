@@ -250,19 +250,18 @@ def _ai_extract_econoday(html: str) -> tuple[list[dict[str, Any]], str | None]:
                 json={
                     "model": ai.claude_model,
                     "max_tokens": ai.claude_max_tokens,
-                    # Prefill the assistant turn with "{" so the model continues a
-                    # pure JSON object -- no prose, no markdown fences. We prepend
-                    # the "{" back below before parsing.
-                    "messages": [
-                        {"role": "user", "content": prompt},
-                        {"role": "assistant", "content": "{"},
-                    ],
+                    # No assistant prefill: claude-opus-4-8 (and other newer
+                    # models) reject it with 400 "conversation must end with a
+                    # user message". The prompt asks for JSON-only and the
+                    # defensive parse below strips fences / extracts the {...}
+                    # span, so a prefill isn't needed.
+                    "messages": [{"role": "user", "content": prompt}],
                 },
                 timeout=AI_TIMEOUT_S,
             )
             r.raise_for_status()
             blocks = r.json().get("content", [])
-            text = "{" + "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+            text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
 
         elif provider == "openai":
             if not ai.openai_api_key:
