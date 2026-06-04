@@ -84,20 +84,9 @@ def home() -> dict[str, Any]:
         pass
 
     # ---- Action queue ----
-    below_floor: list[dict] = []
     missing_journal: list[dict] = []
     for s in enriched:
         proposal = s.get("proposal") or {}
-        outcome = s.get("outcome") or {}
-        floor = proposal.get("confidence_floor") or 0.75
-        conf = proposal.get("confidence")
-        if conf is not None and conf < floor and not outcome.get("result"):
-            below_floor.append({
-                "timestamp": s["timestamp"],
-                "instrument": proposal.get("instrument"),
-                "confidence": conf,
-                "floor": floor,
-            })
         verdict = (s.get("journal") or {}).get("verdict")
         if not verdict:
             missing_journal.append({
@@ -140,11 +129,9 @@ def home() -> dict[str, Any]:
             "trade_pnl": round(today_trades_pnl, 2),
         },
         "action_queue": {
-            "below_floor": below_floor[:10],
             "missing_journal": missing_journal[:10],
-            "total": len(below_floor) + len(missing_journal),
+            "total": len(missing_journal),
         },
         "open_positions": [],  # TODO: depends on NS account-state indicator
         "cumulative_earnings": cumulative_earnings,
-        "last_signal": enriched[0] if enriched else None,
     }
