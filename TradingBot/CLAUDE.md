@@ -72,11 +72,11 @@ The user's 5-minute charts use the **same indicator stack regardless of instrume
 - Model: `qwen2.5vl:7b` via Ollama. Fallback: `minicpm-v:latest`.
 - Storage: `app/data/signals.jsonl` (append-only). Updates merge latest-wins on read.
 - Tick rounding: every proposal snaps `entry/stop/target` to the instrument's tick size via `src/instruments.py`.
-- Confidence floor: 0.75. Below-floor proposals re-attempt up to 2x.
+- (Confidence score removed 2026-06-02 — proposals generate in a single LLM pass; no floor / no reassessment retries.)
 
 ## AI inference offloaded to workstation
 
-`local_llm_analyzer.py` calls Ollama via `runtime_config.ollama_url()`, default `http://127.0.0.1:11434/api/generate`. The URL, model, timeout, num_ctx, confidence floor, and max attempts are all overridable via the Settings page (stored at `~/.helm/settings.json`). Source of truth is `runtime_config.py` — adds a knob = add a field there + a matching Pydantic field in `Trade_Perf/dashboard/api/settings.py`. If pointing at a LAN GPU host, firewall the inference port to the bot machine.
+`local_llm_analyzer.py` calls Ollama via `runtime_config.ollama_url()`, default `http://127.0.0.1:11434/api/generate`. The URL, model, timeout, and num_ctx are all overridable via the Settings page (stored at `~/.helm/settings.json`). Source of truth is `runtime_config.py` — adds a knob = add a field there + a matching Pydantic field in `Trade_Perf/dashboard/api/settings.py`. If pointing at a LAN GPU host, firewall the inference port to the bot machine.
 
 ## Live feed pipeline (in flight)
 
@@ -85,6 +85,6 @@ NS-driven publish of bars + ticks → bot ingestion at `/api/feed/{bar,ticks}` �
 ## Don't propose
 
 - Cloud/SaaS endpoints. Not negotiable.
-- Re-litigating the v1 scope. If a request implies adding scheduler/dashboard/auto-execution back into v1, treat it as a v2 conversation.
+- Re-litigating the v1 scope. If a request implies adding a scheduler or autonomous trading back into v1, treat it as a v2 conversation. **Exception (2026-06-02):** an opt-in **Auto-Trader** exists — per-signal manual arm only, locked to ONE user-selected account, Sim-only in v1, master switch OFF by default. The executor is the NT8 `HelmAutoTrader` Strategy (`ninjascript/_Helm Locker/HelmAutoTrader.cs`, compiles from `bin/Custom/Strategies/`). This is NOT autonomous firing; the human arms each trade.
 - The vendor-DLL distribution path for NT8 AddOns (separate Helm Copier project — deleted 2026-05-09, but pattern was: trigger files don't auto-add Reference; pivot to source-compile if it ever comes up).
 - Re-introducing the cross-signal LLM reconciliation pipeline (`_reconcile_open_trades` + `outcome_suggestion` + the "Confirm & remove previous" UI). Removed 2026-05-19 — distorted W/L stats via confirm-and-soft-delete, less accurate than the deterministic bar walker. `local_llm_analyzer.reconcile()` still exists with no caller. Outcomes auto-resolve via `outcome_watcher` walking `feed.db` ticks/bars for BOTH manual and headless signals; the user overrides on the Signal Detail page if needed.

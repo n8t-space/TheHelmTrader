@@ -126,6 +126,39 @@ In order, after each phase:
 
 ## 9. Session Log
 
+### 2026-06-02 — Auto-Trader v1 (Sim-only, per-signal manual arm) + fill linker
+
+Built the opt-in **Auto-Trader**: the bot automates the mechanical ATM entry for signals the user explicitly arms, hard-locked to one user-selected account, **Sim-only**, master switch OFF by default. This amends the prior "No auto-execution... Forever" stance in both CLAUDE.md files to "no *autonomous* execution" (flagged, not silent).
+
+**Context:** started from "does signal analysis account for the adjusted trailing stop?" — answer: simulated trail flows into P&L for ATM-matched signals, but real NT8 trailed-stop fills were never linked. Built `fill_linker.py` (heuristic signal->trade matcher) earlier same session, which exposed that order entry is fully manual (HelmAnalyzer/HelmFeed are Indicators, never place orders). That motivated the Auto-Trader, whose deterministic `exec_tag` finally makes signal->fill linkage exact.
+
+**Done (Phases 1-4 code; live placement awaits user compile + Sim validation):**
+
+1. **Arming surface (Python)** — `settings.AutoTrader` block + `auto_trader_config()`; new `auto_trader.py` router (`POST /api/signals/{ts}/arm` + `/disarm`, `GET /api/exec/queue?account=`, `POST /api/signals/{ts}/exec`) registered in `main.py`; `armed`/`arm_account`/`exec` added to `signal_storage.MERGEABLE_FIELDS`. Exec state machine: `armed -> working -> filled|cancelled|rejected` (+`disarmed`). `exec_tag = "helm_"+sanitized(ts)`. Optimistic-concurrency claim guard = the dedup mechanism. Verified in-process: account lock, qty clamp, idempotent re-arm, dedup 409, flat-reject 400, master-switch gating.
+2. **Arming surface (React)** — Auto-Trader card on SignalDetailPage (arm/disarm + exec badge), new Settings "Auto-Trader" tab (master switch, Sim-account dropdown, risk limits). `api.ts` types `SignalExec`/`SettingsAutoTrader`. tsc clean; SPA rebuilt.
+3. **NT8 executor** — `ninjascript/_Helm Locker/HelmAutoTrader.cs` (new **Strategy**; compiles from `bin/Custom/Strategies/`, NOT Indicators). Polls `/api/exec/queue` on a `System.Timers.Timer`, marshals all ATM calls onto the strategy thread via `TriggerCustomEvent` (load-bearing threading rule). `AtmStrategyCreate(Limit@entry)` reusing the proposal's ATM template; account-lock guard in `State.Realtime` (refuses if `Account.Name != AllowedAccount`); fill detection via `GetAtmStrategyMarketPosition`; 4h entry-window cancel via `AtmStrategyCancelEntryOrder`; daily-loss cutoff + max-concurrent + max-contracts guardrails. `DryRun` defaults true. Reviewed by ninjascript-reviewer; must-fix applied: distinct `orderId` ("-E" suffix) vs `atmStrategyId`; Playback-safe `Now` instead of `DateTime.Now`; `Calculate.OnBarClose`.
+4. **Deterministic linkage** — `fill_linker.link_signals_to_trades` gained an exec-exact pre-pass: a filled auto-exec signal links to the trade on its locked account + instrument closest to `exec.filled_at` (confidence 1.0, `match="exact_tag"`), bypassing heuristic scoring. Verified: ignores wrong-account decoy; heuristic still works for non-exec signals.
+
+**Same-session follow-up (compile fixes, LIVE Sim validation, UX):**
+
+5. **NS compile fixes.** This NT8 install has **no Newtonsoft.Json reference** -- replaced `JsonConvert`/`[JsonProperty]` with a hand-rolled `JsonReader` (System-only). `Now` is not a Strategy-base symbol -> `DateTime.Now`. Both cleared the compile.
+6. **LIVE-validated on Sim101.** Auto-trader placed a real ATM order and it FILLED (MCL @ 93.84 via `MCL_SCALP_15t_15-30`). Full arm -> claim -> place -> fill -> report loop works end-to-end with real fills.
+7. **Contract cap was a no-op; fixed as a gate.** Reading the real fill showed `AtmStrategyCreate` has NO quantity parameter -- the ATM template fixes order size. So `MaxContractsPerOrder` can't resize; it now REJECTS oversize templates at arm (`/arm` 409), in the queue (excluded), and in the strategy (rejected). `_order_qty` -> `_template_qty` (reports true size, no clamp).
+8. **Silent instrument-skip now logs.** A strategy instance trades one instrument; mismatched signals were skipped silently (confused the operator). Now logs `[HelmAuto] skip ... signal is 'MCL' but this strategy runs 'MES'`. Run one instance per instrument.
+9. **Arm/execute decoupled.** "Enable auto trading" is now a separate live switch: arming only needs a configured account (stages intent); execution is gated by the switch. New `POST /api/auto-trader/enable` (`settings.set_auto_trader_enabled`) + a quick checkbox on the Signal Detail Auto-Trader card; Settings label clarified. Queue still returns empty when the switch is off.
+10. **Setup docs.** Support -> Configuration gained **section 7 (Auto-Trader)**: how-it-works, configure table, NS deploy command, per-instrument run steps, trade flow. Plus a Troubleshooting entry for "armed signal won't execute (stuck on ARMED)".
+
+**Incident:** an in-process test of `set_auto_trader_enabled` persisted defaults over the real `~/.helm/settings.json` (settings mutators write disk even when `_cache` is injected). Recovered by GET-ing the live uvicorn's in-memory settings and PUT-ing them back. Guardrail saved to memory.
+
+**Outstanding (next session pickup):**
+
+1. **Restart uvicorn** to activate the server-side changes (arm decoupling, `/auto-trader/enable`, cap gate) -- Support -> Restart Helm or elevated `Restart-Service`. **Re-copy + F5** `HelmAutoTrader.cs` for the instrument-skip log + cap-gate (do it between trades so an open ATM isn't orphaned).
+2. **Surface exec state + linked real fills** on SignalDetailPage beyond the badge (actual vs modeled P&L), and an "AUTO-EXEC" indicator on the signals list.
+3. **Playback validation** of the cancel / concurrency / daily-loss-cutoff paths (live fill is proven; these edges aren't yet).
+4. **Disarm-remaining on loss cutoff** currently posts `/disarm` per queued item from the strategy; consider a server-side bulk disarm for robustness.
+
+---
+
 ### 2026-05-29 — Economic Calendar widget, Home page cleanup, SPA catch-all hardening
 
 Short follow-up session. Pre-trade context piped into the dashboard so the operator doesn't have to flip between FF + Econoday tabs manually.
