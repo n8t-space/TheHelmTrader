@@ -208,24 +208,29 @@ def exec_queue(account: str) -> dict:
     window = timedelta(minutes=cfg.entry_window_minutes)
     enabled_at = _parse_local(cfg.enabled_at)
 
-    # Serialize execution: never offer a new entry while a position is still
-    # open or in-flight on this account. "Open" = exec working/filled with no
-    # terminal outcome yet (close is detected via the outcome resolver, so a
-    # stale 'working' exec whose trade already resolved does NOT deadlock the
-    # queue). Honors max_concurrent; set it to 1 for strict one-at-a-time. This
-    # cap was previously never enforced at the queue, so the strategy could
-    # stack multiple entries.
-    open_now = sum(
-        1 for r in raw.values()
+    # Per-instrument serialization: don't offer a new entry for an instrument
+    # that already has an open/in-flight trade -- but DO let other instruments
+    # trade (one per instrument). "Open" = exec working/filled with no terminal
+    # outcome yet (close is detected via the outcome resolver, so a stale
+    # 'working' exec whose trade already resolved does NOT deadlock the queue).
+    # max_concurrent is the overall ceiling across instruments. (Each NS
+    # strategy instance trades one instrument and self-caps at 1, so this server
+    # gate is what lets a second INSTRUMENT trade while the first is open.)
+    open_trades = [
+        r for r in raw.values()
         if not r.get("deleted")
         and (r.get("exec") or {}).get("state") in ("working", "filled")
         and ((r.get("exec") or {}).get("account") or r.get("arm_account")) == account
         and (r.get("outcome") or {}).get("result") in (None, "", "pending")
-    )
-    if open_now >= max(1, cfg.max_concurrent):
+    ]
+    open_instruments = {
+        instruments.normalize_symbol(str((r.get("proposal") or {}).get("instrument") or ""))
+        for r in open_trades
+    }
+    if len(open_trades) >= max(1, cfg.max_concurrent):
         logger.info("[auto-trader] queue held: %d open trade(s) >= max_concurrent=%d "
-                    "-- waiting for current to close", open_now, cfg.max_concurrent)
-        return {"account": account, "count": 0, "signals": [], "held_for_open": open_now}
+                    "(overall ceiling)", len(open_trades), cfg.max_concurrent)
+        return {"account": account, "count": 0, "signals": [], "held_for_open": len(open_trades)}
 
     out: list[dict] = []
     for ts, rec in raw.items():
@@ -241,6 +246,10 @@ def exec_queue(account: str) -> dict:
             continue
         # The ATM template fixes order size; never offer one over the cap.
         if _template_qty(proposal) > cfg.max_contracts_per_order:
+            continue
+        # One open trade per instrument: skip if this instrument is already live.
+        instr = instruments.normalize_symbol(str(proposal.get("instrument") or ""))
+        if instr in open_instruments:
             continue
 
         ex = rec.get("exec") or {}
@@ -268,7 +277,7 @@ def exec_queue(account: str) -> dict:
         out.append({
             "ts": ts,
             "exec_tag": ex.get("exec_tag") or _exec_tag(ts),
-            "instrument": instruments.normalize_symbol(str(proposal.get("instrument") or "")),
+            "instrument": instr,
             "direction": direction,
             "entry": proposal.get("entry"),
             "limit_price": proposal.get("entry"),
