@@ -239,15 +239,10 @@ export interface Proposal {
   stop: number
   target: number
   risk_reward: number
-  confidence: number
   reasoning: string
   tick_size_applied?: number
   tick_source?: string
   tick_adjustments?: Array<{ field: string; from: number; to: number }>
-  attempts?: number
-  reassessed?: boolean
-  attempt_confidences?: number[]
-  confidence_floor?: number
   // ATM strategy the LLM picked. Either an exact name from the user's NT
   // templates, or the literal "custom" (in which case custom_stop_ticks /
   // custom_target_ticks carry the LLM's suggested bracket; user would need
@@ -384,6 +379,30 @@ export interface Signal {
   entry_triggered?: boolean
   // Unix milliseconds when the entry was hit; tooltip data for the cell.
   entry_hit_ts?: number
+  // Auto-Trader (Sim-only v1). Present once a signal is armed for execution.
+  armed?: boolean
+  arm_account?: string
+  exec?: SignalExec
+}
+
+// Lifecycle of an armed signal, written by the dashboard (arm/disarm) and the
+// NT8 HelmAutoTrader strategy (working/filled/cancelled/rejected).
+export type ExecState =
+  | 'armed' | 'working' | 'filled' | 'cancelled' | 'rejected' | 'disarmed'
+
+export interface SignalExec {
+  state: ExecState
+  exec_tag?: string
+  account?: string
+  armed_at?: string
+  working_at?: string
+  filled_at?: string
+  disarmed_at?: string
+  updated_at?: string
+  fill_price?: number | null
+  fill_qty?: number | null
+  note?: string | null
+  dry_run?: boolean
 }
 
 export interface SignalListResp {
@@ -459,9 +478,7 @@ export interface SettingsAiBackend {
 }
 
 export interface SettingsStrategy {
-  confidence_floor: number
   reconciliation_cap: number
-  max_attempts: number
   retention_days: number
   stale_bar_seconds: number
 }
@@ -565,6 +582,16 @@ export interface SettingsNews {
   refresh_interval_minutes: number
 }
 
+export interface SettingsAutoTrader {
+  enabled: boolean
+  account: string
+  max_contracts_per_order: number
+  max_concurrent: number
+  daily_loss_cutoff: number
+  poll_seconds: number
+  entry_window_minutes: number
+}
+
 export interface SettingsDoc {
   schema_version: number
   appearance: SettingsAppearance
@@ -572,6 +599,7 @@ export interface SettingsDoc {
   strategy: SettingsStrategy
   accounts: SettingsAccounts
   news: SettingsNews
+  auto_trader: SettingsAutoTrader
 }
 
 export interface SettingsResp {

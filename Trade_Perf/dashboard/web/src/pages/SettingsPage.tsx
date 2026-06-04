@@ -12,12 +12,12 @@ import {
   type AtmXmlBracket, type AtmStrategiesResp, type AtmStrategy,
   type DimensionsResp, type DrawdownConfig, type ModelsResp, type OllamaTestResp,
   type SettingsAccounts, type SettingsAiBackend,
-  type SettingsAppearance, type SettingsDoc, type SettingsNews,
+  type SettingsAppearance, type SettingsAutoTrader, type SettingsDoc, type SettingsNews,
   type SettingsResp, type SettingsStrategy,
 } from '../api'
 import { applyAppearance, cacheAppearance } from '../lib/theme'
 
-type Tab = 'appearance' | 'ai' | 'strategy' | 'accounts' | 'news'
+type Tab = 'appearance' | 'ai' | 'strategy' | 'accounts' | 'autotrader' | 'news'
 
 export function SettingsPage() {
   const qc = useQueryClient()
@@ -124,7 +124,7 @@ export function SettingsPage() {
       {save.error && <div className="card error">Save failed: {String(save.error)}</div>}
 
       <div className="card settings-tabs">
-        {(['appearance', 'ai', 'strategy', 'accounts', 'news'] as Tab[]).map((t) => (
+        {(['appearance', 'ai', 'strategy', 'accounts', 'autotrader', 'news'] as Tab[]).map((t) => (
           <button
             key={t}
             type="button"
@@ -161,6 +161,13 @@ export function SettingsPage() {
             onChange={(a) => setDraft({ ...draft, accounts: a })}
           />
         )}
+        {tab === 'autotrader' && (
+          <AutoTraderTab
+            value={draft.auto_trader}
+            simAccounts={draft.accounts.simulation}
+            onChange={(a) => setDraft({ ...draft, auto_trader: a })}
+          />
+        )}
         {tab === 'news' && (
           <NewsTab
             value={draft.news}
@@ -191,7 +198,115 @@ function tabLabel(t: Tab): string {
     : t === 'ai' ? 'AI Backend'
     : t === 'strategy' ? 'Strategy'
     : t === 'accounts' ? 'Accounts'
+    : t === 'autotrader' ? 'Auto-Trader'
     : 'News'
+}
+
+// ---------- Auto-Trader ----------
+
+function AutoTraderTab({ value, simAccounts, onChange }: {
+  value: SettingsAutoTrader
+  simAccounts: string[]
+  onChange: (v: SettingsAutoTrader) => void
+}) {
+  const accountOptions = Array.from(new Set(simAccounts.filter(Boolean))).sort()
+  return (
+    <>
+      <h3 style={{ marginTop: 0 }}>Auto-Trader <span className="subtle">(Sim-only)</span></h3>
+      <p className="subtle">
+        When <strong>auto trading is enabled</strong>, the NinjaTrader <code>HelmAutoTrader</code>{' '}
+        strategy auto-executes qualifying signals (non-flat, created after you enabled) on the
+        locked account — no manual arm needed. With it OFF you can still arm individual signals to
+        stage them. An account must be set either way.
+      </p>
+
+      <div className="settings-row">
+        <label className="settings-checkbox">
+          <input
+            type="checkbox"
+            checked={value.enabled}
+            onChange={(e) => onChange({ ...value, enabled: e.target.checked })}
+          />
+          <span>
+            Enable auto trading (live execution){' '}
+            <span className="subtle">
+              — the NT strategy auto-executes qualifying signals (no manual arm needed). With it
+              off you can still arm individual signals to stage them; they execute when you turn
+              this on. Flip it here or from a signal's Auto-Trader card.
+            </span>
+          </span>
+        </label>
+      </div>
+
+      <div className="settings-row">
+        <label>
+          <span>Locked account (Sim only)</span>
+          <select
+            value={value.account}
+            onChange={(e) => onChange({ ...value, account: e.target.value })}
+          >
+            <option value="">— none (disabled) —</option>
+            {accountOptions.map((a) => <option key={a} value={a}>{a}</option>)}
+          </select>
+          <span className="subtle">
+            The single account the strategy may act on. Only Simulation-bucket accounts are
+            offered in v1. The NT strategy also refuses to run if its own account differs.
+          </span>
+        </label>
+        <label>
+          <span>Max contracts / order</span>
+          <input
+            type="number" min={1} max={50}
+            value={value.max_contracts_per_order}
+            onChange={(e) => onChange({ ...value, max_contracts_per_order: Number(e.target.value) })}
+          />
+          <span className="subtle">Caps the ATM total qty placed per signal.</span>
+        </label>
+        <label>
+          <span>Max concurrent positions</span>
+          <input
+            type="number" min={1} max={20}
+            value={value.max_concurrent}
+            onChange={(e) => onChange({ ...value, max_concurrent: Number(e.target.value) })}
+          />
+          <span className="subtle">Max open ATM strategies at once; extra armed signals are skipped.</span>
+        </label>
+        <label>
+          <span>Daily loss cutoff ($)</span>
+          <input
+            type="number" min={0} step="any"
+            value={value.daily_loss_cutoff}
+            onChange={(e) => onChange({ ...value, daily_loss_cutoff: Number(e.target.value) })}
+          />
+          <span className="subtle">Auto-disarm once session realized loss reaches this. 0 = off.</span>
+        </label>
+        <label>
+          <span>Poll interval (s)</span>
+          <input
+            type="number" min={1} max={60}
+            value={value.poll_seconds}
+            onChange={(e) => onChange({ ...value, poll_seconds: Number(e.target.value) })}
+          />
+          <span className="subtle">How often the strategy checks the arm queue.</span>
+        </label>
+        <label>
+          <span>Entry window (min)</span>
+          <input
+            type="number" min={1} max={1440}
+            value={value.entry_window_minutes}
+            onChange={(e) => onChange({ ...value, entry_window_minutes: Number(e.target.value) })}
+          />
+          <span className="subtle">Unfilled LIMIT entries cancel after this. Default 240 (4 h) matches the entry resolver.</span>
+        </label>
+      </div>
+
+      {value.enabled && !value.account && (
+        <p className="subtle" style={{ color: 'var(--neg)' }}>
+          Master switch is on but no account is selected — arming stays blocked until you pick one.
+        </p>
+      )}
+    </>
+  )
 }
 
 // ---------- Appearance ----------
@@ -568,26 +683,6 @@ function StrategyTab({ value, onChange }: {
         Tunable thresholds for signal generation and outcome resolution. Recommended baseline values are documented in <Link to="/support#configuration">Support → Configuration</Link>.
       </p>
       <div className="settings-row">
-        <label>
-          <span>Confidence floor</span>
-          <input
-            type="number"
-            min={0} max={1} step={0.01}
-            value={value.confidence_floor}
-            onChange={(e) => onChange({ ...value, confidence_floor: Number(e.target.value) })}
-          />
-          <span className="subtle">Reject proposals below this (0–1). Default <code>0.65</code>. Higher = fewer signals; lower = more.</span>
-        </label>
-        <label>
-          <span>Max attempts</span>
-          <input
-            type="number"
-            min={1} max={5}
-            value={value.max_attempts}
-            onChange={(e) => onChange({ ...value, max_attempts: Number(e.target.value) })}
-          />
-          <span className="subtle">Retry budget when below floor. Each attempt costs latency + (for cloud providers) tokens.</span>
-        </label>
         <label>
           <span>Reconciliation cap</span>
           <input

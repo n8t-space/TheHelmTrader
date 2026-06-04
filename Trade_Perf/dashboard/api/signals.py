@@ -76,8 +76,19 @@ class LegsUpdate(BaseModel):
 
 
 def _enrich(rec: dict, config: dict) -> dict:
-    """Attach computed trade metrics + screenshot filename to a signal record."""
+    """Attach computed trade metrics + screenshot filename to a signal record.
+
+    Normalizes the proposal instrument to its ROOT (e.g. "MCL JUL26" -> "MCL")
+    so signals use the SAME symbol as Auto Analysis, the feed, the recorder, and
+    the auto-trader -- all of which key on the root. Manual-snip signals carry
+    the full contract; this consolidates them on read without touching the
+    append-only store. Done on a copied proposal so the on-disk record is left
+    intact (and the contract month is still visible in the chart screenshot)."""
     rec = dict(rec)
+    proposal = rec.get("proposal") or {}
+    root = instruments.normalize_symbol(str(proposal.get("instrument") or ""))
+    if root and root != proposal.get("instrument"):
+        rec["proposal"] = {**proposal, "instrument": root}
     rec["metrics"] = instruments.compute_trade_metrics(rec, config)
     sp = rec.get("screenshot_path")
     rec["screenshot_filename"] = Path(sp).name if sp else None

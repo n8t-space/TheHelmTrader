@@ -68,6 +68,13 @@ MERGEABLE_FIELDS = (
     # user-edited aggregate outcome, and vice versa. Old records simply
     # lack this field; metrics calc falls back to single-outcome math.
     "legs",
+    # Auto-Trader (Sim-only v1). A signal the user armed for execution carries
+    # `armed`/`arm_account`; the NT8 strategy reports lifecycle via `exec`
+    # ({state, exec_tag, fill_price, ...}). All top-level + merged latest-wins
+    # so arming and execution updates don't clobber outcome/legs and vice versa.
+    "armed",
+    "arm_account",
+    "exec",
 )
 
 

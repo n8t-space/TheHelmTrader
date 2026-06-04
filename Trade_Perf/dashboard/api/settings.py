@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from datetime import datetime
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -69,9 +70,7 @@ class AiBackend(BaseModel):
 
 
 class Strategy(BaseModel):
-    confidence_floor: float = Field(default=0.75, ge=0.0, le=1.0)
     reconciliation_cap: int = Field(default=3, ge=0, le=20)
-    max_attempts: int = Field(default=2, ge=1, le=5)
     retention_days: int = Field(default=7, ge=1, le=90)
     stale_bar_seconds: int = Field(default=120, ge=10, le=3600)
 
@@ -104,6 +103,35 @@ class Accounts(BaseModel):
     drawdowns: dict[str, DrawdownConfig] = Field(default_factory=dict)
 
 
+class AutoTrader(BaseModel):
+    """Auto-Trader (Sim-only v1). The bot automates the mechanical ATM entry for
+    signals the user explicitly arms -- no autonomous firing. Hard-locked to ONE
+    account. Master switch defaults OFF: nothing executes until the user enables
+    it AND sets an account.
+
+    Risk guardrails enforced jointly by the dashboard (arming) and the NT8
+    HelmAutoTrader strategy (placement): account lock, max contracts/order, max
+    concurrent open ATMs, and a daily realized-loss cutoff that auto-disarms.
+    """
+    enabled: bool = False
+    # The single NT account the auto-trader may act on (e.g. "Sim101"). Empty
+    # => disabled regardless of `enabled`. The NT strategy ALSO refuses to run
+    # if its own account name != this value (defense in depth).
+    account: str = Field(default="")
+    max_contracts_per_order: int = Field(default=2, ge=1, le=50)
+    max_concurrent: int = Field(default=1, ge=1, le=20)
+    # Daily realized-loss cutoff in account-currency dollars. 0 => off. Once
+    # session realized P&L on `account` <= -cutoff, the strategy stops placing
+    # and disarms remaining signals.
+    daily_loss_cutoff: float = Field(default=0.0, ge=0.0)
+    poll_seconds: int = Field(default=3, ge=1, le=60)
+    entry_window_minutes: int = Field(default=240, ge=1, le=1440)
+    # Stamped (naive-local ISO) the moment auto-trading goes OFF->ON. Autonomous
+    # execution only picks up signals created at/after this, so flipping the
+    # switch never replays a backlog. Managed automatically; not user-edited.
+    enabled_at: str = Field(default="")
+
+
 class News(BaseModel):
     """Economic-calendar widget config. Two sources:
 
@@ -132,6 +160,7 @@ class Settings(BaseModel):
     strategy: Strategy = Field(default_factory=Strategy)
     accounts: Accounts = Field(default_factory=Accounts)
     news: News = Field(default_factory=News)
+    auto_trader: AutoTrader = Field(default_factory=AutoTrader)
 
 
 # ---------------------------------------------------------------------------
@@ -152,10 +181,17 @@ def _load_from_disk() -> Settings:
         logger.warning("[settings] failed to read %s (%s); using defaults", SETTINGS_PATH, e)
         return Settings()
     try:
-        return Settings.model_validate(raw)
+        s = Settings.model_validate(raw)
     except ValidationError as e:
         logger.warning("[settings] invalid file at %s (%s); using defaults", SETTINGS_PATH, e)
         return Settings()
+    # Safety: if auto-trading is already ON but carries no enable timestamp (first
+    # load after this feature shipped, or any fresh process), stamp it NOW so
+    # autonomous execution starts from process start -- it never replays a backlog
+    # of signals created before the server came up.
+    if s.auto_trader.enabled and not s.auto_trader.enabled_at:
+        s.auto_trader.enabled_at = datetime.now().isoformat(timespec="seconds")
+    return s
 
 
 def get_settings() -> Settings:
@@ -180,6 +216,24 @@ def visible_accounts() -> set[str]:
     return {x for x in (*a.live, *a.evals, *a.simulation) if x}
 
 
+def auto_trader_config() -> AutoTrader:
+    """Current Auto-Trader config. Single source of truth for whether execution
+    is enabled, which account is locked, and the risk guardrails. Consumed by
+    the auto_trader router (arm gating + /exec/queue) and surfaced to the NT8
+    strategy via that queue. Cheap; safe in hot paths."""
+    return get_settings().auto_trader
+
+
+def set_auto_trader_enabled(enabled: bool) -> AutoTrader:
+    """Flip just the Auto-Trader master switch (the live execution toggle) and
+    persist. Used by the quick checkbox on the Signal Detail card so the user
+    can stage (arm) signals with execution off, then turn it on when ready."""
+    updated = get_settings().model_copy(deep=True)
+    updated.auto_trader.enabled = bool(enabled)
+    _replace(updated)
+    return updated.auto_trader
+
+
 def _save_to_disk(settings: Settings) -> None:
     SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = SETTINGS_PATH.with_suffix(".json.tmp")
@@ -190,6 +244,17 @@ def _save_to_disk(settings: Settings) -> None:
 def _replace(settings: Settings) -> None:
     global _cache
     with _cache_lock:
+        prev = _cache
+        # Manage auto-trading's enabled_at so autonomous execution only acts on
+        # signals created after it was enabled (no backlog replay):
+        #   * OFF->ON transition -> stamp now
+        #   * staying ON but a write dropped the value -> preserve the prior one
+        at = settings.auto_trader
+        if at.enabled:
+            if prev is None or not prev.auto_trader.enabled:
+                at.enabled_at = datetime.now().isoformat(timespec="seconds")
+            elif not at.enabled_at and prev.auto_trader.enabled_at:
+                at.enabled_at = prev.auto_trader.enabled_at
         _save_to_disk(settings)
         _cache = settings
 

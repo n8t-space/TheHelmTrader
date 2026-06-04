@@ -12,6 +12,8 @@ import {
   type Outcome,
   type Signal,
   type SignalDetailResp,
+  type SignalExec,
+  type SettingsResp,
   type TradeMetrics,
 } from '../api'
 
@@ -170,6 +172,8 @@ export function SignalDetailPage() {
         <DeleteButton ts={ts} onDeleted={onDeleted} />
       </div>
 
+      <AutoTraderSection signal={sig} refresh={refresh} />
+
       <div className="card">
         <h2>Proposal</h2>
         <ProposalDetails signal={sig} />
@@ -241,6 +245,136 @@ export function SignalDetailPage() {
   )
 }
 
+// ---------- Auto-Trader (arm / disarm) ----------
+function ExecBadge({ exec }: { exec?: SignalExec }) {
+  if (!exec?.state) return null
+  const cls =
+    exec.state === 'filled' ? 'badge auto-res'
+      : exec.state === 'armed' || exec.state === 'working' ? 'badge auto-gen'
+        : 'badge'
+  const label = exec.state.toUpperCase() + (exec.dry_run ? ' (DRY)' : '')
+  return <span className={cls} title={exec.exec_tag ?? ''}>{label}</span>
+}
+
+function AutoTraderSection({ signal, refresh }: { signal: Signal; refresh: () => void }) {
+  const qc = useQueryClient()
+  const tsEnc = encodeURIComponent(signal.timestamp)
+  const sq = useQuery<SettingsResp>({
+    queryKey: ['settings'],
+    queryFn: () => fetchJSON<SettingsResp>('/api/settings'),
+  })
+  const cfg = sq.data?.settings.auto_trader
+  const exec = signal.exec
+  const state = exec?.state
+  const p = signal.proposal
+  const [err, setErr] = useState<string | null>(null)
+
+  const arm = useMutation({
+    mutationFn: () => postJSON(`/api/signals/${tsEnc}/arm`, {}),
+    onSuccess: () => { setErr(null); refresh() },
+    onError: (e: Error) => setErr(e.message),
+  })
+  const disarm = useMutation({
+    mutationFn: () => postJSON(`/api/signals/${tsEnc}/disarm`, {}),
+    onSuccess: () => { setErr(null); refresh() },
+    onError: (e: Error) => setErr(e.message),
+  })
+  const toggleEnable = useMutation({
+    mutationFn: (next: boolean) => postJSON('/api/auto-trader/enable', { enabled: next }),
+    onSuccess: () => { setErr(null); qc.invalidateQueries({ queryKey: ['settings'] }) },
+    onError: (e: Error) => setErr(e.message),
+  })
+
+  const accountSet = !!cfg?.account
+  const execEnabled = !!cfg?.enabled
+  const isFlat = p.direction === 'flat'
+  const live = state === 'working' || state === 'filled'
+  // Arming is staging intent -- allowed once an account is set, regardless of
+  // whether auto trading is enabled. Execution is gated separately below.
+  const canArm = accountSet && !isFlat && !live && state !== 'armed'
+  const canDisarm = state === 'armed'
+
+  return (
+    <div className="card">
+      <h2>Auto-Trader {' '}<ExecBadge exec={exec} /></h2>
+
+      {!accountSet ? (
+        <p className="subtle">
+          No account set. Pick a Sim account in{' '}
+          <Link to="/settings">Settings → Auto-Trader</Link> before arming.
+        </p>
+      ) : (
+        <>
+          <label className="settings-checkbox" style={{ marginBottom: 8 }}>
+            <input
+              type="checkbox"
+              checked={execEnabled}
+              disabled={toggleEnable.isPending}
+              onChange={(e) => toggleEnable.mutate(e.target.checked)}
+            />
+            <span>
+              <strong>Enable auto trading</strong> — auto-execute qualifying signals on{' '}
+              <strong>{cfg!.account}</strong>.{' '}
+              {execEnabled
+                ? <span className="pnl-pos">ON</span>
+                : <span className="subtle">OFF</span>}
+            </span>
+          </label>
+          {execEnabled ? (
+            <p className="subtle">
+              Auto trading is <strong className="pnl-pos">ON</strong> — new non-flat signals
+              created after you enabled execute automatically on{' '}
+              <code>{p.atm_strategy ?? 'custom'}</code> at {fmtPrice(p.entry, p.instrument)}.
+              <strong> No need to arm.</strong> Arming below forces this specific signal even if
+              it is older.
+            </p>
+          ) : (
+            <p className="subtle">
+              Auto trading is OFF — arming stages a LIMIT entry at {fmtPrice(p.entry, p.instrument)}{' '}
+              via the <code>{p.atm_strategy ?? 'custom'}</code> template; it executes once you enable
+              auto trading, and cancels if unfilled after the entry window.
+            </p>
+          )}
+        </>
+      )}
+
+      {state === 'filled' && exec?.fill_price != null && (
+        <p className="subtle">
+          Filled @ {fmtPrice(exec.fill_price, p.instrument)}
+          {exec.fill_qty ? ` × ${exec.fill_qty}` : ''}
+          {exec.filled_at ? ` (${exec.filled_at})` : ''}
+        </p>
+      )}
+      {(state === 'cancelled' || state === 'rejected' || state === 'disarmed') && exec?.note && (
+        <p className="subtle">{state}: {exec.note}</p>
+      )}
+
+      <div className="save-bar">
+        <button
+          type="button"
+          className="primary"
+          disabled={!canArm || arm.isPending}
+          onClick={() => arm.mutate()}
+        >
+          {arm.isPending ? 'Arming…' : state === 'armed' ? 'Armed' : execEnabled ? 'Arm now (force)' : 'Arm for execution'}
+        </button>
+        {canDisarm && (
+          <button
+            type="button"
+            className="danger"
+            disabled={disarm.isPending}
+            onClick={() => disarm.mutate()}
+          >
+            {disarm.isPending ? 'Disarming…' : 'Disarm'}
+          </button>
+        )}
+      </div>
+      {isFlat && accountSet && <p className="subtle">Flat signal — nothing to execute.</p>}
+      {err && <div className="error">{err}</div>}
+    </div>
+  )
+}
+
 // ---------- JSON snippet ----------
 function JsonSnippetSection({ signal }: { signal: Signal }) {
   // market_context is already shown in its own collapsed section in the
@@ -288,16 +422,17 @@ function ProposalDetails({ signal }: { signal: Signal }) {
       <dt>Direction</dt><dd className={`dir-${p.direction}`}>{p.direction || '—'}</dd>
       <dt>Entry</dt><dd>{fmtPrice(p.entry, p.instrument)}</dd>
       <dt>Entered at</dt><dd>{
-        signal.entry_triggered === true && enteredAt
-          ? enteredAt
-          : signal.entry_triggered === false
-            ? <span className="subtle">no entry (4 h window expired)</span>
-            : <span className="subtle">pending</span>
+        p.direction === 'flat'
+          ? <span className="subtle">no entry (flat — no trade)</span>
+          : signal.entry_triggered === true && enteredAt
+            ? enteredAt
+            : signal.entry_triggered === false
+              ? <span className="subtle">no entry (4 h window expired)</span>
+              : <span className="subtle">pending</span>
       }</dd>
       <dt>Stop</dt><dd>{fmtPrice(p.stop, p.instrument)}</dd>
       <dt>Target</dt><dd>{fmtPrice(p.target, p.instrument)}</dd>
       <dt>R:R</dt><dd>{fmtNum(p.risk_reward, 2)}</dd>
-      <dt>Confidence</dt><dd>{fmtNum(p.confidence, 2)}</dd>
     </dl>
   )
 }
@@ -348,7 +483,6 @@ function MarketContextSection({ ctx }: { ctx: AnyDict }) {
 function TradeRecap({ signal, metrics }: { signal: Signal; metrics: TradeMetrics | undefined }) {
   const p = signal.proposal
   const usingTicks = metrics?.display_mode === 'ticks'
-  const reassessed = p.reassessed
   return (
     <dl className="kv-grid">
       <dt>Instrument</dt>
@@ -362,18 +496,6 @@ function TradeRecap({ signal, metrics }: { signal: Signal; metrics: TradeMetrics
       </dd>
       <dt>Levels</dt>
       <dd>Entry {p.entry} → Stop {p.stop} → Target {p.target}</dd>
-      {reassessed && (
-        <>
-          <dt>Reassessment</dt>
-          <dd>
-            <span className="reassessed-badge">↻ {p.attempts} attempts</span>{' '}
-            confidences: {(p.attempt_confidences ?? []).map((c) => c.toFixed(2)).join(' → ')}
-            {p.confidence_floor !== undefined && p.confidence < p.confidence_floor && (
-              <span className="low-conf-flag"> below floor</span>
-            )}
-          </dd>
-        </>
-      )}
       {metrics && metrics.point_value && (
         <>
           <dt>Risk / contract</dt>
