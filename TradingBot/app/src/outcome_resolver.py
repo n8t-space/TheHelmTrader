@@ -40,6 +40,10 @@ PERIOD_SECS: dict[str, int] = {
 }
 PERIOD_PREFERENCE: tuple[str, ...] = ("1m", "5m", "15m", "1h", "4h", "1d", "1w")
 
+# Open upper bound for tick walks (year ~5138 in ms). Used by the tick-first
+# fallback so we can scan every tick at-or-after entry without a bar window.
+_TS_MS_MAX = 99_999_999_999_999
+
 
 Direction = Literal["long", "short"]
 OutcomeKind = Literal["target", "stop", "neither"]
@@ -80,6 +84,15 @@ def resolve_outcome(
         conn = sqlite3.connect(f"file:{FEED_DB_PATH}?mode=ro", uri=True)
 
     try:
+        # Tick-first: ticks are the actual prints and the most precise + current
+        # data. Walk them directly whenever any exist at-or-after entry. This is
+        # the path that survives stale/absent bars (HelmFeed publishing ticks but
+        # not bars) -- the bar-anchored stages below would otherwise miss the hit.
+        if _has_ticks_after(conn, instrument, entry_ts):
+            return (_resolve_in_ticks(conn, instrument, entry_ts * 1000, _TS_MS_MAX,
+                                      direction, target, stop)
+                    or _outcome_neither())
+
         period = _pick_finest_period(conn, instrument, entry_ts)
         if period is None:
             return _outcome_neither()
@@ -272,12 +285,16 @@ def resolve_brackets(
         state[-1]["leg"]["bracket_idx"] = len(state) - 1
 
     try:
-        # Stream events: prefer ticks; if no ticks for the period, walk bars
-        # using (low, high) extremes per bar. The walker processes one event at
-        # a time so trail/BE state advances in chronological order across all
-        # brackets.
-        period = _pick_finest_period(conn, instrument, entry_ts)
-        events = _stream_tape(conn, instrument, period, entry_ts) if period else iter([])
+        # Stream events tick-first: if any ticks exist at-or-after entry, walk
+        # them ALL directly (most precise, and survives stale/absent bars). Only
+        # if there are no ticks do we fall back to the bar-anchored tape. The
+        # walker processes one event at a time so trail/BE state advances in
+        # chronological order across all brackets.
+        if _has_ticks_after(conn, instrument, entry_ts):
+            events = _stream_ticks_only(conn, instrument, entry_ts)
+        else:
+            period = _pick_finest_period(conn, instrument, entry_ts)
+            events = _stream_tape(conn, instrument, period, entry_ts) if period else iter([])
 
         for ev in events:
             if all(not s["open"] for s in state):
@@ -389,6 +406,29 @@ def _step_bracket(s: dict, sign: int, entry_price: float, tick_size: float,
             s["leg"].update(open=False, result="target", exit_price=target_price,
                             exit_ts=ts_ms, method=method)
             s["open"] = False
+
+
+def _has_ticks_after(conn: sqlite3.Connection, instrument: str, entry_ts: int) -> bool:
+    """True if any tick exists at-or-after entry_ts for the instrument."""
+    return conn.execute(
+        "SELECT 1 FROM ticks WHERE instrument = ? AND ts_ms >= ? LIMIT 1",
+        (instrument, entry_ts * 1000),
+    ).fetchone() is not None
+
+
+def _stream_ticks_only(conn: sqlite3.Connection, instrument: str, entry_ts: int):
+    """Yield (ts_ms, price, price, 'tick') for every tick at-or-after entry_ts.
+
+    Bar-independent: used when ticks are present so a stop/target/trail is caught
+    even when feed.db has no (or stale) bars covering the trade. Ticks are the
+    real prints, so this is also more precise than the bar-anchored walk."""
+    rows = conn.execute(
+        "SELECT ts_ms, price FROM ticks "
+        "WHERE instrument = ? AND ts_ms >= ? ORDER BY ts_ms ASC",
+        (instrument, entry_ts * 1000),
+    )
+    for ts_ms, price in rows:
+        yield (ts_ms, float(price), float(price), "tick")
 
 
 def _stream_tape(conn: sqlite3.Connection, instrument: str, period: str,
