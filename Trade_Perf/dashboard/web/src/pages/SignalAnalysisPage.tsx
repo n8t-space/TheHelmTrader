@@ -33,6 +33,11 @@ function enteredState(s: Signal): EnteredState {
   // otherwise sit 'pending' forever. Treat flat as no entry by definition.
   if (s.proposal?.direction === 'flat') return 'no_entry'
   if (s.entry_triggered === true) return 'hit'
+  // The resolver only records a leg exit (with P&L) after price entered and the
+  // bracket resolved -- so a resolved leg means it entered, even before
+  // entry_triggered is stamped. Keeps the Entered column from showing 'pending'
+  // while the P&L column already shows a number.
+  if (s.legs && s.legs.some((l) => l.exit_ts != null)) return 'hit'
   if (s.entry_triggered === false) return 'no_entry'
   // Implicit: not yet resolved by watcher. Check signal age.
   const t = Date.parse(s.timestamp)
