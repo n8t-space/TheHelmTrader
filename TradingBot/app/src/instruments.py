@@ -114,15 +114,22 @@ def compute_trade_metrics(rec: dict, config: dict) -> dict:
     point_value = lookup_point_value(instrument, config)
     tick_size, tick_source = lookup_tick_size(instrument, config)
     is_futures = tick_source == "explicit"
-    # Default to 1 contract when missing/zero so signals show realized
-    # P&L and feed the W/L rollup without explicit sizing. Users can still
-    # override via the Signal detail "Contracts / Shares" field.
+    # When sizing isn't set explicitly, default to the ATM template's total
+    # contracts (a scale-out template places >1) so MULTI-CONTRACT trades report
+    # full sizing + P&L -- not 1. Falls back to 1 only when no template qty is
+    # known. Users can still override via the Signal detail "Contracts" field.
+    # (The per-leg path below already sums each leg's qty, so it's unaffected.)
     try:
         position_size = float(rec.get("position_size") or 0)
     except (TypeError, ValueError):
         position_size = 0.0
     if position_size <= 0:
-        position_size = 1.0
+        try:
+            position_size = float(proposal.get("atm_total_qty") or 0)
+        except (TypeError, ValueError):
+            position_size = 0.0
+        if position_size <= 0:
+            position_size = 1.0
     outcome = rec.get("outcome") or {}
     outcome_result = outcome.get("result")
     closing_price = outcome.get("closing_price")
