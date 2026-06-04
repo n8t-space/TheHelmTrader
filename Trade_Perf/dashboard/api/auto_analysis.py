@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from . import _tradebot_bridge as bridge  # noqa: F401  # ensures sys.path shim
-from src import auto_analyzer, feed_store  # type: ignore[import-not-found]  # via bridge
+from src import auto_analyzer, feed_store, instruments  # type: ignore[import-not-found]  # via bridge
 
 router = APIRouter(prefix="/api/auto-analysis", tags=["auto-analysis"])
 logger = logging.getLogger(__name__)
@@ -49,22 +49,31 @@ async def put_config(payload: ConfigPayload) -> dict:
             detail=f"At most {MAX_ARMED} armed entries allowed; got {armed}.",
         )
 
+    # Normalize each instrument to its ROOT (e.g. "MCL JUL26" -> "MCL"). HelmFeed
+    # publishes MasterInstrument.Name (stripped) into feed.db, and both the
+    # arm-check and the analyzer's bar query do exact-string matches -- so a
+    # contract-month suffix here means feed.db is never found and analysis is
+    # silently skipped. Normalizing on write keeps the config aligned with the feed.
+    norm = [
+        {"instrument": instruments.normalize_symbol(e.instrument) or e.instrument,
+         "period": e.period, "enabled": e.enabled}
+        for e in payload.entries
+    ]
+
     # Reject duplicate (instrument, period) keys — would silently collapse on
-    # PRIMARY KEY conflict otherwise.
+    # PRIMARY KEY conflict otherwise. Check AFTER normalization so "MCL JUL26"
+    # and "MCL" can't both land on the same (MCL, period) key.
     seen: set[tuple[str, str]] = set()
-    for e in payload.entries:
-        key = (e.instrument, e.period)
+    for e in norm:
+        key = (e["instrument"], e["period"])
         if key in seen:
             raise HTTPException(
                 status_code=400,
-                detail=f"Duplicate (instrument, period): {key}",
+                detail=f"Duplicate (instrument, period) after normalization: {key}",
             )
         seen.add(key)
 
-    await asyncio.to_thread(
-        feed_store.replace_config,
-        [e.model_dump() for e in payload.entries],
-    )
+    await asyncio.to_thread(feed_store.replace_config, norm)
     rows = await asyncio.to_thread(feed_store.list_config)
     return {"entries": rows}
 
