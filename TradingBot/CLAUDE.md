@@ -96,6 +96,26 @@ NS-driven publish of bars + ticks → bot ingestion at `/api/feed/{bar,ticks}` �
 - Split happens in `Trade_Perf/dashboard/api/settings.py`: `_save_to_disk` writes the two files; `_load_from_disk` overlays credentials over settings; `_migrate_credentials` (runs every load, incl. post-update restart) moves any inline secrets out of a legacy settings.json. The credentials path is **derived from `SETTINGS_PATH`** (`_credentials_path()`) so test redirection isolates it too.
 - **Do NOT** put API keys or account IDs back into `settings.json`, default seeds, docs, session logs, or commit messages. `_CREDENTIAL_SECTIONS` is the source of truth for what's sensitive. install/update never overwrite `credentials.json`.
 
+## Auto-Trader: concurrency & account (durable, 2026-06-04)
+
+- **Concurrency is PER-INSTRUMENT, not global.** `exec_queue` skips only instruments that already have an open trade (one open per instrument); `auto_trader.account` `max_concurrent` is the overall ceiling across instruments. Do NOT reinstate a global "one trade total" hold.
+- **One NS HelmAutoTrader instance per instrument.** Each instance trades only its chart's instrument (ignores other roots) and self-caps at `MaxConcurrent=1`. MES + MCL = two instances, both on the locked account.
+- **Account is dashboard-driven** (single source of truth = Settings > Auto-Trader > Account, via `GET /api/auto-trader/account`). The strategy fetches it on the **poll tick** (worker thread) and uses it as the allowed account; the `AllowedAccount` property is only the offline fallback. Do NOT fetch in `State.Realtime` (boot race -> permanent disable) and do NOT treat the property as the source of truth.
+- **Queue**: <=1 signal per instrument, superseded/older ones expire to `no_fill`. Cancel-on-chart of an unfilled entry -> `no_fill` (kept on board, excluded from P&L); a filled position is a normal close, not a clear.
+
+## AI providers (durable, 2026-06-04)
+
+- **Per-component provider**: `ai_backend.news_provider` / `signal_provider` ("" = inherit `provider`). Resolve via `runtime_config.provider(component)` / `is_provider_configured(component)`. News runs on Claude (big Econoday HTML overflows Ollama's num_ctx -> returns `{`); signals can stay local.
+- **`claude-opus-4-8` does NOT support assistant-message prefill** (400 "conversation must end with a user message"). Don't prefill the assistant turn for any Claude call; rely on the prompt + a defensive parse.
+
+## Dev environment (durable, 2026-06-04)
+
+- Run an isolated instance with `HELM_HOME` (settings/credentials/news/version honor it; unset = `~/.helm`). `Trade_Perf/runtime/setup-dev-env.ps1` makes a `dev` git worktree + seeds `~/.helm-dev` + a live-data snapshot; `run-dev.ps1` launches it foreground on :8001 (`--reload`, NOT the NSSM service). Live :8000 stays untouched.
+
+## Operational gotcha (2026-06-04)
+
+- **NT8 hang freezes feeds.** If an instrument's bars freeze while its ticks stay 0-min-old, NinjaTrader/the chart is hung (ticks ride the market-data subscription; bar publishing stops) -- not a Helm bug. Reboot NT. The reconnect backfills bars as a burst that the 120s stale-gate skips, so analysis only resumes on the next CLEAN live bar.
+
 ## Restart mechanism (durable, 2026-06-03)
 
 - **In-app "Restart Helm" button works** (`POST /api/version/restart`): uvicorn **self-exits** (`os._exit`), watchdog respawns. Do NOT revert to `Stop-Process` against the uvicorn PID — it runs Session-0 as the NSSM service account and refuses with Access denied.
