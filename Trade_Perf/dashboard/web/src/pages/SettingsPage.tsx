@@ -434,7 +434,7 @@ function AiTab({ value, onChange }: {
       </p>
       <div className="settings-row">
         <label>
-          <span>Provider</span>
+          <span>Default provider</span>
           <select
             value={provider}
             onChange={(e) => onChange({ ...value, provider: e.target.value as SettingsAiBackend['provider'] })}
@@ -444,7 +444,7 @@ function AiTab({ value, onChange }: {
             <option value="openai">OpenAI ChatGPT (cloud)</option>
           </select>
           <span className="subtle">
-            Ollama: free, on-network, ~5–15 s warm. Claude: best reasoning, ~2–4 s, ~$0.01–0.03/snip. OpenAI: balanced, ~2–5 s, ~$0.005–0.02/snip.
+            Used by any component set to "default" below. Ollama: free, on-network, ~5–15 s warm. Claude: best reasoning, ~2–4 s. OpenAI: balanced.
           </span>
         </label>
         <label>
@@ -456,6 +456,39 @@ function AiTab({ value, onChange }: {
           />
           <span className="subtle">
             How long to wait before aborting an inference call. Local Ollama on iGPU: 180+ for cold starts. Cloud: 60 is plenty.
+          </span>
+        </label>
+      </div>
+
+      <div className="settings-row">
+        <label>
+          <span>News provider</span>
+          <select
+            value={value.news_provider ?? ''}
+            onChange={(e) => onChange({ ...value, news_provider: e.target.value as SettingsAiBackend['news_provider'] })}
+          >
+            <option value="">Use default ({provider})</option>
+            <option value="ollama">Ollama (local / LAN)</option>
+            <option value="claude">Anthropic Claude (cloud)</option>
+            <option value="openai">OpenAI ChatGPT (cloud)</option>
+          </select>
+          <span className="subtle">
+            Economic-calendar (Econoday) extraction. The HTML is large — a cloud model (Claude/OpenAI) is far more reliable here than local Ollama.
+          </span>
+        </label>
+        <label>
+          <span>Signal provider</span>
+          <select
+            value={value.signal_provider ?? ''}
+            onChange={(e) => onChange({ ...value, signal_provider: e.target.value as SettingsAiBackend['signal_provider'] })}
+          >
+            <option value="">Use default ({provider})</option>
+            <option value="ollama">Ollama (local / LAN)</option>
+            <option value="claude">Anthropic Claude (cloud)</option>
+            <option value="openai">OpenAI ChatGPT (cloud)</option>
+          </select>
+          <span className="subtle">
+            Chart/signal analysis (manual snip + auto-analysis). Leave on default unless you want a different model for trade reads.
           </span>
         </label>
       </div>

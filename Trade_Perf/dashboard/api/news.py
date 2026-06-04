@@ -203,7 +203,9 @@ def _ai_extract_econoday(html: str) -> tuple[list[dict[str, Any]], str | None]:
     """Ship the Econoday HTML to whichever AI provider is configured and parse
     its JSON output. Returns ([], error_msg) on any failure."""
     ai = settings_mod.get_settings().ai_backend
-    provider = ai.provider
+    # Per-component override: News can run on a different provider than signals
+    # (e.g. Claude here for the large Econoday HTML, Ollama for signals).
+    provider = (ai.news_provider or "").strip() or ai.provider
 
     today_iso = datetime.now(timezone.utc).date().isoformat()
     # Trim HTML aggressively -- the calendar grid is the only useful chunk,

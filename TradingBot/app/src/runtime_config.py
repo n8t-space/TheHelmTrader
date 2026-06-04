@@ -53,12 +53,26 @@ def _live():
         return None
 
 
-def provider() -> str:
+# Map component name -> the AiBackend field holding its provider override.
+_COMPONENT_PROVIDER_FIELD = {"news": "news_provider", "signal": "signal_provider"}
+
+
+def provider(component: str | None = None) -> str:
+    """Resolve the AI provider, honoring a per-component override (e.g. News on
+    claude, signals on ollama). Empty/absent override -> the global provider."""
     s = _live()
-    return s.ai_backend.provider if s else _D.provider
+    if s is None:
+        return _D.provider
+    ab = s.ai_backend
+    if component:
+        field = _COMPONENT_PROVIDER_FIELD.get(component)
+        override = (getattr(ab, field, "") if field else "") or ""
+        if override.strip():
+            return override.strip()
+    return ab.provider
 
 
-def is_provider_configured() -> tuple[bool, str]:
+def is_provider_configured(component: str | None = None) -> tuple[bool, str]:
     """Is the selected AI provider configured enough to call?
 
     Returns (ok, reason). ok=False means the analyzer should NOT make a call
@@ -76,7 +90,7 @@ def is_provider_configured() -> tuple[bool, str]:
         return True, ""
 
     backend = s.ai_backend
-    p = backend.provider
+    p = provider(component)
     if p == "ollama":
         url = (backend.ollama_url or "").strip()
         if not url:
