@@ -177,6 +177,16 @@ def set_enabled(update: EnableUpdate) -> dict:
     return {"enabled": cfg.enabled, "account": cfg.account}
 
 
+@router.get("/auto-trader/account")
+def auto_trader_account() -> dict:
+    """Single source of truth for the auto-trade account (Settings > Auto-Trader).
+    HelmAutoTrader fetches this on start and uses it as its allowed account, so
+    the strategy's 'Allowed account' and the dashboard's 'Setup > Account' can
+    never drift. Empty string when unset."""
+    cfg = settings_mod.auto_trader_config()
+    return {"account": cfg.account or "", "enabled": cfg.enabled}
+
+
 # ---------------------------------------------------------------------------
 # Execution queue + lifecycle (NT strategy <-> signal)
 # ---------------------------------------------------------------------------
