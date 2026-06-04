@@ -271,6 +271,25 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
                 loggedAccountWait = false;  // account matches -> clear the wait throttle
 
+                // Fail-safe telemetry: report live account equity so the dashboard
+                // can enforce the balance floor (it forces auto-trading OFF if
+                // equity <= the configured floor). NetLiquidation = total account
+                // value incl. open P&L, in the account's own currency.
+                try
+                {
+                    if (Account != null)
+                    {
+                        // NetLiquidation reads 0.0 before the broker's first account-
+                        // item push (reachable at Realtime / under Sim+Playback). Only
+                        // report a plausible POSITIVE equity, so a not-ready 0 can't
+                        // false-trip the "stop if balance <= floor" kill-switch.
+                        double eq = Account.Get(AccountItem.NetLiquidation, Account.Denomination);
+                        if (eq > 0 && !double.IsNaN(eq) && !double.IsInfinity(eq))
+                            ReportBalance(acct, eq);
+                    }
+                }
+                catch (Exception bex) { Print($"[HelmAuto] balance read failed: {bex.Message}"); }
+
                 string url = BotBaseUrl.TrimEnd('/') + "/api/exec/queue?account=" + Uri.EscapeDataString(acct);
                 string body;
                 try
@@ -524,6 +543,16 @@ namespace NinjaTrader.NinjaScript.Strategies
         // =================================================================
         private string DisarmUrl(string ts) =>
             BotBaseUrl.TrimEnd('/') + "/api/signals/" + Uri.EscapeDataString(ts) + "/disarm";
+
+        // Fail-safe telemetry: post the account's live equity. The dashboard
+        // forces auto-trading OFF if equity is at/below the configured floor.
+        private void ReportBalance(string acct, double equity)
+        {
+            string url = BotBaseUrl.TrimEnd('/') + "/api/auto-trader/balance";
+            string json = "{\"account\":\"" + JsonStr(acct) + "\",\"balance\":"
+                + equity.ToString("0.##", CultureInfo.InvariantCulture) + "}";
+            PostFireAndForget(url, json);
+        }
 
         private void PostExec(string ts, string state, string execTag,
                               double? fillPrice, int? fillQty, bool dryRun, string note)

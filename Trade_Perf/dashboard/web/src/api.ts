@@ -592,6 +592,7 @@ export interface SettingsAutoTrader {
   max_contracts_per_order: number
   max_concurrent: number
   daily_loss_cutoff: number
+  min_account_balance: number
   poll_seconds: number
   entry_window_minutes: number
 }

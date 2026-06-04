@@ -164,6 +164,11 @@ class AutoTrader(BaseModel):
     # session realized P&L on `account` <= -cutoff, the strategy stops placing
     # and disarms remaining signals.
     daily_loss_cutoff: float = Field(default=0.0, ge=0.0)
+    # Account-balance floor (live equity, account-currency dollars). 0 => off.
+    # When the strategy reports account equity <= this, auto-trading is forced
+    # OFF (master switch) and the queue empties -- a hard fail-safe that requires
+    # manual re-enable. Open positions keep their own ATM stop (not flattened).
+    min_account_balance: float = Field(default=0.0, ge=0.0)
     poll_seconds: int = Field(default=3, ge=1, le=60)
     entry_window_minutes: int = Field(default=240, ge=1, le=1440)
     # Stamped (naive-local ISO) the moment auto-trading goes OFF->ON. Autonomous

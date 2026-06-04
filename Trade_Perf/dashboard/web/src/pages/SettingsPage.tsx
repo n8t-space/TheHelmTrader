@@ -281,6 +281,17 @@ function AutoTraderTab({ value, simAccounts, onChange }: {
           <span className="subtle">Auto-disarm once session realized loss reaches this. 0 = off.</span>
         </label>
         <label>
+          <span>Stop if balance &le; ($)</span>
+          <input
+            type="number" min={0} step="any"
+            value={value.min_account_balance}
+            onChange={(e) => onChange({ ...value, min_account_balance: Number(e.target.value) })}
+          />
+          <span className="subtle">
+            Fail-safe: when the account's live equity reaches this or lower, auto-trading is forced OFF (master switch). Open trades keep their own ATM stop. 0 = off. Requires manual re-enable.
+          </span>
+        </label>
+        <label>
           <span>Poll interval (s)</span>
           <input
             type="number" min={1} max={60}
