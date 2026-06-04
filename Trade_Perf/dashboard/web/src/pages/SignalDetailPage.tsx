@@ -620,20 +620,18 @@ function OutcomeSection({
         {saved?.note && ` — ${saved.note}`}
         {saved?.closing_price != null && ` • close @ ${saved.closing_price}`}
       </p>
-      <fieldset disabled={locked}>
-        {OUTCOME_RESULTS.map((r) => (
-          <label key={r}>
-            <input
-              type="radio"
-              name="result"
-              value={r}
-              checked={result === r}
-              onChange={() => setResult(r)}
-            />
-            {' '}{r}
-          </label>
-        ))}
-      </fieldset>
+      <label className="inline-label">
+        Outcome:{' '}
+        <select
+          value={result}
+          onChange={(e) => setResult(e.target.value as Outcome['result'])}
+          disabled={locked}
+        >
+          {OUTCOME_RESULTS.map((r) => (
+            <option key={r} value={r}>{r}</option>
+          ))}
+        </select>
+      </label>
       <label className="inline-label">
         Closing price (optional, overrides default P/L):{' '}
         <input

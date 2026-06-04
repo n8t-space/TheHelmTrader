@@ -356,6 +356,7 @@ export interface Signal {
   raw_response?: string
   duration_s?: number
   model?: string
+  provider?: string
   market_context?: Record<string, unknown>
   journal?: Journal
   outcome?: Outcome
