@@ -69,13 +69,17 @@ multiples, period extremes). Do not invent prices outside the observed
 range.
 
 ================================================================
-STOP / TARGET SIZING
+ATM STRATEGY - pick one for any long/short
 ================================================================
 
-- Stop = the level at which the setup is invalidated. Usually a swing
-  low/high in the bar table or a fraction of ATR(14) beyond entry.
-- Target = a sensible take-profit. Aim for 1.5R - 3R unless an obvious
-  level (period extreme, EMA) is closer.
+- The "Available ATM Strategies" menu is listed at the very top of this
+  prompt. For a long or short, pick exactly ONE by its EXACT name and put it
+  in "atm_strategy". The template's stop/target are derived in code from your
+  entry -- so choose the template whose stop distance matches where your setup
+  is invalidated (use ATR(14) and the swing levels to judge).
+- For "flat", leave "atm_strategy" as an empty string "".
+- Still emit "entry" (the level your order works at). "stop"/"target" are
+  advisory only -- code overrides them from the chosen template.
 - Leave risk_reward as 0 - code computes it.
 
 ================================================================
@@ -84,7 +88,7 @@ OUTPUT - return ONLY this JSON, no prose around it
 
 {{"instrument": "{instrument}",
  "direction": "long" | "short" | "flat",
+ "atm_strategy": "<exact name from the menu above; \"\" for flat>",
  "entry": <number>, "stop": <number>, "target": <number>,
  "risk_reward": 0,
- "confidence": <0.0-1.0>,
  "reasoning": "<2-4 sentences following the rules above; cite specific bar values from the table>"}}

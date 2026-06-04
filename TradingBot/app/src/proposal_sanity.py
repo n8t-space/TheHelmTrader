@@ -44,6 +44,12 @@ def sanity_check(proposal: dict) -> tuple[bool, str | None]:
     if proposal.get("direction") == "flat":
         return True, None
 
+    # A directional trade must name an ATM template -- the auto-trader has
+    # nothing to place without one, and an entered trade with a blank strategy
+    # is meaningless. Reject so the record is auto-dismissed, never "entered".
+    if not str(proposal.get("atm_strategy") or "").strip():
+        return False, "directional proposal has no ATM strategy"
+
     instrument = proposal.get("instrument")
     if not instrument:
         return False, "missing instrument"
