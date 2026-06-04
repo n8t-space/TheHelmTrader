@@ -90,6 +90,12 @@ NS-driven publish of bars + ticks → bot ingestion at `/api/feed/{bar,ticks}` �
 - **Prompt files** (`app/prompts/`): `analyzer.txt` (vision; used by manual snip AND visual auto-analysis), `headless_analyzer.txt` (text-only fallback, no fresh screenshot). Read **per-call** → edits are live with NO restart. `.format()`-rendered? `headless_analyzer.txt` yes (double literal braces); `analyzer.txt` is concatenated (single braces OK).
 - **Stale-bar gate**: `/api/feed/bar` drops bars arriving >120s after their close ts (backfill) and the first bar after any >30 min gap (post-gap warmup, skips chaotic session open). A "no signals" report is often one of these or the active-trade skip — check before assuming a bug.
 
+## Secrets / credentials split (durable, 2026-06-04)
+
+- **`~/.helm/credentials.json` holds the sensitive sections only** — `ai_backend` (API keys, inference URLs, models) + `accounts` (broker IDs). `~/.helm/settings.json` holds everything else and is secret-free, safe to share/commit/bundle. Both live outside the repo; `credentials.json` is also git-ignored.
+- Split happens in `Trade_Perf/dashboard/api/settings.py`: `_save_to_disk` writes the two files; `_load_from_disk` overlays credentials over settings; `_migrate_credentials` (runs every load, incl. post-update restart) moves any inline secrets out of a legacy settings.json. The credentials path is **derived from `SETTINGS_PATH`** (`_credentials_path()`) so test redirection isolates it too.
+- **Do NOT** put API keys or account IDs back into `settings.json`, default seeds, docs, session logs, or commit messages. `_CREDENTIAL_SECTIONS` is the source of truth for what's sensitive. install/update never overwrite `credentials.json`.
+
 ## Restart mechanism (durable, 2026-06-03)
 
 - **In-app "Restart Helm" button works** (`POST /api/version/restart`): uvicorn **self-exits** (`os._exit`), watchdog respawns. Do NOT revert to `Stop-Process` against the uvicorn PID — it runs Session-0 as the NSSM service account and refuses with Access denied.

@@ -59,6 +59,8 @@ The vision LLM that turns chart screenshots into trade proposals. Picked on **Se
 
 After saving, click **Test connection** — green badge with latency + model present means you're good.
 
+> **Where credentials live.** Your API keys and broker account IDs are stored in `~/.helm/credentials.json`, kept separate from `~/.helm/settings.json` (which holds only non-sensitive config). `credentials.json` is git-ignored, is never overwritten by install/update, and is excluded from support bundles. On first run after an update, any keys/accounts still inline in `settings.json` are migrated into `credentials.json` automatically. Back up `credentials.json` if you reinstall.
+
 ## 2. Strategy thresholds
 
 **Settings → Strategy**. Controls when the bot accepts a proposal and how aggressively it cleans up old data.
