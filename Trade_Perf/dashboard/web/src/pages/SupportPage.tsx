@@ -218,6 +218,11 @@ git fetch origin main`}</pre>
           <dd>
             Open <strong>Settings {' → '} AI Backend</strong> and click <strong>Test connection</strong>. A red badge means the configured provider (Ollama / Claude / OpenAI) isn't reachable. For Ollama, check the URL and that the model is pulled (<code>ollama list</code>). For Claude / OpenAI, verify the API key.
           </dd>
+
+          <dt>An armed signal won't execute (badge stuck on ARMED)</dt>
+          <dd>
+            Check, in order: (1) <strong>Enable auto trading</strong> is ON — Settings {' → '} Auto-Trader or the signal's Auto-Trader card; OFF stages but never places. (2) A <code>HelmAutoTrader</code> strategy is <strong>Enabled and at Realtime</strong> on the locked account — it logs <code>[HelmAuto] armed and watching</code> when ready. (3) The strategy's <strong>instrument matches the signal</strong> — one instance trades one instrument, and it logs <code>skip … signal is 'MCL' but this strategy runs 'MES'</code> on a mismatch (run an instance per instrument). (4) <code>DryRun</code> is off if you expect a real order — dry-run only logs "WOULD place" and shows WORKING (DRY). The NinjaScript Output window (Control Center {' → '} New {' → '} NinjaScript Output) shows the exact reason.
+          </dd>
         </dl>
       </div>
 
@@ -328,8 +333,6 @@ function ConfigurationTab() {
           <table>
             <thead><tr><th>Field</th><th>Recommended</th><th>What it does</th></tr></thead>
             <tbody>
-              <tr><td>Confidence floor</td><td><code>0.65</code></td><td>Rejects sub-0.65 proposals + triggers a retry. Up for less noise, down for more setups.</td></tr>
-              <tr><td>Max attempts</td><td><code>3</code></td><td>Retry budget when below floor. More attempts = more cost/latency per snip.</td></tr>
               <tr><td>Reconciliation cap</td><td><code>5</code></td><td>Max in-flight trades reconciliation pass touches per manual snip.</td></tr>
               <tr><td>Retention (days)</td><td><code>14</code></td><td>Feed.db auto-prune window. Covers the outcome resolver with margin.</td></tr>
               <tr><td>Stale bar (s)</td><td><code>300</code></td><td>Skip auto-analysis if latest bar is older than this. Prevents weekend backfill triggers.</td></tr>
@@ -357,15 +360,19 @@ function ConfigurationTab() {
           <table>
             <thead><tr><th>Slot</th><th>Instrument</th><th>Period</th><th>Purpose</th></tr></thead>
             <tbody>
-              <tr><td>1</td><td><code>MES 03-26</code></td><td><code>5m</code></td><td>Primary scalping timeframe</td></tr>
-              <tr><td>2</td><td><code>MES 03-26</code></td><td><code>15m</code></td><td>Intraday context</td></tr>
-              <tr><td>3</td><td><code>MCL 04-26</code></td><td><code>5m</code></td><td>Crude scalping</td></tr>
-              <tr><td>4</td><td><code>MCL 04-26</code></td><td><code>15m</code></td><td>Crude intraday</td></tr>
+              <tr><td>1</td><td><code>MES</code></td><td><code>5m</code></td><td>Primary scalping timeframe</td></tr>
+              <tr><td>2</td><td><code>MES</code></td><td><code>15m</code></td><td>Intraday context</td></tr>
+              <tr><td>3</td><td><code>MCL</code></td><td><code>5m</code></td><td>Crude scalping</td></tr>
+              <tr><td>4</td><td><code>MCL</code></td><td><code>15m</code></td><td>Crude intraday</td></tr>
             </tbody>
           </table>
         </div>
         <p className="support-prose subtle">
-          Use the active front-month contract for each instrument. Slots are checked against the HelmFeed data store, so the corresponding chart must have <code>HelmFeed</code> running.
+          <strong>Use the stripped root symbol</strong> (<code>MES</code>, <code>MCL</code>) — NOT the
+          full contract (<code>MES 03-26</code>). HelmFeed publishes bars under the root
+          (<code>MasterInstrument.Name</code>), and the analyzer matches the instrument exactly, so a
+          contract-month suffix finds no bars and silently skips. (Entries are now auto-normalized to
+          the root on save.) The corresponding chart must have <code>HelmFeed</code> running.
         </p>
       </div>
 
@@ -393,6 +400,70 @@ function ConfigurationTab() {
           <li><code>Timezone</code>: <code>America/Chicago</code> — CME session timing</li>
           <li><code>Table page size</code>: <code>100</code></li>
         </ul>
+      </div>
+
+      <div className="card support-card">
+        <h2>7. Auto-Trader (Sim-only)</h2>
+        <p className="support-prose">
+          Opt-in automation of the mechanical ATM entry, locked to a single account. Sim-only in
+          this version, and the live switch ships OFF. The bot only chooses <em>which</em> ATM
+          template and <em>when</em> — it never sizes or manages the trade.
+        </p>
+
+        <h3 className="support-h3">How it works</h3>
+        <ol className="support-steps">
+          <li>The NinjaScript <code>HelmAutoTrader</code> strategy, running on the locked account, polls the dashboard for signals to execute on its own instrument.</li>
+          <li>When <strong>auto trading is ON</strong>, every qualifying new signal (non-flat, created after you enabled) is placed automatically — a LIMIT entry at the proposal's price using its ATM template — then reported back working {' → '} filled (or cancelled if unfilled past the entry window). <strong>No manual arm needed.</strong></li>
+          <li>With auto trading <strong>OFF</strong>, nothing executes. You can still <strong>arm</strong> individual signals on their Signal Detail page to stage them (they fire when you turn it on), or use Arm as a manual override to force an older / sub-floor signal.</li>
+        </ol>
+        <p className="support-prose subtle">
+          Flipping the switch never replays a backlog: only signals created after you enabled it qualify. The ATM template owns the order size and bracket/trail logic.
+        </p>
+
+        <h3 className="support-h3">A. Configure — Settings {' → '} Auto-Trader</h3>
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Field</th><th>Recommended</th><th>What it does</th></tr></thead>
+            <tbody>
+              <tr><td>Enable auto trading</td><td><code>off</code> until ready</td><td>Live execution switch. ON = qualifying new signals auto-execute (no arm). OFF = nothing fires; you can still arm to stage.</td></tr>
+              <tr><td>Locked account</td><td><code>Sim101</code></td><td>The one account the strategy may act on. The strategy refuses to run on any other account.</td></tr>
+              <tr><td>Max contracts / order</td><td><code>2</code></td><td>A gate, not a clamp: refuses to arm/place a template larger than this (the ATM template fixes size — it can't be resized).</td></tr>
+              <tr><td>Max concurrent</td><td><code>1–2</code></td><td>Cap on simultaneously open ATM strategies; extra armed signals are skipped.</td></tr>
+              <tr><td>Daily loss cutoff ($)</td><td>your limit (<code>0</code>=off)</td><td>Halts placement and disarms the queue once session realized loss hits this.</td></tr>
+              <tr><td>Entry window (min)</td><td><code>240</code></td><td>Cancels an unfilled LIMIT entry after this. Matches the 4 h entry resolver.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 className="support-h3">B. Deploy the strategy (NinjaTrader)</h3>
+        <ol className="support-steps">
+          <li>
+            Copy <code>HelmAutoTrader.cs</code> into NT8's <strong>Strategies</strong> folder (NOT Indicators):
+            <pre className="support-code">{`Copy-Item "$HOME\\Documents\\Projects\\TheHelmTrader\\TradingBot\\ninjascript\\_Helm Locker\\HelmAutoTrader.cs" "$HOME\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\_Helm Locker\\" -Force`}</pre>
+          </li>
+          <li>NinjaScript Editor (<kbd>F11</kbd>) {' → '} Compile (<kbd>F5</kbd>). Look for "Compile succeeded".</li>
+        </ol>
+
+        <h3 className="support-h3">C. Run one instance per instrument</h3>
+        <p className="support-prose">
+          A strategy instance trades exactly ONE instrument — an ATM entry can only be placed on the strategy's own instrument. To auto-trade both MES and MCL, run two instances.
+        </p>
+        <ol className="support-steps">
+          <li>Control Center {' → '} <strong>Strategies</strong> tab {' → '} right-click {' → '} <strong>New strategy…</strong></li>
+          <li>Select <code>HelmAutoTrader</code>. Set <strong>Instrument</strong> = the front-month contract (e.g. <code>MCL 07-26</code>), <strong>Account</strong> = <code>Sim101</code>.</li>
+          <li>Parameters: <code>AllowedAccount = Sim101</code>, leave <code>DryRun = true</code> for the first run. Click OK.</li>
+          <li>Tick <strong>Enabled</strong>. Open Control Center {' → '} New {' → '} <strong>NinjaScript Output</strong> and confirm <code>[HelmAuto] armed and watching account 'Sim101'</code>. (It must reach Realtime — a live data feed for that instrument is required.)</li>
+          <li>Once dry-run looks right, set <code>DryRun = false</code> to place live (on Sim).</li>
+        </ol>
+
+        <h3 className="support-h3">D. Trade it</h3>
+        <ol className="support-steps">
+          <li>Tick <strong>Enable auto trading</strong> (Settings or any signal's Auto-Trader card). From that moment, qualifying new signals execute automatically.</li>
+          <li>Watch a signal move WORKING {' → '} FILLED on its card and in the NinjaScript Output. With auto trading OFF, use <strong>Arm</strong> on a signal to stage or force it instead.</li>
+        </ol>
+        <p className="support-prose subtle">
+          Dry-run never draws on the chart — it only logs "WOULD place…" and shows a WORKING (DRY) badge. Real orders appear only with <code>DryRun = false</code> and auto trading ON.
+        </p>
       </div>
     </>
   )
