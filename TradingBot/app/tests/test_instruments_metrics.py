@@ -42,8 +42,10 @@ def test_multi_leg_sizing_from_legs():
     # risk 2 pts * $5 * 2 = $20 ; reward 5 pts * $5 * 2 = $50
     assert math.isclose(m["total_risk"], 20.0)
     assert math.isclose(m["total_reward"], 50.0)
-    # realized from legs: (7565.5-7563.5)*5 + (7563.75-7563.5)*5 = 10 + 1.25
-    assert math.isclose(m["realized_pnl"], 11.25)
+    # realized from legs: (7565.5-7563.5)*5 + (7563.75-7563.5)*5 = 10 + 1.25 gross,
+    # then NET of the round-trip commission estimate (MES $1.10 x 2 = $2.20).
+    assert math.isclose(m["realized_pnl"], 9.05)
+    assert math.isclose(m["commission"], 2.20)
     assert m["realized_pnl_source"] == "legs"
 
 
@@ -71,9 +73,31 @@ def test_stored_leg_pnl_is_trusted():
          "pnl": -11.25, "engine": "auditor"},
     ]
     m = instruments.compute_trade_metrics(rec, CONFIG)
-    # Sum of stored leg pnl, not a recompute off entry=7563.5.
-    assert math.isclose(m["realized_pnl"], -22.50)
-    assert m["leg_breakdown"][0]["pnl"] == -11.25
+    # Sum of stored leg pnl (-22.50 gross), then net of fees (MES $1.10 x 2).
+    assert math.isclose(m["realized_pnl"], -24.70)
+    assert m["leg_breakdown"][0]["pnl"] == -11.25   # per-leg stays gross
+
+
+def test_paper_pnl_is_net_of_estimated_fees():
+    # A paper (legs) signal must net the round-trip commission estimate so it's
+    # comparable to Trade Performance.
+    rec = _long_mes()
+    rec["legs"] = [{"bracket_idx": 0, "qty": 1, "exit_price": 7565.5, "result": "target"}]
+    m = instruments.compute_trade_metrics(rec, CONFIG)
+    assert math.isclose(m["commission"], 1.10)            # MES $1.10 x 1 contract
+    assert math.isclose(m["realized_pnl"], 8.90)          # 10 gross - 1.10 fee
+
+
+def test_fills_pnl_keeps_real_fee_not_re_deducted():
+    # The auditor's 'fills' realized is already net; expose the real fee
+    # (gross - net) and do NOT deduct the estimate on top.
+    rec = _long_mes()
+    rec["audit"] = {"source": "fills", "realized_pnl": -26.30, "real_qty": 2,
+                    "real_gross_pnl": -22.50}
+    m = instruments.compute_trade_metrics(rec, CONFIG)
+    assert m["realized_pnl_source"] == "fills"
+    assert math.isclose(m["realized_pnl"], -26.30)        # unchanged (already net)
+    assert math.isclose(m["commission"], 3.80)            # real fee = gross - net
 
 
 def test_flat_signal_has_no_pnl():

@@ -105,15 +105,16 @@ def test_backfills_closed_outcome_when_pnl_already_correct(captured):
 
 def test_in_sync_when_paper_matches_fills(captured):
     sig = _filled_long_signal()
-    # paper legs that already total the real net (-22.50): both stopped, and the
-    # watcher already stamped the closed outcome -> nothing left for the auditor.
+    # paper legs total -22.50 gross; metrics net the est. fee (MES $1.10 x2) ->
+    # paper net -24.70. For 'in sync' the trade's real net must equal that, and
+    # the watcher already stamped the closed outcome -> nothing for the auditor.
     sig["legs"] = [
         {"bracket_idx": 0, "qty": 1, "exit_price": 7561.25, "result": "stop"},
         {"bracket_idx": 1, "qty": 1, "exit_price": 7561.25, "result": "stop"},
     ]
     sig["outcome"] = {"result": "stop"}
     signals = {sig["timestamp"]: sig}
-    links = {sig["timestamp"]: {"trade": _trade(net=-22.5, gross=-22.5), "confidence": 1.0}}
+    links = {sig["timestamp"]: {"trade": _trade(net=-24.7, gross=-22.5), "confidence": 1.0}}
 
     summary = auditor.reconcile(signals, links, CONFIG)
     assert summary["in_sync"] == 1
