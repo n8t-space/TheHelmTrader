@@ -29,6 +29,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from . import _tradebot_bridge as bridge
+from . import settings as settings_mod
 from src import auto_analyzer, feed_store, signal_storage  # type: ignore[import-not-found]  # via bridge
 
 # Latest-screenshot store for the headless / auto analyzer. One PNG per
@@ -131,6 +132,10 @@ async def ingest_bar(bar: Bar) -> dict:
 
     armed = await asyncio.to_thread(feed_store.is_armed, bar.instrument, bar.period)
     if armed:
+        # Automation blackout: pause signal generation during a configured window.
+        blackout, label = settings_mod.in_blackout()
+        if blackout:
+            return {"status": "ok", "armed": False, "reason": f"automation blackout ({label})"}
         await auto_analyzer.submit(bar.instrument, bar.period, bar.ts)
 
     return {"status": "ok", "armed": armed}

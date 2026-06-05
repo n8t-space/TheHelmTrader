@@ -207,6 +207,23 @@ class Auditor(BaseModel):
     interval_minutes: int = Field(default=60, ge=5, le=1440)
 
 
+_HHMM = r"^([01]\d|2[0-3]):[0-5]\d$"
+
+
+class BlackoutWindow(BaseModel):
+    """A daily time-of-day range (operator timezone) where automation pauses.
+    start>end spans midnight (e.g. 22:00->06:00). start==end is ignored."""
+    start: str = Field(pattern=_HHMM)
+    end: str = Field(pattern=_HHMM)
+    label: str = ""
+
+
+class Automation(BaseModel):
+    """Global automation pauses. During a blackout window neither signal
+    generation NOR auto-execution runs (open positions keep their own ATM)."""
+    blackout_windows: list[BlackoutWindow] = Field(default_factory=list)
+
+
 class Settings(BaseModel):
     schema_version: int = SCHEMA_VERSION
     appearance: Appearance = Field(default_factory=Appearance)
@@ -216,6 +233,7 @@ class Settings(BaseModel):
     news: News = Field(default_factory=News)
     auto_trader: AutoTrader = Field(default_factory=AutoTrader)
     auditor: Auditor = Field(default_factory=Auditor)
+    automation: Automation = Field(default_factory=Automation)
 
 
 # ---------------------------------------------------------------------------
@@ -284,6 +302,33 @@ def get_settings() -> Settings:
             if _cache is None:
                 _cache = _load_from_disk()
     return _cache
+
+
+def _hm_to_min(hm: str) -> int:
+    h, m = hm.split(":")
+    return int(h) * 60 + int(m)
+
+
+def in_blackout(now: datetime | None = None) -> tuple[bool, str]:
+    """Is automation currently paused by a blackout window? Returns
+    (paused, label). Times are operator-local HH:MM; a window with start>end
+    spans midnight. Cheap; safe in the feed + exec hot paths."""
+    windows = get_settings().automation.blackout_windows
+    if not windows:
+        return False, ""
+    now = now or datetime.now()
+    cur = now.hour * 60 + now.minute
+    for w in windows:
+        try:
+            a, b = _hm_to_min(w.start), _hm_to_min(w.end)
+        except (ValueError, AttributeError):
+            continue
+        if a == b:
+            continue
+        inside = (a <= cur < b) if a < b else (cur >= a or cur < b)  # overnight
+        if inside:
+            return True, (w.label or f"{w.start}-{w.end}")
+    return False, ""
 
 
 def visible_accounts() -> set[str]:

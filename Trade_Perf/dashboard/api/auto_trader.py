@@ -334,6 +334,12 @@ def exec_queue(account: str) -> dict:
     if not cfg.enabled or not cfg.account or account != cfg.account:
         return {"account": account, "count": 0, "signals": []}
 
+    # Automation blackout: pause auto-execution entirely during a configured
+    # window (open positions keep their own ATM stop/target).
+    blackout, label = settings_mod.in_blackout()
+    if blackout:
+        return {"account": account, "count": 0, "signals": [], "blackout": label}
+
     # Fail-safe: hold the queue while reported equity is at/below the balance
     # floor (the balance report also forces the master switch OFF; this covers
     # the window between reports).
