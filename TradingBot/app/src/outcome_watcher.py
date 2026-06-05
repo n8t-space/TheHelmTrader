@@ -85,6 +85,14 @@ def _one_pass(signals_path, signal_storage, entry_resolver, outcome_resolver,
     for ts, rec in sigs.items():
         if rec.get("deleted"):
             continue
+        # Only track signals that actually placed a trade. If the auto-trader
+        # never executed it (exec.state is None), there is no real fill to
+        # confirm against -- a paper outcome here is a pure hypothetical that
+        # never appears in Trade Performance and can even be a phantom (an entry
+        # the market never reached). Executed signals are resolved from the real
+        # broker fills by the auditor; the watcher only fills the interim gap.
+        if (rec.get("exec") or {}).get("state") is None:
+            continue
         outcome = rec.get("outcome") or {}
         # 'pending' means the user explicitly hasn't decided yet -- still
         # eligible for auto-resolution. Any other non-empty result means
@@ -204,6 +212,23 @@ def _one_pass(signals_path, signal_storage, entry_resolver, outcome_resolver,
                     ts, existing_outcome,
                 )
             continue
+
+        # Entry must be CONFIRMED hit before we resolve stop/target. A 'pending'
+        # entry (price has not touched the entry level yet) must NOT resolve --
+        # the bracket/outcome resolver assumes a fill at entry_price and would
+        # otherwise book a PHANTOM target on a trade that never opened (e.g. a
+        # long limit below a market that ran straight up without pulling back).
+        # Wait; the entry resolver will flip this to hit or, at window expiry,
+        # to no_fill.
+        if rec.get("entry_triggered") is not True:
+            continue
+
+        # Resolve from the actual entry-fill time, not the signal time, so a
+        # target/stop that printed BEFORE the entry filled isn't miscredited.
+        eff_entry_ts = entry_ts
+        hit_ms = rec.get("entry_hit_ts")
+        if isinstance(hit_ms, (int, float)) and hit_ms > 0:
+            eff_entry_ts = int(hit_ms // 1000)
 
         # --- Step 2: did stop or target get hit? ------------------------
         # Bracket-aware path: scale-out ATMs carry a per-bracket plan on the
