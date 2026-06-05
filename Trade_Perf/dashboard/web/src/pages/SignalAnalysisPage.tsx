@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { deleteJSON, fetchJSON, fmtPrice, type Signal, type SettingsResp, type SignalListResp } from '../api'
+import { deleteJSON, fetchJSON, postJSON, type HungTrade, type Signal, type SettingsResp, type SignalListResp, fmtPrice } from '../api'
 import { arrow, flip, sortBy, type Sort } from '../lib/sorting'
 import { tradingDayFor } from '../lib/trading_day'
 
@@ -176,6 +176,67 @@ function filtersActive(f: SignalFilters): boolean {
   return f.instruments.length > 0 || !!f.dayFrom || !!f.dayTo || !!f.fromTs || !!f.toTs || !!f.direction
 }
 
+// Auto-trader hung-trade alert: working/filled signals stuck "open" with no
+// activity for 30+ min (blocking the per-instrument queue). Hidden when none.
+function HungTradesCard() {
+  const qc = useQueryClient()
+  const q = useQuery<{ count: number; threshold_minutes: number; hung: HungTrade[] }>({
+    queryKey: ['hung'],
+    queryFn: () => fetchJSON('/api/auto-trader/hung'),
+    refetchInterval: 30_000,
+  })
+  const clear = useMutation({
+    mutationFn: () => postJSON<{ cleared: number }>('/api/auto-trader/clear-hung', { timestamps: null }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['hung'] }),
+  })
+  const hung = q.data?.hung ?? []
+  if (hung.length === 0) return null
+  return (
+    <div className="card">
+      <h2>Hung trades <span className="pnl-neg">({hung.length})</span></h2>
+      <p className="subtle" style={{ marginTop: 0 }}>
+        These signals are stuck "open" with no activity for {q.data?.threshold_minutes ?? 30}+ min — an
+        entry that never filled or cancelled, or a position whose close never resolved — and they block
+        the auto-trader's per-instrument queue. Clearing marks them terminal so trading resumes (the
+        auditor still reconciles real P&amp;L from fills).
+      </p>
+      <div style={{ overflowX: 'auto' }}>
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Signal</th><th>Instrument</th><th>Dir</th><th>State</th>
+              <th style={{ textAlign: 'right' }}>Idle</th>
+            </tr>
+          </thead>
+          <tbody>
+            {hung.map((h, i) => (
+              <tr key={i}>
+                <td><Link to={`/signals/${encodeURIComponent(h.ts)}`}>{h.ts}</Link></td>
+                <td>{h.instrument || '--'}</td>
+                <td>{h.direction || '--'}</td>
+                <td>{h.state}</td>
+                <td style={{ textAlign: 'right' }}>{h.age_minutes}m</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <button
+        type="button"
+        className="danger"
+        style={{ marginTop: 8 }}
+        disabled={clear.isPending}
+        onClick={() => {
+          if (window.confirm(`Clear ${hung.length} hung trade(s)? This frees the queue.`)) clear.mutate()
+        }}
+      >
+        {clear.isPending ? 'Clearing…' : `Clear ${hung.length} hung trade(s)`}
+      </button>
+      {clear.error && <span className="error"> {String(clear.error)}</span>}
+    </div>
+  )
+}
+
 export function SignalAnalysisPage() {
   const [sort, setSort] = useState<Sort<SignalKey>>({ key: 'timestamp', dir: 'desc' })
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -300,6 +361,7 @@ export function SignalAnalysisPage() {
 
   return (
     <>
+    <HungTradesCard />
     <div className="card">
       <div className="signals-header">
         <h2>
