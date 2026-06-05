@@ -102,6 +102,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             public string   SignalTs;
             public int      Qty;
             public DateTime PlacedAt;
+            public DateTime ExpiresAt;   // assessment-expiry cancel time; MinValue = none
             public bool     Filled;
         }
 
@@ -117,6 +118,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             public double LimitPrice;
             public string AtmStrategy;
             public int    Qty;
+            public double ExpiresAt;   // unix seconds; 0 = no assessment-expiry
         }
 
         // =================================================================
@@ -386,13 +388,16 @@ namespace NinjaTrader.NinjaScript.Strategies
             // key); the entry order gets a derived id.
             string atmId   = it.ExecTag;
             string orderId = it.ExecTag + "-E";
+            DateTime expiresAt = it.ExpiresAt > 0
+                ? DateTimeOffset.FromUnixTimeSeconds((long)it.ExpiresAt).LocalDateTime
+                : DateTime.MinValue;
 
             if (DryRun)
             {
                 Print($"[HelmAuto] WOULD place: {action} LIMIT {qty} {it.Instrument} @ {it.LimitPrice} "
                     + $"template='{it.AtmStrategy}' atm={atmId} order={orderId}");
                 handled.Add(it.ExecTag);
-                tracked[it.ExecTag] = new Tracked { ExecTag = it.ExecTag, AtmId = atmId, OrderId = orderId, SignalTs = it.Ts, Qty = qty, PlacedAt = DateTime.Now, Filled = false };
+                tracked[it.ExecTag] = new Tracked { ExecTag = it.ExecTag, AtmId = atmId, OrderId = orderId, SignalTs = it.Ts, Qty = qty, PlacedAt = DateTime.Now, ExpiresAt = expiresAt, Filled = false };
                 PostExec(it.Ts, "working", it.ExecTag, null, null, dryRun: true, note: "dry-run: no order placed");
                 return;
             }
@@ -407,7 +412,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             OrderAction oa = action == "SellShort" ? OrderAction.SellShort : OrderAction.Buy;
             handled.Add(it.ExecTag);
-            tracked[it.ExecTag] = new Tracked { ExecTag = it.ExecTag, AtmId = atmId, OrderId = orderId, SignalTs = it.Ts, Qty = qty, PlacedAt = DateTime.Now, Filled = false };
+            tracked[it.ExecTag] = new Tracked { ExecTag = it.ExecTag, AtmId = atmId, OrderId = orderId, SignalTs = it.Ts, Qty = qty, PlacedAt = DateTime.Now, ExpiresAt = expiresAt, Filled = false };
 
             string ts = it.Ts;
             try
@@ -476,11 +481,14 @@ namespace NinjaTrader.NinjaScript.Strategies
                             PostExec(t.SignalTs, "cancelled", t.ExecTag, null, null, dryRun: false, note: "cancelled on chart");
                             done.Add(t.ExecTag);
                         }
-                        else if ((DateTime.Now - t.PlacedAt).TotalMinutes > EntryWindowMinutes)
+                        else if ((t.ExpiresAt != DateTime.MinValue && DateTime.Now >= t.ExpiresAt)
+                                 || (DateTime.Now - t.PlacedAt).TotalMinutes > EntryWindowMinutes)
                         {
+                            bool assessment = t.ExpiresAt != DateTime.MinValue && DateTime.Now >= t.ExpiresAt;
+                            string why = assessment ? "assessment-expiry (next read due)" : "entry window expired";
                             bool cancelled = AtmStrategyCancelEntryOrder(t.OrderId);
-                            Print($"[HelmAuto] entry window expired for {t.AtmId}; cancel={cancelled}");
-                            PostExec(t.SignalTs, "cancelled", t.ExecTag, null, null, dryRun: false, note: "entry window expired");
+                            Print($"[HelmAuto] {why} for {t.AtmId}; cancel={cancelled}");
+                            PostExec(t.SignalTs, "cancelled", t.ExecTag, null, null, dryRun: false, note: why);
                             done.Add(t.ExecTag);
                         }
                     }
@@ -622,6 +630,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     LimitPrice  = Num(m, "limit_price"),
                     AtmStrategy = Str(m, "atm_strategy"),
                     Qty         = (int)Num(m, "qty"),
+                    ExpiresAt   = Num(m, "expires_at"),
                 });
             }
             return items;
