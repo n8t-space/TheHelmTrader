@@ -15,6 +15,7 @@ app/data/market_context.json
 
 # Trade + signal data (contains account IDs, fills, LLM proposals -- never push)
 app/data/signals.jsonl
+app/data/audit_log.jsonl
 app/data/feed.db
 app/data/feed.db-wal
 app/data/feed.db-shm

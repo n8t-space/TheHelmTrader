@@ -597,6 +597,11 @@ export interface SettingsAutoTrader {
   entry_window_minutes: number
 }
 
+export interface SettingsAuditor {
+  enabled: boolean
+  interval_minutes: number
+}
+
 export interface SettingsDoc {
   schema_version: number
   appearance: SettingsAppearance
@@ -605,6 +610,37 @@ export interface SettingsDoc {
   accounts: SettingsAccounts
   news: SettingsNews
   auto_trader: SettingsAutoTrader
+  auditor: SettingsAuditor
+}
+
+export interface AuditorLogEntry {
+  checked_at: string
+  signal_ts: string
+  instrument?: string
+  account?: string
+  action: string
+  prev_realized?: number | null
+  prev_source?: string | null
+  new_realized?: number | null
+  confidence?: number | null
+}
+
+export interface AuditorStatus {
+  enabled: boolean
+  interval_minutes: number
+  running: boolean
+  last_run: string | null
+  last_summary: { checked: number; corrected: number; in_sync: number; unverified: number } | null
+  recent: AuditorLogEntry[]
+}
+
+export interface AuditorRunResp {
+  checked: number
+  corrected: number
+  in_sync: number
+  unverified: number
+  checked_at: string
+  details: AuditorLogEntry[]
 }
 
 export interface SettingsResp {

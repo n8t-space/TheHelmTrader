@@ -179,6 +179,21 @@ def compute_trade_metrics(rec: dict, config: dict) -> dict:
     realized_pnl = None
     realized_pnl_source = None
 
+    # Auditor override: when the integrity auditor has matched this signal to its
+    # real NT8 round-trip, it stamps the actual broker net P&L here. NT fills are
+    # ground truth, so this outranks the paper resolver's leg walk -- it's what
+    # flips a falsely-"won" paper trade to the loss the account actually took.
+    audit = rec.get("audit") or {}
+    if audit.get("source") == "fills" and audit.get("realized_pnl") is not None:
+        try:
+            realized_pnl = float(audit["realized_pnl"])
+            realized_pnl_source = "fills"
+            if audit.get("real_qty"):
+                position_size = _num(audit["real_qty"]) or position_size
+        except (TypeError, ValueError):
+            realized_pnl = None
+            realized_pnl_source = None
+
     # Per-leg fills (multi-bracket scale-out) take precedence over everything.
     # Sum the realized P&L across legs; record the per-leg breakdown for the UI.
     legs = rec.get("legs")
@@ -198,7 +213,13 @@ def compute_trade_metrics(rec: dict, config: dict) -> dict:
                 continue
             if qty <= 0:
                 continue
-            leg_pnl = sign * (px - entry) * point_value * qty
+            # A leg the auditor wrote from real fills carries its own exact dollar
+            # P&L; trust it over a recompute off the (planned) entry price.
+            stored_pnl = leg.get("pnl")
+            if isinstance(stored_pnl, (int, float)):
+                leg_pnl = float(stored_pnl)
+            else:
+                leg_pnl = sign * (px - entry) * point_value * qty
             pnl_sum += leg_pnl
             any_leg = True
             leg_breakdown.append({
@@ -210,7 +231,9 @@ def compute_trade_metrics(rec: dict, config: dict) -> dict:
                 "method":        leg.get("method"),
                 "pnl":           leg_pnl,
             })
-        if any_leg:
+        # Don't clobber an auditor (real-fills) override with the paper leg walk;
+        # the breakdown above is still useful to display either way.
+        if any_leg and realized_pnl is None:
             realized_pnl        = pnl_sum
             realized_pnl_source = "legs"
 

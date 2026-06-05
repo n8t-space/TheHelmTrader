@@ -198,6 +198,15 @@ class News(BaseModel):
     refresh_interval_minutes: int = Field(default=15, ge=5, le=180)
 
 
+class Auditor(BaseModel):
+    """Signal <-> NT8 fill integrity auditor. Reconciles each executed signal's
+    paper P&L against the real broker fills; NT db is ground truth. Mismatches on
+    confidently-linked trades are auto-corrected to the real net, unlinked fills
+    are flagged for review. Runs on the interval below (default hourly)."""
+    enabled: bool = True
+    interval_minutes: int = Field(default=60, ge=5, le=1440)
+
+
 class Settings(BaseModel):
     schema_version: int = SCHEMA_VERSION
     appearance: Appearance = Field(default_factory=Appearance)
@@ -206,6 +215,7 @@ class Settings(BaseModel):
     accounts: Accounts = Field(default_factory=Accounts)
     news: News = Field(default_factory=News)
     auto_trader: AutoTrader = Field(default_factory=AutoTrader)
+    auditor: Auditor = Field(default_factory=Auditor)
 
 
 # ---------------------------------------------------------------------------
