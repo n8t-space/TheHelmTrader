@@ -602,6 +602,17 @@ export interface SettingsAuditor {
   interval_minutes: number
 }
 
+export interface HungTrade {
+  ts: string
+  instrument?: string
+  direction?: string
+  state: string
+  age_minutes: number
+  outcome?: string | null
+  account?: string
+  fill_price?: number | null
+}
+
 export interface SettingsDoc {
   schema_version: number
   appearance: SettingsAppearance
