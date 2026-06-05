@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from . import _tradebot_bridge as bridge, atm_strategies as atm_routes, auto_analysis as auto_analysis_routes, auto_trader as auto_trader_routes, db, drawdown as drawdown_routes, feed as feed_routes, health as health_routes, home as home_routes, news as news_routes, settings as settings_routes, signals as signals_routes, trades as tradelib, version as version_routes
+from . import _tradebot_bridge as bridge, atm_strategies as atm_routes, auditor as auditor_routes, auto_analysis as auto_analysis_routes, auto_trader as auto_trader_routes, db, drawdown as drawdown_routes, feed as feed_routes, health as health_routes, home as home_routes, news as news_routes, settings as settings_routes, signals as signals_routes, trades as tradelib, version as version_routes
 
 logger = logging.getLogger(__name__)
 
@@ -108,13 +108,15 @@ async def lifespan(app):
     outcome_task = asyncio.create_task(outcome_watcher.watcher_loop(bridge.SIGNALS_LOG), name="outcome.watcher")
     version_task = asyncio.create_task(version_routes.check_loop_forever(),         name="version.check")
     news_task    = asyncio.create_task(news_routes.refresh_loop_forever(),          name="news.refresh")
-    logger.info("[startup] background tasks started: prune, outcome-watcher, version-check, news-refresh")
+    audit_task   = asyncio.create_task(auditor_routes.audit_loop_forever(),         name="auditor.sweep")
+    audit_fast   = asyncio.create_task(auditor_routes.audit_recent_loop_forever(),  name="auditor.recent")
+    logger.info("[startup] background tasks started: prune, outcome-watcher, version-check, news-refresh, auditor(+recent)")
     try:
         yield
     finally:
-        for t in (outcome_task, prune_task, version_task, news_task):
+        for t in (outcome_task, prune_task, version_task, news_task, audit_task, audit_fast):
             t.cancel()
-        for t in (outcome_task, prune_task, version_task, news_task):
+        for t in (outcome_task, prune_task, version_task, news_task, audit_task, audit_fast):
             try:
                 await t
             except (asyncio.CancelledError, Exception):
@@ -143,6 +145,7 @@ app.include_router(version_routes.router)
 app.include_router(drawdown_routes.router)
 app.include_router(news_routes.router)
 app.include_router(auto_trader_routes.router)
+app.include_router(auditor_routes.router)
 
 
 @app.get("/api/health")

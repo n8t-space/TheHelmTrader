@@ -17,7 +17,7 @@ import {
 } from '../api'
 import { applyAppearance, cacheAppearance } from '../lib/theme'
 
-type Tab = 'appearance' | 'ai' | 'strategy' | 'accounts' | 'autotrader' | 'news'
+type Tab = 'appearance' | 'ai' | 'strategy' | 'accounts' | 'autotrader' | 'news' | 'integrity'
 
 export function SettingsPage() {
   const qc = useQueryClient()
@@ -124,7 +124,7 @@ export function SettingsPage() {
       {save.error && <div className="card error">Save failed: {String(save.error)}</div>}
 
       <div className="card settings-tabs">
-        {(['appearance', 'ai', 'strategy', 'accounts', 'autotrader', 'news'] as Tab[]).map((t) => (
+        {(['appearance', 'ai', 'strategy', 'accounts', 'autotrader', 'news', 'integrity'] as Tab[]).map((t) => (
           <button
             key={t}
             type="button"
@@ -174,6 +174,12 @@ export function SettingsPage() {
             onChange={(n) => setDraft({ ...draft, news: n })}
           />
         )}
+        {tab === 'integrity' && (
+          <IntegrityTab
+            value={draft.auditor}
+            onChange={(a) => setDraft({ ...draft, auditor: a })}
+          />
+        )}
       </div>
 
       <div className="card">
@@ -199,7 +205,133 @@ function tabLabel(t: Tab): string {
     : t === 'strategy' ? 'Strategy'
     : t === 'accounts' ? 'Accounts'
     : t === 'autotrader' ? 'Auto-Trader'
-    : 'News'
+    : t === 'news' ? 'News'
+    : 'Data Integrity'
+}
+
+// ---------- Data Integrity (signal <-> NT fill auditor) ----------
+
+function IntegrityTab({ value, onChange }: {
+  value: import('../api').SettingsAuditor
+  onChange: (v: import('../api').SettingsAuditor) => void
+}) {
+  const qc = useQueryClient()
+  const status = useQuery<import('../api').AuditorStatus>({
+    queryKey: ['auditor', 'status'],
+    queryFn: () => fetchJSON<import('../api').AuditorStatus>('/api/auditor/status'),
+    refetchInterval: 30_000,
+  })
+
+  const runNow = useMutation({
+    mutationFn: () => postJSON<import('../api').AuditorRunResp>('/api/auditor/run'),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['auditor'] }),
+  })
+
+  const s = status.data
+  const sum = s?.last_summary
+  const fmt = (n?: number | null) =>
+    n === null || n === undefined ? '--' : `$${n.toFixed(2)}`
+  const fmtTs = (t?: string | null) => {
+    if (!t) return 'never'
+    const d = new Date(t)
+    return isNaN(d.getTime()) ? t : d.toLocaleString()
+  }
+
+  return (
+    <div>
+      <h3 style={{ marginTop: 0 }}>Data Integrity</h3>
+      <p className="subtle">
+        Reconciles each executed signal's P&amp;L against the real NinjaTrader fills.
+        The NT database is ground truth -- confidently linked trades whose paper
+        number disagrees are corrected to the broker net; filled signals that can't
+        be linked are flagged for review, never guessed.
+      </p>
+
+      <label className="settings-row">
+        <span>Enabled</span>
+        <input
+          type="checkbox"
+          checked={value.enabled}
+          onChange={(e) => onChange({ ...value, enabled: e.target.checked })}
+        />
+        <span className="subtle">Run the integrity sweep automatically.</span>
+      </label>
+
+      <label className="settings-row">
+        <span>Interval (minutes)</span>
+        <input
+          type="number"
+          min={5}
+          max={1440}
+          value={value.interval_minutes}
+          onChange={(e) => onChange({ ...value, interval_minutes: Number(e.target.value) })}
+        />
+        <span className="subtle">How often the sweep runs (default 60 = hourly). Save to apply.</span>
+      </label>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '16px 0' }}>
+        <button
+          type="button"
+          className="primary"
+          onClick={() => runNow.mutate()}
+          disabled={runNow.isPending || s?.running}
+        >
+          {runNow.isPending || s?.running ? 'Auditing...' : 'Run audit now'}
+        </button>
+        <span className="subtle">Last run: {fmtTs(s?.last_run)}</span>
+      </div>
+
+      {runNow.error && <div className="card error">Audit failed: {String(runNow.error)}</div>}
+
+      {sum && (
+        <div className="settings-row" style={{ gap: 18 }}>
+          <span><strong>{sum.checked}</strong> checked</span>
+          <span className="pnl-neg"><strong>{sum.corrected}</strong> corrected</span>
+          <span className="pnl-pos"><strong>{sum.in_sync}</strong> in sync</span>
+          <span className="subtle"><strong>{sum.unverified}</strong> unverified</span>
+        </div>
+      )}
+
+      <h4 style={{ marginBottom: 6 }}>Recent corrections</h4>
+      {!s?.recent?.length ? (
+        <p className="subtle">No corrections logged yet.</p>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Audited</th>
+                <th>Signal</th>
+                <th>Instrument</th>
+                <th>Action</th>
+                <th style={{ textAlign: 'right' }}>Paper</th>
+                <th style={{ textAlign: 'right' }}>Real (fills)</th>
+                <th style={{ textAlign: 'right' }}>Conf</th>
+              </tr>
+            </thead>
+            <tbody>
+              {s.recent.map((e, i) => (
+                <tr key={i}>
+                  <td>{fmtTs(e.checked_at)}</td>
+                  <td><Link to={`/signals/${encodeURIComponent(e.signal_ts)}`}>{e.signal_ts}</Link></td>
+                  <td>{e.instrument || '--'}</td>
+                  <td>{e.action}</td>
+                  <td style={{ textAlign: 'right' }}>{fmt(e.prev_realized)}</td>
+                  <td style={{ textAlign: 'right' }}
+                      className={(e.new_realized ?? 0) < 0 ? 'pnl-neg' : 'pnl-pos'}>
+                    {fmt(e.new_realized)}
+                  </td>
+                  <td style={{ textAlign: 'right' }}>
+                    {e.confidence == null ? '--' : e.confidence.toFixed(2)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ---------- Auto-Trader ----------

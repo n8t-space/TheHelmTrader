@@ -75,6 +75,12 @@ MERGEABLE_FIELDS = (
     "armed",
     "arm_account",
     "exec",
+    # Integrity auditor: real-fill reconciliation block ({source, realized_pnl,
+    # real_qty, real_exits, confidence, ...}). compute_trade_metrics reads it to
+    # override paper P&L with the broker truth, so it MUST survive the merge --
+    # otherwise the override silently vanishes and the auditor re-corrects every
+    # pass (never sees its own prior result).
+    "audit",
 )
 
 
