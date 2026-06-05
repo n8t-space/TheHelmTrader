@@ -78,6 +78,45 @@ def _trade_still_open(rec: dict) -> bool:
                for leg in legs)
 
 
+# A working/filled signal still counted "open" by the gate but with no activity
+# for this long is a hung-trade candidate: an entry that never filled and never
+# cancelled, or a position whose close never resolved. It blocks the queue.
+HUNG_AGE_MIN = 30
+
+
+def _hung_detail(rec: dict, now: datetime) -> dict | None:
+    """Return a summary dict if this signal looks HUNG, else None.
+
+    Hung = exec working/filled AND still open per the gate (`_trade_still_open`)
+    AND no activity for >= HUNG_AGE_MIN minutes. A live, recently-active trade is
+    NOT flagged. The detection is deliberately conservative; the operator clears
+    via button -- they make the final call."""
+    ex = rec.get("exec") or {}
+    state = ex.get("state")
+    if state not in ("working", "filled"):
+        return None
+    if not _trade_still_open(rec):
+        return None  # already resolved -> not hung
+    anchor = ex.get("filled_at") if state == "filled" else ex.get("working_at")
+    try:
+        age_min = (now - datetime.fromisoformat(anchor)).total_seconds() / 60.0
+    except (TypeError, ValueError):
+        return None
+    if age_min < HUNG_AGE_MIN:
+        return None
+    proposal = rec.get("proposal") or {}
+    return {
+        "ts": rec.get("timestamp"),
+        "instrument": proposal.get("instrument"),
+        "direction": proposal.get("direction"),
+        "state": state,
+        "age_minutes": round(age_min),
+        "outcome": (rec.get("outcome") or {}).get("result"),
+        "account": ex.get("account") or rec.get("arm_account"),
+        "fill_price": ex.get("fill_price"),
+    }
+
+
 def _template_qty(proposal: dict) -> int:
     """Contracts the ATM template will place. AtmStrategyCreate has NO quantity
     parameter -- size is fixed by the template's brackets -- so this is the TRUE
@@ -431,6 +470,71 @@ def exec_queue(account: str) -> dict:
 
     signals = sorted(newest_by_instr.values(), key=lambda r: r["ts"])
     return {"account": account, "count": len(signals), "signals": signals}
+
+
+@router.get("/auto-trader/hung")
+def list_hung(account: str | None = None) -> dict:
+    """Working/filled signals stuck 'open' with no activity for HUNG_AGE_MIN+ min
+    -- entries that never filled/cancelled, or positions whose close never
+    resolved. These block the per-instrument queue. Optionally scope to one
+    account."""
+    raw = signal_storage.load_all(bridge.SIGNALS_LOG)
+    now = datetime.now()
+    hung: list[dict] = []
+    for rec in raw.values():
+        if rec.get("deleted"):
+            continue
+        d = _hung_detail(rec, now)
+        if d and (account is None or d["account"] == account):
+            hung.append(d)
+    hung.sort(key=lambda h: h["ts"])
+    return {"count": len(hung), "threshold_minutes": HUNG_AGE_MIN, "hung": hung}
+
+
+class ClearHung(BaseModel):
+    # Specific signals to clear; omit/empty -> clear every auto-detected hung one.
+    timestamps: list[str] | None = None
+
+
+@router.post("/auto-trader/clear-hung")
+def clear_hung(body: ClearHung) -> dict:
+    """Force a hung signal terminal so it stops blocking the queue: mark the
+    outcome 'cleared', close any open/'neither' legs, and (for a never-filled
+    working entry) flip entry_triggered off. The auditor can still later
+    reconcile P&L from real fills -- clearing only unblocks the gate now."""
+    raw = signal_storage.load_all(bridge.SIGNALS_LOG)
+    now = datetime.now()
+    requested = set(body.timestamps or [])
+    cleared: list[str] = []
+    for ts, rec in raw.items():
+        if rec.get("deleted"):
+            continue
+        if requested:
+            if ts not in requested or not _trade_still_open(rec):
+                continue
+        elif _hung_detail(rec, now) is None:
+            continue
+        legs = [
+            {**leg,
+             "open": False,
+             "result": (leg.get("result") if leg.get("result") not in (None, "neither")
+                        else "cleared")}
+            for leg in (rec.get("legs") or []) if isinstance(leg, dict)
+        ]
+        fields: dict = {
+            "outcome": {"result": "cleared",
+                        "note": "manually cleared (hung trade)",
+                        "closing_price": None,
+                        "auto_confirmed": True},
+        }
+        if legs:
+            fields["legs"] = legs
+        if (rec.get("exec") or {}).get("state") == "working":
+            fields["entry_triggered"] = False
+        signal_storage.append_update(bridge.SIGNALS_LOG, ts, **fields)
+        cleared.append(ts)
+        logger.info("[auto-trader] cleared hung signal %s", ts)
+    return {"cleared": len(cleared), "timestamps": sorted(cleared)}
 
 
 class ExecUpdate(BaseModel):
