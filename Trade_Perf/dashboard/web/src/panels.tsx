@@ -204,10 +204,10 @@ export function FilterBar({ filters, setFilters }: { filters: Filters; setFilter
 
 // ---------- TradesTable ----------
 
-type TradeKey = keyof Pick<Trade, 'exit_time' | 'account' | 'symbol' | 'direction' | 'qty' | 'entry_price' | 'exit_price' | 'net_pnl' | 'commission' | 'duration_seconds'>
+type TradeKey = keyof Pick<Trade, 'entry_time' | 'account' | 'symbol' | 'direction' | 'qty' | 'entry_price' | 'exit_price' | 'net_pnl' | 'commission' | 'duration_seconds'>
 
 export function TradesTable({ filters }: { filters: Filters }) {
-  const [sort, setSort] = useState<Sort<TradeKey>>({ key: 'exit_time', dir: 'desc' })
+  const [sort, setSort] = useState<Sort<TradeKey>>({ key: 'entry_time', dir: 'desc' })
   // Set of trade keys (first_fill_id-last_fill_id) whose scale-out detail
   // row is currently expanded. Scale-out trades default collapsed; click to
   // expand and see the per-leg fill breakdown.
@@ -245,7 +245,7 @@ export function TradesTable({ filters }: { filters: Filters }) {
             <thead>
               <tr>
                 <th style={{ width: 24 }}></th>
-                <Th k="exit_time">Exit time (CT)</Th>
+                <Th k="entry_time">Entry time (CT)</Th>
                 <Th k="account">Account</Th>
                 <Th k="symbol">Symbol</Th>
                 <Th k="direction">Dir</Th>
@@ -273,7 +273,7 @@ export function TradesTable({ filters }: { filters: Filters }) {
                           ? <span className="scale-out-arrow">{isExpanded ? '▼' : '▶'}</span>
                           : ''}
                       </td>
-                      <td>{fmtTime(t.exit_time)}</td>
+                      <td>{fmtTime(t.entry_time)}</td>
                       <td>{t.account}</td>
                       <td>{t.contract || t.symbol}</td>
                       <td>{t.direction}</td>
