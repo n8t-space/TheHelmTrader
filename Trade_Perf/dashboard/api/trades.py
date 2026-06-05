@@ -128,10 +128,33 @@ def _build_trade(group: list[dict]) -> dict | None:
     }
 
 
+def _split_reversal_fill(f: dict, qty: float, *, is_entry: int, is_exit: int,
+                         end_pos: float, frac: float) -> dict:
+    """Synthesize the closing- or opening-half of a reversal fill (one NT8 order
+    that flips the position through zero, e.g. +1 -> -1). Same price/time; qty and
+    the entry/exit flags are set per half, commission/fee prorated by ``frac`` so
+    the round-trip totals stay correct. ``end_pos`` is the running position this
+    half leaves behind (0 for the closing half, the post-reversal net for the
+    opening half) so _build_trade reads direction from the right side."""
+    g = dict(f)
+    g["qty"] = qty
+    g["is_entry"] = is_entry
+    g["is_exit"] = is_exit
+    g["position"] = end_pos
+    g["commission"] = (f.get("commission") or 0.0) * frac
+    g["fee"] = (f.get("fee") or 0.0) * frac
+    return g
+
+
 def derive_trades(fills: list[dict]) -> list[dict]:
     """Group fills by (account, master_symbol) and partition into round-trips.
 
-    Boundary signal: the running 'position' column from NT8 returning to 0.
+    Boundary signal: the running 'position' column from NT8. A round-trip ends
+    when position returns to 0 OR reverses sign (a single order that flips long
+    <-> short, which NT8 marks is_entry=1 AND is_exit=1). Without the reversal
+    split, the close of one trade and the open of the next get merged into one
+    inflated-qty trade (e.g. a +1 long reversed to -1 by a 2-lot order, bundled
+    with neighbours, shows qty 3 instead of two qty-1 trades).
     """
     groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for f in fills:
@@ -143,13 +166,35 @@ def derive_trades(fills: list[dict]) -> list[dict]:
     for group in groups.values():
         group.sort(key=lambda f: (f["time_utc"], f["id"]))
         active: list[dict] = []
+        prev_pos = 0.0
         for f in group:
-            active.append(f)
-            if f["position"] == 0:
+            curr_pos = f["position"]
+            reversed_sign = (prev_pos != 0 and curr_pos != 0
+                             and (prev_pos > 0) != (curr_pos > 0))
+            if reversed_sign:
+                # One order crossed zero. Split it: |prev_pos| flattens the open
+                # trade, |curr_pos| opens the next. Prorate by each half's share.
+                close_qty = abs(prev_pos)
+                open_qty = abs(curr_pos)
+                total = close_qty + open_qty or 1.0
+                active.append(_split_reversal_fill(
+                    f, close_qty, is_entry=0, is_exit=1, end_pos=0,
+                    frac=close_qty / total))
+                trade = _build_trade(active)
+                if trade is not None:
+                    trades.append(trade)
+                active = [_split_reversal_fill(
+                    f, open_qty, is_entry=1, is_exit=0, end_pos=curr_pos,
+                    frac=open_qty / total)]
+            elif curr_pos == 0:
+                active.append(f)
                 trade = _build_trade(active)
                 if trade is not None:
                     trades.append(trade)
                 active = []
+            else:
+                active.append(f)
+            prev_pos = curr_pos
         # Open positions (active still non-empty) intentionally dropped for v1.
 
     trades.sort(key=lambda t: t["exit_time"], reverse=True)
