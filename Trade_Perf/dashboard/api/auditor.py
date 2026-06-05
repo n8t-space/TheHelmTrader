@@ -68,6 +68,12 @@ _state: dict[str, Any] = {
     "last_summary": None,
 }
 
+# Serializes every reconcile (responsive pass, full sweep, manual /run). Without
+# it two passes interleave -- one reads the other's half-written legs, links the
+# signal to a different trade, and re-corrects it to a conflicting value forever
+# (oscillation + audit-log bloat). One auditor run at a time.
+_audit_lock = asyncio.Lock()
+
 
 def _now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
@@ -337,7 +343,8 @@ async def audit_recent_loop_forever() -> None:
     while True:
         if settings_mod.get_settings().auditor.enabled:
             try:
-                summary = await asyncio.to_thread(run_audit, recent_only=True)
+                async with _audit_lock:
+                    summary = await asyncio.to_thread(run_audit, recent_only=True)
                 if summary["corrected"]:
                     logger.info("[auditor] responsive pass corrected %d fresh "
                                 "signal(s)", summary["corrected"])
@@ -354,7 +361,8 @@ async def audit_loop_forever() -> None:
         interval = max(5, cfg.interval_minutes) * 60
         if cfg.enabled:
             try:
-                summary = await asyncio.to_thread(run_audit)
+                async with _audit_lock:
+                    summary = await asyncio.to_thread(run_audit)
                 logger.info("[auditor] swept: %d checked, %d corrected, "
                             "%d unverified", summary["checked"],
                             summary["corrected"], summary["unverified"])
@@ -381,7 +389,8 @@ async def get_status() -> dict:
 
 @router.post("/run")
 async def run_now() -> dict:
-    summary = await asyncio.to_thread(run_audit)
+    async with _audit_lock:
+        summary = await asyncio.to_thread(run_audit)
     return {
         "checked": summary["checked"],
         "corrected": summary["corrected"],
