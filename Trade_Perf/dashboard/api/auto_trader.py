@@ -347,6 +347,32 @@ def exec_queue(account: str) -> dict:
     window = timedelta(minutes=cfg.entry_window_minutes)
     enabled_at = _parse_local(cfg.enabled_at)
 
+    # --- Assessment-expiry sweep (BEFORE computing open instruments) ----------
+    # A still-pending entry (working/armed/autonomous, unfilled) is stale by the
+    # next assessment on its period -- mark it no_fill so it stops blocking its
+    # instrument and is no longer offered. Must run before the open-instruments
+    # set + ceiling check, else a working signal makes its OWN instrument "open"
+    # and gets skipped before it can expire (and the ceiling could early-return).
+    # The NS cancels the live entry via the expires_at it got at placement.
+    for ts, rec in raw.items():
+        if rec.get("deleted"):
+            continue
+        if (rec.get("exec") or {}).get("state") == "filled":
+            continue
+        if (rec.get("outcome") or {}).get("result") not in (None, "", "pending"):
+            continue
+        exp = _assessment_expiry(rec)
+        if exp is not None and now >= exp:
+            terminal = {"result": "no_fill",
+                        "note": "assessment-expiry (cancel before next read)",
+                        "closing_price": None}
+            signal_storage.append_update(bridge.SIGNALS_LOG, ts,
+                                         entry_triggered=False, outcome=terminal)
+            rec["outcome"] = terminal           # so open_instruments excludes it now
+            rec["entry_triggered"] = False
+            logger.info("[auto-trader] assessment-expiry %s (%s) -> no_fill", ts,
+                        instruments.normalize_symbol(str((rec.get("proposal") or {}).get("instrument") or "")))
+
     # Per-instrument serialization: don't offer a new entry for an instrument
     # that already has an open/in-flight trade -- but DO let other instruments
     # trade (one per instrument). "Open" = exec working/filled with no terminal
@@ -393,22 +419,10 @@ def exec_queue(account: str) -> dict:
         if instr in open_instruments:
             continue
 
-        # Assessment-expiry: a still-pending entry (not yet filled) is cancelled
-        # ~1 min before the next assessment on its period -- a limit that hasn't
-        # filled by the next read is stale. Past that, mark no_fill (the board
-        # reflects the cancel; the strategy cancels the live entry via expires_at
-        # below) and stop offering it.
+        # Time the strategy should cancel this entry if still unfilled (~1 min
+        # before the next assessment), passed as expires_at below. Already-expired
+        # signals were swept to no_fill above, so this is always in the future.
         exp = _assessment_expiry(rec)
-        if exp is not None and now >= exp and (rec.get("exec") or {}).get("state") != "filled":
-            signal_storage.append_update(
-                bridge.SIGNALS_LOG, ts,
-                entry_triggered=False,
-                outcome={"result": "no_fill",
-                         "note": "assessment-expiry (cancel before next read)",
-                         "closing_price": None},
-            )
-            logger.info("[auto-trader] assessment-expiry %s (%s) -> no_fill", ts, instr)
-            continue
 
         ex = rec.get("exec") or {}
         state = ex.get("state")
