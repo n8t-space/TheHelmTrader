@@ -6,18 +6,27 @@ import asyncio
 import pytest
 
 
-@pytest.fixture
-def reset_analyzer():
-    """Wipe module-level state between tests."""
-    from src import auto_analyzer
-    yield auto_analyzer
-    # teardown
+def _wipe_analyzer_state(auto_analyzer) -> None:
     auto_analyzer._pending.clear()
     if auto_analyzer._worker_task is not None:
         auto_analyzer._worker_task.cancel()
     auto_analyzer._worker_task = None
     auto_analyzer._pending_lock = None
     auto_analyzer._wake_event = None
+
+
+@pytest.fixture
+def reset_analyzer():
+    """Wipe module-level state around each test.
+
+    Resets on BOTH setup and teardown so this module is order-independent: a
+    prior test (in either test tree) that left the worker task running must not
+    leak into the lazy-start assertion here.
+    """
+    from src import auto_analyzer
+    _wipe_analyzer_state(auto_analyzer)
+    yield auto_analyzer
+    _wipe_analyzer_state(auto_analyzer)
 
 
 @pytest.mark.asyncio

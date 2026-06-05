@@ -16,6 +16,10 @@ from dashboard.api.main import app
 import dashboard.api.feed as feed_mod
 from src import auto_analyzer, feed_store
 
+# Live-feed integration: real warmup-window waits against feed.db. Slow + timing
+# coupled -> not part of the fast pre-push gate. Run with `-m integration`.
+pytestmark = pytest.mark.integration
+
 
 # ---------------- fixtures ----------------
 

@@ -7,6 +7,10 @@ from fastapi.testclient import TestClient
 from dashboard.api.main import app
 from src import feed_store
 
+# Live integration: spawns the auto-analysis worker against real state. Slow +
+# timing coupled -> not part of the fast pre-push gate. Run with `-m integration`.
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def client():
