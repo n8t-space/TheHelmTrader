@@ -98,6 +98,36 @@ def _is_expired(armed_at: str | None, window: timedelta, now: datetime) -> bool:
         return False
 
 
+# Cancel a still-pending entry this long before the next assessment fires.
+ASSESSMENT_CANCEL_LEAD_S = 60
+
+_PERIOD_RE = re.compile(r"^\s*(\d+)\s*([mhdMHD])\s*$")
+
+
+def _period_to_seconds(period: str | None) -> int | None:
+    """'15m' -> 900, '1h' -> 3600, '1d' -> 86400. None if unparseable."""
+    if not period:
+        return None
+    m = _PERIOD_RE.match(period)
+    if not m:
+        return None
+    return int(m.group(1)) * {"m": 60, "h": 3600, "d": 86400}[m.group(2).lower()]
+
+
+def _assessment_expiry(rec: dict) -> datetime | None:
+    """When a still-pending signal must cancel: one lead-time before the NEXT
+    assessment for its instrument (bar_ts + one period - lead). The next
+    auto-analysis on this period will issue a fresh read, so a limit that hasn't
+    filled by then is stale -- clear it just before, not after. Returns local
+    naive datetime, or None for signals without period/bar info (manual snapshots
+    -> the entry window applies instead)."""
+    secs = _period_to_seconds(rec.get("headless_period"))
+    bar_ts = rec.get("headless_bar_ts")
+    if not secs or not isinstance(bar_ts, (int, float)):
+        return None
+    return datetime.fromtimestamp(int(bar_ts) + secs - ASSESSMENT_CANCEL_LEAD_S)
+
+
 def _parse_local(s: str | None) -> datetime | None:
     """Parse a naive-local ISO stamp (signal timestamp / enabled_at)."""
     try:
@@ -324,6 +354,23 @@ def exec_queue(account: str) -> dict:
         if instr in open_instruments:
             continue
 
+        # Assessment-expiry: a still-pending entry (not yet filled) is cancelled
+        # ~1 min before the next assessment on its period -- a limit that hasn't
+        # filled by the next read is stale. Past that, mark no_fill (the board
+        # reflects the cancel; the strategy cancels the live entry via expires_at
+        # below) and stop offering it.
+        exp = _assessment_expiry(rec)
+        if exp is not None and now >= exp and (rec.get("exec") or {}).get("state") != "filled":
+            signal_storage.append_update(
+                bridge.SIGNALS_LOG, ts,
+                entry_triggered=False,
+                outcome={"result": "no_fill",
+                         "note": "assessment-expiry (cancel before next read)",
+                         "closing_price": None},
+            )
+            logger.info("[auto-trader] assessment-expiry %s (%s) -> no_fill", ts, instr)
+            continue
+
         ex = rec.get("exec") or {}
         state = ex.get("state")
         # In-flight, finished, or explicitly opted out -> never (re)offer.
@@ -355,6 +402,9 @@ def exec_queue(account: str) -> dict:
             "limit_price": proposal.get("entry"),
             "atm_strategy": proposal.get("atm_strategy"),
             "qty": _template_qty(proposal),   # TRUE template size (not a clamp)
+            # Unix seconds to cancel an unfilled entry (~1 min before the next
+            # assessment). null -> strategy falls back to EntryWindowMinutes.
+            "expires_at": exp.timestamp() if exp else None,
         })
     out.sort(key=lambda r: r["ts"])
 
