@@ -99,6 +99,18 @@ def lookup_point_value(symbol: str, config: dict) -> float | None:
     return None
 
 
+def lookup_commission_rt(symbol: str, config: dict) -> float:
+    """Round-trip commission+fee per contract for an instrument (broker-derived).
+    Falls back to the rules default, then 0. Used to net paper P&L for fees so
+    a signal's realized P&L is comparable to Trade Performance (which uses the
+    real per-fill commission)."""
+    root = normalize_symbol(symbol)
+    table = config.get("commission_per_rt", {})
+    if root in table:
+        return float(table[root])
+    return float(config.get("rules", {}).get("default_commission_per_rt", 0.0))
+
+
 def compute_trade_metrics(rec: dict, config: dict) -> dict:
     """Compute dollar amounts and (if applicable) realized P/L for a signal record.
 
@@ -153,6 +165,7 @@ def compute_trade_metrics(rec: dict, config: dict) -> dict:
         "total_reward": 0.0,
         "realized_pnl": None,
         "realized_pnl_source": None,
+        "commission": 0.0,
         "leg_breakdown": None,
     }
 
@@ -260,6 +273,20 @@ def compute_trade_metrics(rec: dict, config: dict) -> dict:
             realized_pnl = 0.0
             realized_pnl_source = "breakeven"
 
+    # Account for fees, like Trade Performance. The 'fills' path is already net
+    # (the auditor used the real per-fill commission); expose that fee for the
+    # UI. The paper paths (legs/closing_price/target/stop) are GROSS, so deduct
+    # the broker-derived round-trip estimate so the displayed P&L is net too.
+    commission = 0.0
+    if realized_pnl is not None and position_size > 0:
+        if realized_pnl_source == "fills":
+            gross = (rec.get("audit") or {}).get("real_gross_pnl")
+            if gross is not None:
+                commission = round(float(gross) - float(realized_pnl), 2)
+        else:
+            commission = round(lookup_commission_rt(instrument, config) * position_size, 2)
+            realized_pnl = round(float(realized_pnl) - commission, 2)
+
     return {
         "point_value": point_value,
         "tick_size": tick_size,
@@ -276,6 +303,7 @@ def compute_trade_metrics(rec: dict, config: dict) -> dict:
         "total_reward": total_reward,
         "realized_pnl": realized_pnl,
         "realized_pnl_source": realized_pnl_source,
+        "commission": commission,
         "leg_breakdown": leg_breakdown,
     }
 

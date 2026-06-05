@@ -63,11 +63,20 @@
     "ETH": 50.00,
     "MET": 0.10
   },
+  "commission_per_rt": {
+    "ES":  3.18, "MES": 1.10,
+    "NQ":  3.18, "MNQ": 1.10,
+    "YM":  3.18, "MYM": 1.10,
+    "RTY": 3.18, "M2K": 1.10,
+    "CL":  6.00, "MCL": 1.15,
+    "GC":  5.00, "MGC": 1.15
+  },
   "rules": {
     "forex_jpy_tick":            0.01,
     "forex_other_tick":          0.0001,
     "stock_default_tick":        0.01,
     "stock_default_point_value": 1.00,
-    "forex_default_point_value": 100000.00
+    "forex_default_point_value": 100000.00,
+    "default_commission_per_rt": 1.50
   }
 }
