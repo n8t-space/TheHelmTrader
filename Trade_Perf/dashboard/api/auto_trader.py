@@ -55,6 +55,32 @@ def _load_signal(timestamp: str) -> dict:
     return rec
 
 
+def _instruments_with_open_position(account: str) -> set[str]:
+    """Normalized instruments where ``account`` holds a non-zero net position
+    right now, per real NT8 fills -- the authoritative one-trade-at-a-time signal
+    (catches a scale-out runner the signal outcome already labels 'partial').
+
+    Uses each instrument's most recent fill's running ``position`` (NT8's own net).
+    Best-effort: any lookup failure returns empty so the gate fails OPEN rather
+    than deadlocking the queue."""
+    try:
+        from . import db
+        fills = db.fetch_fills_for_derivation(account=account)
+    except Exception:
+        logger.exception("[auto-trader] open-position lookup failed; gate fails open")
+        return set()
+    latest: dict[str, tuple] = {}
+    for f in fills:
+        sym = f.get("master_symbol")
+        if not sym or f.get("account_name") != account:
+            continue
+        key = (f.get("time_utc") or "", f.get("id") or 0)
+        if sym not in latest or key > latest[sym][0]:
+            latest[sym] = (key, f.get("position") or 0)
+    return {instruments.normalize_symbol(sym)
+            for sym, (_key, pos) in latest.items() if pos != 0}
+
+
 def _template_qty(proposal: dict) -> int:
     """Contracts the ATM template will place. AtmStrategyCreate has NO quantity
     parameter -- size is fixed by the template's brackets -- so this is the TRUE
@@ -263,21 +289,23 @@ def exec_queue(account: str) -> dict:
     # max_concurrent is the overall ceiling across instruments. (Each NS
     # strategy instance trades one instrument and self-caps at 1, so this server
     # gate is what lets a second INSTRUMENT trade while the first is open.)
-    open_trades = [
-        r for r in raw.values()
+    sig_open = {
+        instruments.normalize_symbol(str((r.get("proposal") or {}).get("instrument") or ""))
+        for r in raw.values()
         if not r.get("deleted")
         and (r.get("exec") or {}).get("state") in ("working", "filled")
         and ((r.get("exec") or {}).get("account") or r.get("arm_account")) == account
         and (r.get("outcome") or {}).get("result") in (None, "", "pending")
-    ]
-    open_instruments = {
-        instruments.normalize_symbol(str((r.get("proposal") or {}).get("instrument") or ""))
-        for r in open_trades
     }
-    if len(open_trades) >= max(1, cfg.max_concurrent):
-        logger.info("[auto-trader] queue held: %d open trade(s) >= max_concurrent=%d "
-                    "(overall ceiling)", len(open_trades), cfg.max_concurrent)
-        return {"account": account, "count": 0, "signals": [], "held_for_open": len(open_trades)}
+    # Ground truth: an instrument the account still holds ANY position in -- e.g.
+    # a scale-out RUNNER after TP1 -- is open even though its signal outcome is
+    # already 'partial'. Without this the lock releases on the partial and the
+    # next signal stacks on the live runner (entangled position, inflated qty).
+    open_instruments = (sig_open | _instruments_with_open_position(account)) - {""}
+    if len(open_instruments) >= max(1, cfg.max_concurrent):
+        logger.info("[auto-trader] queue held: %d open instrument(s) >= max_concurrent=%d "
+                    "(incl. open runners)", len(open_instruments), cfg.max_concurrent)
+        return {"account": account, "count": 0, "signals": [], "held_for_open": len(open_instruments)}
 
     out: list[dict] = []
     for ts, rec in raw.items():

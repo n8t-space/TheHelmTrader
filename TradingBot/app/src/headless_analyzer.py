@@ -91,8 +91,17 @@ def _has_active_trade(instrument: str) -> bool:
         if (rec.get("instrument") or proposal.get("instrument")) != instrument:
             continue
         result = (rec.get("outcome") or {}).get("result")
-        if result and result != "pending":
-            continue  # resolved -> not active
+        # A scale-out runner is still LIVE even after TP1 sets outcome='partial'.
+        # Treat the trade as resolved only when no leg is still open -- otherwise
+        # the lock releases on the partial and auto-analysis stacks a new signal
+        # on the open runner.
+        legs = rec.get("legs") or []
+        runner_open = any(
+            (leg or {}).get("open") or (leg or {}).get("result") in (None, "neither")
+            for leg in legs
+        )
+        if result and result != "pending" and not runner_open:
+            continue  # fully resolved -> not active
         exec_state = (rec.get("exec") or {}).get("state")
         if rec.get("entry_triggered") or exec_state in ("working", "filled"):
             return True
