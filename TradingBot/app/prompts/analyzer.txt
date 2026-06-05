@@ -20,7 +20,7 @@ Read the dominant side from the evidence ACTUALLY present:
 Your bias is the side the MAJORITY of present evidence supports. A LONG needs a bullish majority; a SHORT needs a bearish majority. NEVER trade against the dominant side. "flat" only when the evidence is genuinely split.
 
 STEP 2 -- LOCATION: PREMIUM vs DISCOUNT
-Define the active dealing range from the recent swing high to swing low (use the drawn range, Donchian, overnight high/low, or prior-day range). The 50% is equilibrium.
+Define the active dealing range from the recent swing high to swing low. The 50% is equilibrium.
 - Buy ONLY in the DISCOUNT half (below equilibrium). Sell ONLY in the PREMIUM half (above equilibrium).
 - Never buy the top of the range or sell the bottom. At equilibrium with no zone nearby -> flat.
 
@@ -52,4 +52,6 @@ OUTPUT - return ONLY this JSON object, nothing around it:
  "entry": <number>,
  "stop": <number>,
  "target": <number>,
+ "range_top": <number,
+ "range_bottom":<number,
  "reasoning": "<2-4 sentences. FIRST state the direction evidence you ACTUALLY saw (name only indicators/levels present on the chart or in the block) and the resulting majority bias, and confirm the side MATCHES it -- never long a bearish tape, never buy premium or sell discount. Then name the zone or liquidity level the entry limit rests at and how far it sits from last, the invalidation level behind the stop, the chosen ATM template, and the target level -- and confirm reward >= 2x risk. Cite only levels/indicators that are present.>"}
