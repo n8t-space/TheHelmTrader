@@ -91,20 +91,16 @@ def _has_active_trade(instrument: str) -> bool:
         if (rec.get("instrument") or proposal.get("instrument")) != instrument:
             continue
         result = (rec.get("outcome") or {}).get("result")
-        if result and result != "pending":
-            # A terminal outcome (stop/target/breakeven/no_fill) is closed even
-            # if a leg was left at a stale 'neither'. Only a 'partial' (TP1 hit)
-            # can still hold a trailing runner -- check legs for that case so the
-            # lock doesn't release while the runner is live.
-            if result != "partial":
-                continue
-            legs = rec.get("legs") or []
-            runner_open = any(
-                (leg or {}).get("open") or (leg or {}).get("result") in (None, "neither")
-                for leg in legs
-            )
-            if not runner_open:
-                continue  # partial but all legs closed -> resolved
+        legs = rec.get("legs") or []
+        # Legs are authoritative: any leg the resolver couldn't close (open /
+        # 'neither') means the position is still live even if the outcome was set
+        # (a 'stop' can be written falsely while price never reached the stop).
+        runner_open = any(
+            (leg or {}).get("open") or (leg or {}).get("result") in (None, "neither")
+            for leg in legs
+        )
+        if result and result != "pending" and not runner_open:
+            continue  # truly resolved -> not active
         exec_state = (rec.get("exec") or {}).get("state")
         if rec.get("entry_triggered") or exec_state in ("working", "filled"):
             return True
