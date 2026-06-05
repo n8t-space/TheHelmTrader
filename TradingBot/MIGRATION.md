@@ -820,6 +820,32 @@ Tightened the Signal Analysis page header and added a P&L column to the row tabl
 
 ---
 
+### 2026-06-05 — Integrity auditor, trade-derivation & concurrency correctness sweep
+
+A large correctness session. The throughline: **Signal Analysis must mirror reality (real NT8 fills), and the auto-trader must not over-trade.**
+
+**Done:**
+- **Data Integrity Auditor** (`Trade_Perf/dashboard/api/auditor.py`, Settings > Data Integrity). Links each executed signal to its real round-trip (`fill_linker`) and corrects paper P&L + legs + the aggregate outcome to the broker truth; unlinkable fills are flagged `unverified`, never guessed. Full sweep on a configurable interval + a ~90s responsive pass for fresh trades. Corrections appended to a git-ignored `audit_log.jsonl`.
+  - **Critical fix:** `audit` was missing from `signal_storage.MERGEABLE_FIELDS`, so `load_all` silently dropped the override (it never reached the dashboard) and the auditor re-corrected every pass. Added it.
+  - **Concurrency fix:** the responsive pass and the sweep ran with no mutex and interleaved each other's half-written legs, **oscillating** a signal between two values (e.g. `21:15:05 -26.30 <-> +33.40`) and bloating the log to 1820 entries. Added `_audit_lock` serializing all reconcile runs (responsive / sweep / manual `/run`). Now idempotent.
+- **Trade derivation** (`trades.py`): split round-trips on a **position sign reversal**, not just `position==0`. A single order that flips long<->short (NT8 marks it `is_entry=1 AND is_exit=1`) no longer merges two trades into one inflated-qty blob (the qty-3-on-a-2-lot-ATM bug). Remaining qty>2 are genuine overlapping entries — addressed by the concurrency fix.
+- **Outcome resolution** (`outcome_watcher.py`):
+  - Only **executed** signals are tracked (`exec.state is not None`) — un-executed proposals never get a phantom paper outcome.
+  - Never resolve stop/target before the entry is **confirmed hit** (no phantom targets on limits price never reached).
+  - **Resolve against the real fill price** (`exec.fill_price`), not `proposal.entry` — the ATM fills at MARKET (a short proposed at 7536.5 filled at 7556.5), so resolving off the proposal entry wrote false stops/targets.
+- **Runner-aware concurrency** (`auto_trader.py`, `headless_analyzer.py`): an instrument is locked while a filled signal there is still open — keyed on the **signal's leg state** (`_trade_still_open`), NOT the raw NT8 `position` column (which is garbled for ATM scale-out/reversal fills — same-ms conflicting values; a signed re-walk disagreed wildly, deadlocking the queue on phantom positions). Legs are authoritative: an outcome can be written falsely (`stop` while the position is still running), so any unresolved/`neither` leg = still open. The auditor backfills real-fill legs on close to clear the lock.
+- **ES support:** mirrored the 6 MES ATM templates as `ES_*` (same 0.25 tick) so ES auto-analysis stops auto-dismissing for lack of an ATM. Note ES is full-size ($50/pt).
+- **Test gate:** `scripts/preflight.ps1` (deterministic core + frontend build, ~3s) wired to a git `pre-push` hook; slow live-data router tests marked `integration` and excluded. `TEST-PLAN.md` documents it. 50 unit tests green.
+- **Signal scrub:** one-time soft-delete of paper/non-executed proposals so Signal Analysis shows only real trades.
+
+**Not done / next session:**
+- **Fill-data quality is the deep root cause.** NT8's `position` column + order_action are garbled for ATM short/scale-out/reversal fills (impossible same-ms transitions; signed re-walk diverges). Both the watcher and `derive_trades` have to work around it. Investigate HelmFeed's execution reporting — if fills are mis-reported, P&L/derivation are built on sand.
+- **`max_concurrent=2` vs 3 instruments (ES/MES/MCL):** the 3rd starves, and a queue race let 3 open at once. Bump the setting and/or make arming atomic.
+- The user bulk-deleted 72 real filled trades via the UI; offered to restore. The UI bulk-delete has no "don't delete a real trade" guard.
+- Integration tests skipped this session (live trading in progress — won't mutate live `feed.db`); run `-Full` when flat. The suite also touches live data, which makes it flaky against a running uvicorn — should redirect to a temp DB.
+
+---
+
 ### Closure
 
 The original four-phase AI-offload migration is fully done; the eight-checkpoint dashboard merger is fully done; four post-merge improvement tiers are done; rebrand is done. The Live Feed Pipeline is functionally complete — Phases 1–4 all shipped (2026-05-08 → 2026-05-09); only live Phase 1 verification at market open remains. The 10-item improvement sweep closed the headless-analyzer + auto-prune carry-forwards from earlier in the day, plus added pytest, schema versioning, NSSM-service watchdog, project-local CLAUDE.md scaffolding, and an `ninjascript-reviewer` subagent. **Next major initiative: SHARING** (config page + installer). The list under "Outstanding (next session pickup)" near the top of this doc is the source of truth for what's next.
