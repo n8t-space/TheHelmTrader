@@ -12,7 +12,6 @@ import {
   type AtmXmlBracket, type AtmStrategiesResp, type AtmStrategy,
   type DimensionsResp, type DrawdownConfig, type ModelsResp, type OllamaTestResp,
   type SettingsAccounts, type SettingsAiBackend,
-  type HungTrade,
   type SettingsAppearance, type SettingsAutoTrader, type SettingsDoc, type SettingsNews,
   type SettingsResp, type SettingsStrategy,
 } from '../api'
@@ -449,75 +448,7 @@ function AutoTraderTab({ value, simAccounts, onChange }: {
           Master switch is on but no account is selected — arming stays blocked until you pick one.
         </p>
       )}
-
-      <HungTrades account={value.account} />
     </>
-  )
-}
-
-function HungTrades({ account }: { account: string }) {
-  const qc = useQueryClient()
-  const q = useQuery<{ count: number; threshold_minutes: number; hung: HungTrade[] }>({
-    queryKey: ['hung', account],
-    queryFn: () => fetchJSON(`/api/auto-trader/hung${account ? `?account=${encodeURIComponent(account)}` : ''}`),
-    refetchInterval: 30_000,
-  })
-  const clear = useMutation({
-    mutationFn: () => postJSON<{ cleared: number }>('/api/auto-trader/clear-hung', { timestamps: null }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['hung'] }),
-  })
-  const hung = q.data?.hung ?? []
-  const thresh = q.data?.threshold_minutes ?? 30
-  return (
-    <div style={{ marginTop: 22 }}>
-      <h4 style={{ marginBottom: 4 }}>
-        Hung trades {hung.length > 0 && <span className="pnl-neg">({hung.length})</span>}
-      </h4>
-      <p className="subtle" style={{ marginTop: 0 }}>
-        Working/filled signals stuck "open" with no activity for {thresh}+ min — an entry that never
-        filled or cancelled, or a position whose close never resolved. They block the per-instrument
-        queue. Clearing marks them terminal so trading resumes (the auditor still reconciles real P&amp;L from fills).
-      </p>
-      {hung.length === 0 ? (
-        <p className="subtle">None detected.</p>
-      ) : (
-        <>
-          <div style={{ overflowX: 'auto' }}>
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Signal</th><th>Instrument</th><th>Dir</th><th>State</th>
-                  <th style={{ textAlign: 'right' }}>Idle</th>
-                </tr>
-              </thead>
-              <tbody>
-                {hung.map((h, i) => (
-                  <tr key={i}>
-                    <td><Link to={`/signals/${encodeURIComponent(h.ts)}`}>{h.ts}</Link></td>
-                    <td>{h.instrument || '--'}</td>
-                    <td>{h.direction || '--'}</td>
-                    <td>{h.state}</td>
-                    <td style={{ textAlign: 'right' }}>{h.age_minutes}m</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <button
-            type="button"
-            className="danger"
-            style={{ marginTop: 8 }}
-            disabled={clear.isPending}
-            onClick={() => {
-              if (window.confirm(`Clear ${hung.length} hung trade(s)? This frees the queue.`)) clear.mutate()
-            }}
-          >
-            {clear.isPending ? 'Clearing…' : `Clear ${hung.length} hung trade(s)`}
-          </button>
-          {clear.error && <span className="error"> {String(clear.error)}</span>}
-        </>
-      )}
-    </div>
   )
 }
 
