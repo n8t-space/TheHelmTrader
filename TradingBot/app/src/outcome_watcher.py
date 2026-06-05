@@ -223,12 +223,25 @@ def _one_pass(signals_path, signal_storage, entry_resolver, outcome_resolver,
         if rec.get("entry_triggered") is not True:
             continue
 
-        # Resolve from the actual entry-fill time, not the signal time, so a
-        # target/stop that printed BEFORE the entry filled isn't miscredited.
+        # Resolve against the REAL entry. An ATM fills at MARKET, not the
+        # proposal's (advisory) entry price -- using proposal.entry computes
+        # stop/target levels off the wrong price and books false stops/targets
+        # (e.g. a short proposed at 7536.5 that actually filled at 7556.5). For an
+        # executed signal use exec.fill_price + the real fill time; otherwise fall
+        # back to the proposal entry and the confirmed entry-hit time.
+        eff_entry_price = float(p["entry"])
         eff_entry_ts = entry_ts
-        hit_ms = rec.get("entry_hit_ts")
-        if isinstance(hit_ms, (int, float)) and hit_ms > 0:
-            eff_entry_ts = int(hit_ms // 1000)
+        ex2 = rec.get("exec") or {}
+        fp = ex2.get("fill_price")
+        if ex2.get("state") == "filled" and isinstance(fp, (int, float)) and fp > 0:
+            eff_entry_price = float(fp)
+            fts = _signal_ts_to_unix_s(ex2.get("filled_at") or "")
+            if fts is not None:
+                eff_entry_ts = fts
+        else:
+            hit_ms = rec.get("entry_hit_ts")
+            if isinstance(hit_ms, (int, float)) and hit_ms > 0:
+                eff_entry_ts = int(hit_ms // 1000)
 
         # --- Step 2: did stop or target get hit? ------------------------
         # Bracket-aware path: scale-out ATMs carry a per-bracket plan on the
@@ -251,8 +264,8 @@ def _one_pass(signals_path, signal_storage, entry_resolver, outcome_resolver,
                     legs = outcome_resolver.resolve_brackets(
                         instrument=inst_clean,
                         direction=p["direction"],
-                        entry_ts=entry_ts,
-                        entry_price=float(p["entry"]),
+                        entry_ts=eff_entry_ts,
+                        entry_price=eff_entry_price,
                         tick_size=float(tick_size),
                         brackets=brackets,
                     )
@@ -299,13 +312,17 @@ def _one_pass(signals_path, signal_storage, entry_resolver, outcome_resolver,
                         "(%d/%d legs closed)", ts, resolved_count, len(legs))
                 continue  # bracket path handled; skip single-bracket fallback
 
+        # Single-bracket fallback. proposal.target/stop were derived from the
+        # proposal entry; if the ATM actually filled elsewhere, shift both by the
+        # entry delta so the levels sit the right distance from the REAL fill.
+        entry_delta = eff_entry_price - float(p["entry"])
         try:
             result = outcome_resolver.resolve_outcome(
                 instrument=inst_clean,
                 direction=p["direction"],
-                entry_ts=entry_ts,
-                target=float(p["target"]),
-                stop=float(p["stop"]),
+                entry_ts=eff_entry_ts,
+                target=float(p["target"]) + entry_delta,
+                stop=float(p["stop"]) + entry_delta,
             )
         except Exception:
             logger.exception("[outcome-watcher] resolve_outcome failed for %s", ts)

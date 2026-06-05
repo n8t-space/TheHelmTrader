@@ -43,10 +43,11 @@ def test_fully_resolved_trade_frees_instrument():
     assert at._trade_still_open(_filled(outcome="stop")) is False
 
 
-def test_terminal_outcome_with_stale_neither_legs_is_closed():
-    # outcome=stop but legs left at 'neither' (feed gap) -> still CLOSED, must not
-    # deadlock the instrument. Only 'partial' consults the legs.
+def test_false_outcome_with_open_legs_is_still_open():
+    # The legs are authoritative: outcome='stop' was written falsely while price
+    # never hit the stop and the position is still running (legs 'neither').
+    # Must stay OPEN so the gate doesn't release a live position.
     legs = [{"bracket_idx": 0, "result": "neither"},
             {"bracket_idx": 1, "result": "neither"}]
-    assert at._trade_still_open(_filled(outcome="stop", legs=legs)) is False
-    assert at._trade_still_open(_filled(outcome="target", legs=legs)) is False
+    assert at._trade_still_open(_filled(outcome="stop", legs=legs)) is True
+    assert at._trade_still_open(_filled(outcome="target", legs=legs)) is True

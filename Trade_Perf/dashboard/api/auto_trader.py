@@ -65,14 +65,14 @@ def _trade_still_open(rec: dict) -> bool:
     garbled for ATM reversal/scale-out fills (same-ms conflicting values), which
     would deadlock the queue on phantom open positions. A fully-resolved signal
     (all legs closed) frees its instrument so trading resumes."""
-    result = (rec.get("outcome") or {}).get("result")
-    if result in (None, "", "pending"):
+    if (rec.get("outcome") or {}).get("result") in (None, "", "pending"):
         return True
-    # Only a 'partial' (TP1 filled, runner trailing) can still hold a position.
-    # A terminal outcome (stop/target/breakeven/no_fill) is closed even if the
-    # legs were left at a stale 'neither' (feed gap) -- don't let that deadlock.
-    if result != "partial":
-        return False
+    # Legs are AUTHORITATIVE for whether a position is still held -- an outcome
+    # can be set falsely (e.g. a 'stop' written while price never hit the stop and
+    # the position is still running). Any leg the resolver couldn't close
+    # (open / 'neither') means the trade is still live, regardless of outcome.
+    # When the trade truly closes, the auditor backfills the legs from real fills,
+    # which clears the lock.
     legs = rec.get("legs") or []
     return any((leg or {}).get("open") or (leg or {}).get("result") in (None, "neither")
                for leg in legs)
