@@ -114,22 +114,25 @@ def compute_trade_metrics(rec: dict, config: dict) -> dict:
     point_value = lookup_point_value(instrument, config)
     tick_size, tick_source = lookup_tick_size(instrument, config)
     is_futures = tick_source == "explicit"
-    # When sizing isn't set explicitly, default to the ATM template's total
-    # contracts (a scale-out template places >1) so MULTI-CONTRACT trades report
-    # full sizing + P&L -- not 1. Falls back to 1 only when no template qty is
-    # known. Users can still override via the Signal detail "Contracts" field.
-    # (The per-leg path below already sums each leg's qty, so it's unaffected.)
-    try:
-        position_size = float(rec.get("position_size") or 0)
-    except (TypeError, ValueError):
-        position_size = 0.0
-    if position_size <= 0:
+    # Contract count for sizing + P&L. Priority:
+    #   1. the actual LEGS that traded (ground truth for a resolved scale-out),
+    #   2. the ATM template's total qty (it fixes order size -- a multi-bracket
+    #      template places >1; a stale position_size=1 must not override it),
+    #   3. an explicit position_size override (manual / non-ATM signals),
+    #   4. 1.
+    # This keeps Qty / total_risk / total_reward consistent with realized P&L,
+    # which sums each leg's qty below.
+    def _num(v) -> float:
         try:
-            position_size = float(proposal.get("atm_total_qty") or 0)
+            return float(v or 0)
         except (TypeError, ValueError):
-            position_size = 0.0
-        if position_size <= 0:
-            position_size = 1.0
+            return 0.0
+    _legs = rec.get("legs")
+    leg_qty = (sum(_num(l.get("qty")) for l in _legs if isinstance(l, dict))
+               if isinstance(_legs, list) else 0.0)
+    atm_qty     = _num(proposal.get("atm_total_qty"))
+    explicit_sz = _num(rec.get("position_size"))
+    position_size = leg_qty or atm_qty or explicit_sz or 1.0
     outcome = rec.get("outcome") or {}
     outcome_result = outcome.get("result")
     closing_price = outcome.get("closing_price")
