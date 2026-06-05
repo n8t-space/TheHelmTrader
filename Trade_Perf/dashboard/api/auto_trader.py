@@ -55,30 +55,27 @@ def _load_signal(timestamp: str) -> dict:
     return rec
 
 
-def _instruments_with_open_position(account: str) -> set[str]:
-    """Normalized instruments where ``account`` holds a non-zero net position
-    right now, per real NT8 fills -- the authoritative one-trade-at-a-time signal
-    (catches a scale-out runner the signal outcome already labels 'partial').
+def _trade_still_open(rec: dict) -> bool:
+    """Is this filled signal still holding a position?
 
-    Uses each instrument's most recent fill's running ``position`` (NT8's own net).
-    Best-effort: any lookup failure returns empty so the gate fails OPEN rather
-    than deadlocking the queue."""
-    try:
-        from . import db
-        fills = db.fetch_fills_for_derivation(account=account)
-    except Exception:
-        logger.exception("[auto-trader] open-position lookup failed; gate fails open")
-        return set()
-    latest: dict[str, tuple] = {}
-    for f in fills:
-        sym = f.get("master_symbol")
-        if not sym or f.get("account_name") != account:
-            continue
-        key = (f.get("time_utc") or "", f.get("id") or 0)
-        if sym not in latest or key > latest[sym][0]:
-            latest[sym] = (key, f.get("position") or 0)
-    return {instruments.normalize_symbol(sym)
-            for sym, (_key, pos) in latest.items() if pos != 0}
+    True while the outcome is unresolved (None/''/pending) OR any scale-out leg is
+    still open -- a RUNNER trailing after TP1 set outcome='partial'. Keys on the
+    signal's legs (maintained by the outcome-watcher, corrected to real fills by
+    the auditor), NOT the raw NT8 fill ``position`` column -- that column is
+    garbled for ATM reversal/scale-out fills (same-ms conflicting values), which
+    would deadlock the queue on phantom open positions. A fully-resolved signal
+    (all legs closed) frees its instrument so trading resumes."""
+    result = (rec.get("outcome") or {}).get("result")
+    if result in (None, "", "pending"):
+        return True
+    # Only a 'partial' (TP1 filled, runner trailing) can still hold a position.
+    # A terminal outcome (stop/target/breakeven/no_fill) is closed even if the
+    # legs were left at a stale 'neither' (feed gap) -- don't let that deadlock.
+    if result != "partial":
+        return False
+    legs = rec.get("legs") or []
+    return any((leg or {}).get("open") or (leg or {}).get("result") in (None, "neither")
+               for leg in legs)
 
 
 def _template_qty(proposal: dict) -> int:
@@ -289,22 +286,22 @@ def exec_queue(account: str) -> dict:
     # max_concurrent is the overall ceiling across instruments. (Each NS
     # strategy instance trades one instrument and self-caps at 1, so this server
     # gate is what lets a second INSTRUMENT trade while the first is open.)
-    sig_open = {
+    # An instrument is open while it has a filled signal still holding a position
+    # -- unresolved outcome OR a scale-out RUNNER whose leg is still open after
+    # TP1 (outcome='partial'). Gating on leg state (not the garbled fill position
+    # column) blocks stacking on a live runner without deadlocking on phantom
+    # stale positions. A fully-resolved signal frees its instrument.
+    open_instruments = {
         instruments.normalize_symbol(str((r.get("proposal") or {}).get("instrument") or ""))
         for r in raw.values()
         if not r.get("deleted")
         and (r.get("exec") or {}).get("state") in ("working", "filled")
         and ((r.get("exec") or {}).get("account") or r.get("arm_account")) == account
-        and (r.get("outcome") or {}).get("result") in (None, "", "pending")
-    }
-    # Ground truth: an instrument the account still holds ANY position in -- e.g.
-    # a scale-out RUNNER after TP1 -- is open even though its signal outcome is
-    # already 'partial'. Without this the lock releases on the partial and the
-    # next signal stacks on the live runner (entangled position, inflated qty).
-    open_instruments = (sig_open | _instruments_with_open_position(account)) - {""}
+        and _trade_still_open(r)
+    } - {""}
     if len(open_instruments) >= max(1, cfg.max_concurrent):
-        logger.info("[auto-trader] queue held: %d open instrument(s) >= max_concurrent=%d "
-                    "(incl. open runners)", len(open_instruments), cfg.max_concurrent)
+        logger.info("[auto-trader] queue held: %d open instrument(s) >= max_concurrent=%d",
+                    len(open_instruments), cfg.max_concurrent)
         return {"account": account, "count": 0, "signals": [], "held_for_open": len(open_instruments)}
 
     out: list[dict] = []
