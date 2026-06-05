@@ -93,9 +93,15 @@ class TickBatch(BaseModel):
 
 @router.post("/bar")
 async def ingest_bar(bar: Bar) -> dict:
-    # Sync block — no awaits between the read and write of _last_bar_ts so
-    # concurrent bar arrivals for the same instrument don't race.
     last_ts = _last_bar_ts.get(bar.instrument)
+    if last_ts is None:
+        # In-memory state was reset (e.g. a dashboard restart). Don't mistake
+        # that for a >30 min session gap: seed from the last bar already in
+        # feed.db. If bars were flowing (recent stored bar), this is just a
+        # restart and the first live bar still arms -- only a genuine gap in the
+        # STORED data triggers warmup. (One-time per instrument; later bars hit
+        # the in-memory cache and skip this lookup.)
+        last_ts = await asyncio.to_thread(feed_store.last_bar_ts, bar.instrument, bar.period)
     is_post_gap = (last_ts is None) or (bar.ts - last_ts) > GAP_SECONDS
     if last_ts is None or bar.ts > last_ts:
         _last_bar_ts[bar.instrument] = bar.ts

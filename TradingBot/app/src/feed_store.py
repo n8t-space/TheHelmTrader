@@ -143,6 +143,18 @@ def insert_bar(
         )
 
 
+def last_bar_ts(instrument: str, period: str) -> int | None:
+    """Newest stored bar's close ts (unix s) for (instrument, period), or None.
+    Used to seed the in-memory warmup state after a restart so a restart isn't
+    mistaken for a session gap."""
+    with _lock:
+        row = _get_conn().execute(
+            "SELECT MAX(ts) FROM bars WHERE instrument = ? AND period = ?",
+            (instrument, period),
+        ).fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
 def insert_ticks(rows: list[tuple[str, int, float, int]]) -> None:
     """Bulk insert ticks. Dupes on (instrument, ts_ms, price) silently skipped."""
     if not rows:

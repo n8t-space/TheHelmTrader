@@ -29,14 +29,24 @@ def reset_analyzer():
     _wipe_analyzer_state(auto_analyzer)
 
 
+async def _wait_until(pred, timeout: float = 3.0):
+    """Poll until pred() is true (deterministic alternative to a fixed sleep that
+    flakes under CPU load). Returns on success; caller asserts the final state."""
+    import time
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if pred():
+            return
+        await asyncio.sleep(0.01)
+
+
 @pytest.mark.asyncio
 async def test_submit_starts_worker_lazily(reset_analyzer):
     aa = reset_analyzer
     assert aa._worker_task is None
     await aa.submit("MES", "5m", 1000)
     assert aa._worker_task is not None
-    # Let it drain
-    await asyncio.sleep(0.05)
+    await _wait_until(lambda: aa.queue_size() == 0)
     assert aa.queue_size() == 0
 
 
@@ -45,9 +55,8 @@ async def test_run_count_increments(reset_analyzer):
     aa = reset_analyzer
     pre = aa.stats()["run_count"]
     await aa.submit("MES", "5m", 1000)
-    await asyncio.sleep(0.05)
-    post = aa.stats()["run_count"]
-    assert post == pre + 1
+    await _wait_until(lambda: aa.stats()["run_count"] == pre + 1)
+    assert aa.stats()["run_count"] == pre + 1
 
 
 @pytest.mark.asyncio
@@ -95,7 +104,7 @@ async def test_stats_reports_queue_and_runs(reset_analyzer):
     assert s0["worker_alive"] is False  # never started
 
     await aa.submit("MES", "5m", 1)
-    await asyncio.sleep(0.05)
+    await _wait_until(lambda: aa.stats()["worker_alive"] and aa.stats()["queue_size"] == 0)
     s1 = aa.stats()
     assert s1["worker_alive"] is True
     assert s1["queue_size"] == 0  # drained
