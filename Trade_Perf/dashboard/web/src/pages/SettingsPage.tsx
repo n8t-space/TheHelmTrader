@@ -12,12 +12,13 @@ import {
   type AtmXmlBracket, type AtmStrategiesResp, type AtmStrategy,
   type DimensionsResp, type DrawdownConfig, type ModelsResp, type OllamaTestResp,
   type SettingsAccounts, type SettingsAiBackend,
+  type BlackoutWindow, type SettingsAutomation,
   type SettingsAppearance, type SettingsAutoTrader, type SettingsDoc, type SettingsNews,
   type SettingsResp, type SettingsStrategy,
 } from '../api'
 import { applyAppearance, cacheAppearance } from '../lib/theme'
 
-type Tab = 'appearance' | 'ai' | 'strategy' | 'accounts' | 'autotrader' | 'news' | 'integrity'
+type Tab = 'appearance' | 'ai' | 'strategy' | 'accounts' | 'autotrader' | 'automation' | 'news' | 'integrity'
 
 export function SettingsPage() {
   const qc = useQueryClient()
@@ -124,7 +125,7 @@ export function SettingsPage() {
       {save.error && <div className="card error">Save failed: {String(save.error)}</div>}
 
       <div className="card settings-tabs">
-        {(['appearance', 'ai', 'strategy', 'accounts', 'autotrader', 'news', 'integrity'] as Tab[]).map((t) => (
+        {(['appearance', 'ai', 'strategy', 'accounts', 'autotrader', 'automation', 'news', 'integrity'] as Tab[]).map((t) => (
           <button
             key={t}
             type="button"
@@ -168,6 +169,13 @@ export function SettingsPage() {
             onChange={(a) => setDraft({ ...draft, auto_trader: a })}
           />
         )}
+        {tab === 'automation' && (
+          <AutomationTab
+            value={draft.automation}
+            tz={draft.appearance.timezone}
+            onChange={(a) => setDraft({ ...draft, automation: a })}
+          />
+        )}
         {tab === 'news' && (
           <NewsTab
             value={draft.news}
@@ -205,8 +213,62 @@ function tabLabel(t: Tab): string {
     : t === 'strategy' ? 'Strategy'
     : t === 'accounts' ? 'Accounts'
     : t === 'autotrader' ? 'Auto-Trader'
+    : t === 'automation' ? 'Automation'
     : t === 'news' ? 'News'
     : 'Data Integrity'
+}
+
+// ---------- Automation (blackout windows) ----------
+
+function AutomationTab({ value, tz, onChange }: {
+  value: SettingsAutomation
+  tz: string
+  onChange: (v: SettingsAutomation) => void
+}) {
+  const windows = value.blackout_windows ?? []
+  const update = (i: number, patch: Partial<BlackoutWindow>) =>
+    onChange({ ...value, blackout_windows: windows.map((w, j) => (j === i ? { ...w, ...patch } : w)) })
+  const remove = (i: number) =>
+    onChange({ ...value, blackout_windows: windows.filter((_, j) => j !== i) })
+  const add = () =>
+    onChange({ ...value, blackout_windows: [...windows, { start: '12:00', end: '13:00', label: '' }] })
+
+  return (
+    <div>
+      <h3 style={{ marginTop: 0 }}>Automation</h3>
+      <p className="subtle">
+        Time windows when automation <strong>pauses</strong> — no signal generation and no
+        auto-execution. Open positions keep their own ATM stop/target. Times are in your configured
+        timezone (<code>{tz}</code>) and repeat daily; a window whose end is before its start spans
+        midnight (e.g. 16:00&ndash;08:30 = overnight).
+      </p>
+
+      {windows.length === 0 ? (
+        <p className="subtle">No blackout windows — automation runs whenever it&rsquo;s enabled.</p>
+      ) : (
+        <table className="data-table" style={{ maxWidth: 560 }}>
+          <thead>
+            <tr><th>Start</th><th>End</th><th>Label (optional)</th><th></th></tr>
+          </thead>
+          <tbody>
+            {windows.map((w, i) => (
+              <tr key={i}>
+                <td><input type="time" value={w.start} onChange={(e) => update(i, { start: e.target.value })} /></td>
+                <td><input type="time" value={w.end} onChange={(e) => update(i, { end: e.target.value })} /></td>
+                <td>
+                  <input type="text" placeholder="e.g. lunch, news" value={w.label}
+                         onChange={(e) => update(i, { label: e.target.value })} style={{ width: '100%' }} />
+                </td>
+                <td><button type="button" className="danger" onClick={() => remove(i)}>Remove</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <button type="button" style={{ marginTop: 10 }} onClick={add}>+ Add window</button>
+      <p className="subtle" style={{ marginTop: 10 }}>Remember to Save.</p>
+    </div>
+  )
 }
 
 // ---------- Data Integrity (signal <-> NT fill auditor) ----------
@@ -266,7 +328,10 @@ function IntegrityTab({ value, onChange }: {
           value={value.interval_minutes}
           onChange={(e) => onChange({ ...value, interval_minutes: Number(e.target.value) })}
         />
-        <span className="subtle">How often the sweep runs (default 60 = hourly). Save to apply.</span>
+        <span className="subtle">
+          How often the automatic sweep runs (default 60 = hourly). Each automatic pass reviews only
+          trades from the last <strong>{s?.auto_window_minutes ?? Math.round(value.interval_minutes * 1.5)} min</strong> (1.5&times; the interval). Save to apply.
+        </span>
       </label>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '16px 0' }}>
@@ -276,9 +341,11 @@ function IntegrityTab({ value, onChange }: {
           onClick={() => runNow.mutate()}
           disabled={runNow.isPending || s?.running}
         >
-          {runNow.isPending || s?.running ? 'Auditing...' : 'Run audit now'}
+          {runNow.isPending || s?.running ? 'Auditing...' : 'Full Audit (review everything)'}
         </button>
-        <span className="subtle">Last run: {fmtTs(s?.last_run)}</span>
+        <span className="subtle">
+          Last run: {fmtTs(s?.last_run)}{s?.last_scope ? ` (${s.last_scope})` : ''}
+        </span>
       </div>
 
       {runNow.error && <div className="card error">Audit failed: {String(runNow.error)}</div>}

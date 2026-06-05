@@ -602,6 +602,15 @@ export interface SettingsAuditor {
   interval_minutes: number
 }
 
+export interface BlackoutWindow {
+  start: string   // "HH:MM"
+  end: string     // "HH:MM"
+  label: string
+}
+export interface SettingsAutomation {
+  blackout_windows: BlackoutWindow[]
+}
+
 export interface HungTrade {
   ts: string
   instrument?: string
@@ -622,6 +631,7 @@ export interface SettingsDoc {
   news: SettingsNews
   auto_trader: SettingsAutoTrader
   auditor: SettingsAuditor
+  automation: SettingsAutomation
 }
 
 export interface AuditorLogEntry {
@@ -639,8 +649,10 @@ export interface AuditorLogEntry {
 export interface AuditorStatus {
   enabled: boolean
   interval_minutes: number
+  auto_window_minutes?: number
   running: boolean
   last_run: string | null
+  last_scope?: string | null
   last_summary: { checked: number; corrected: number; in_sync: number; unverified: number } | null
   recent: AuditorLogEntry[]
 }
