@@ -1,0 +1,16 @@
+#!/bin/sh
+# Pre-push gate -> runs scripts/preflight.ps1 (pytest + frontend build).
+# A non-zero exit blocks the push. Bypass in a real emergency with --no-verify.
+#
+# Git for Windows runs hooks through its bundled sh, so we shell out to
+# PowerShell here. Install by copying this file to .git/hooks/pre-push
+# (see scripts/install-hooks.ps1).
+repo="$(git rev-parse --show-toplevel)"
+echo "[pre-push] running preflight (pytest + frontend build)..."
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$repo/scripts/preflight.ps1"
+status=$?
+if [ "$status" -ne 0 ]; then
+  echo "[pre-push] preflight failed -- push aborted. Fix it or push with --no-verify to override."
+  exit 1
+fi
+exit 0
