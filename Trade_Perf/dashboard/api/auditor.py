@@ -307,25 +307,34 @@ def _filled_within(rec: dict, window_s: float) -> bool:
     return (datetime.now() - dt).total_seconds() <= window_s
 
 
-def run_audit(*, recent_only: bool = False) -> dict:
+def _recent_window_s() -> float:
+    """The automatic audit only reviews trades filled within 1.5x the configured
+    interval -- so each periodic pass comfortably covers everything since the
+    last one, with margin, without re-checking stable old records every time.
+    The manual Full Audit ignores this and reviews everything."""
+    interval = max(5, settings_mod.get_settings().auditor.interval_minutes)
+    return interval * 1.5 * 60.0
+
+
+def run_audit(*, recent_only: bool = False, update_status: bool = True) -> dict:
     """Load live data, reconcile, persist. Blocking -- call via to_thread.
 
-    ``recent_only`` scopes reconciliation to signals filled within
-    RECENT_FILL_WINDOW_S (the responsive pass); the full sweep leaves it False.
-    """
+    ``recent_only`` scopes reconciliation to signals filled within 1.5x the
+    interval (the automatic passes); the manual Full Audit leaves it False to
+    review everything. ``update_status`` writes the status the UI shows (the
+    high-frequency responsive pass passes False to avoid churning it)."""
     _state["running"] = True
     try:
         sigs = signal_storage.load_all(bridge.SIGNALS_LOG)
         config = instruments.load_config()
         links = fill_linker.build_links()
         if recent_only:
-            sigs = {ts: r for ts, r in sigs.items()
-                    if _filled_within(r, RECENT_FILL_WINDOW_S)}
+            window = _recent_window_s()
+            sigs = {ts: r for ts, r in sigs.items() if _filled_within(r, window)}
         summary = reconcile(sigs, links, config)
-        # The responsive pass is a partial view; don't let it overwrite the
-        # full-sweep status counters the UI shows.
-        if not recent_only:
+        if update_status:
             _state["last_run"] = summary["checked_at"]
+            _state["last_scope"] = "recent" if recent_only else "full"
             _state["last_summary"] = {k: summary[k] for k in
                                       ("checked", "corrected", "in_sync", "unverified")}
         return summary
@@ -344,7 +353,8 @@ async def audit_recent_loop_forever() -> None:
         if settings_mod.get_settings().auditor.enabled:
             try:
                 async with _audit_lock:
-                    summary = await asyncio.to_thread(run_audit, recent_only=True)
+                    summary = await asyncio.to_thread(run_audit, recent_only=True,
+                                                      update_status=False)
                 if summary["corrected"]:
                     logger.info("[auditor] responsive pass corrected %d fresh "
                                 "signal(s)", summary["corrected"])
@@ -354,7 +364,8 @@ async def audit_recent_loop_forever() -> None:
 
 
 async def audit_loop_forever() -> None:
-    """Background hourly (configurable) integrity sweep."""
+    """Periodic integrity sweep, scoped to the last 1.5x interval (new trades).
+    The manual Full Audit (/run) reviews everything."""
     await asyncio.sleep(FIRST_RUN_DELAY_S)
     while True:
         cfg = settings_mod.get_settings().auditor
@@ -362,8 +373,9 @@ async def audit_loop_forever() -> None:
         if cfg.enabled:
             try:
                 async with _audit_lock:
-                    summary = await asyncio.to_thread(run_audit)
-                logger.info("[auditor] swept: %d checked, %d corrected, "
+                    summary = await asyncio.to_thread(run_audit, recent_only=True,
+                                                      update_status=True)
+                logger.info("[auditor] swept (recent): %d checked, %d corrected, "
                             "%d unverified", summary["checked"],
                             summary["corrected"], summary["unverified"])
             except Exception:
@@ -380,17 +392,22 @@ async def get_status() -> dict:
     return {
         "enabled": cfg.enabled,
         "interval_minutes": cfg.interval_minutes,
+        "auto_window_minutes": round(_recent_window_s() / 60),  # auto-audit scope
         "running": _state["running"],
         "last_run": _state["last_run"],
+        "last_scope": _state.get("last_scope"),
         "last_summary": _state["last_summary"],
         "recent": read_log(limit=50),
     }
 
 
 @router.post("/run")
-async def run_now() -> dict:
+async def run_now(full: bool = True) -> dict:
+    """Manual Full Audit -- reviews EVERY signal by default. `full=false` scopes
+    to the same recent window the automatic passes use."""
     async with _audit_lock:
-        summary = await asyncio.to_thread(run_audit)
+        summary = await asyncio.to_thread(run_audit, recent_only=not full,
+                                          update_status=True)
     return {
         "checked": summary["checked"],
         "corrected": summary["corrected"],
