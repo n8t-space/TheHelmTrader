@@ -11,6 +11,7 @@ import { SignalAnalysisPage } from './pages/SignalAnalysisPage'
 import { SignalDetailPage } from './pages/SignalDetailPage'
 import { SupportPage } from './pages/SupportPage'
 import { TradePerformancePage } from './pages/TradePerformancePage'
+import { ServiceAlert } from './ServiceAlert'
 import { UpdateBanner } from './UpdateBanner'
 
 // Pre-paint hint: if we cached an appearance from a prior load, apply it before
@@ -73,6 +74,7 @@ export default function App() {
     <QueryClientProvider client={qc}>
       <BrowserRouter>
         <BootSettings />
+        <ServiceAlert />
         <UpdateBanner />
         <div className="app">
           <header>

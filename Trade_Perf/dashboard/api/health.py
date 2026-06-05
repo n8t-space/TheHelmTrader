@@ -87,6 +87,66 @@ def bot_stats() -> dict[str, Any]:
     return compute_bot_health()
 
 
+def _check_ai_reachable() -> dict[str, Any]:
+    """Reachability of the inference backend used for SIGNALS. For a local Ollama
+    we actually GET /api/tags (this is the box that physically drops off the
+    network); for a hosted provider we report whether the API key is configured
+    (a network probe would cost a call and can false-fail behind a corp TLS
+    proxy)."""
+    import urllib.request
+
+    ai = settings_mod.get_settings().ai_backend
+    provider = ai.signal_provider or ai.provider
+    if provider == "ollama":
+        base = ai.ollama_url.rsplit("/api/", 1)[0] or "http://127.0.0.1:11434"
+        try:
+            req = urllib.request.Request(base + "/api/tags", method="GET")
+            with urllib.request.urlopen(req, timeout=4) as r:
+                ok = 200 <= r.status < 300
+            detail = base if ok else f"{base} -> HTTP {r.status}"
+        except Exception as e:  # noqa: BLE001 -- any failure = unreachable
+            ok = False
+            detail = f"{base} unreachable ({type(e).__name__})"
+        return {"name": "AI inference (Ollama)", "key": "ai",
+                "reachable": ok, "critical": True, "detail": detail}
+
+    key_ok = ((provider == "claude" and bool(ai.claude_api_key))
+              or (provider == "openai" and bool(ai.openai_api_key)))
+    return {"name": f"AI inference ({provider})", "key": "ai",
+            "reachable": key_ok, "critical": True,
+            "detail": "API key set" if key_ok else "no API key configured"}
+
+
+def _check_feed() -> dict[str, Any]:
+    """Freshness of the NinjaTrader bar feed. Non-critical (stale is normal when
+    the market is closed) -- shown for awareness, never force-pops the alert."""
+    try:
+        import sqlite3
+        import time
+        from src import feed_store  # type: ignore[import-not-found]
+        conn = sqlite3.connect(f"file:{feed_store.DB_PATH}?mode=ro", uri=True, timeout=4)
+        try:
+            (latest,) = conn.execute("SELECT MAX(ts) FROM bars").fetchone()
+        finally:
+            conn.close()
+        age_s = (time.time() - latest) if latest else None
+        ok = age_s is not None and age_s < 300
+        detail = "no bars" if latest is None else f"last bar {int(age_s)}s ago"
+    except Exception as e:  # noqa: BLE001
+        ok, detail = False, f"feed check failed ({type(e).__name__})"
+    return {"name": "NinjaTrader feed", "key": "feed",
+            "reachable": ok, "critical": False, "detail": detail}
+
+
+@router.get("/services")
+def services() -> dict[str, Any]:
+    """Per-service reachability for the dashboard's service-down alert. The SPA
+    polls this and pops a modal when any `critical` service is unreachable."""
+    svcs = [_check_ai_reachable(), _check_feed()]
+    return {"services": svcs,
+            "any_critical_down": any(s["critical"] and not s["reachable"] for s in svcs)}
+
+
 @router.get("/logs")
 def logs(lines: int = Query(300, ge=1, le=5000)) -> dict[str, Any]:
     """Tail the last N lines of TradingBot's tradebot.log (unified bot + API feed).
