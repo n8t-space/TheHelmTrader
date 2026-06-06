@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from . import proposal_sanity
+from .context_format import format_ns_context
 from .local_llm_analyzer import MODEL, analyze
 from .screenshot_capturer import capture_via_snip
 from .signal_storage import append_signal
@@ -53,7 +54,7 @@ def run_pipeline(
 
     full_prompt = prompt
     if market_context:
-        full_prompt = _format_context_for_prompt(market_context) + "\n\n---\n\n" + prompt
+        full_prompt = format_ns_context(market_context) + "\n\n---\n\n" + prompt
 
     # Scope the ATM menu to the charted instrument when context names it; None
     # (unknown) keeps the full menu and the _derive_stop_target guard rejects a
@@ -97,58 +98,5 @@ def run_pipeline(
                 record["timestamp"], " (auto-dismissed)" if not is_valid else "")
 
     return record
-
-
-def _format_context_for_prompt(ctx: dict) -> str:
-    """Turn the NS context dict into a text block we prepend to the analyzer prompt.
-
-    Goal: give the model authoritative numbers for prices/levels so it doesn't
-    have to read them off the chart axis. Image stays the source of structural
-    interpretation; this block is the source of truth for prices.
-    """
-    lines = [
-        "## Authoritative Market Context (from NinjaTrader)",
-        f"Instrument: {ctx.get('instrument', 'unknown')}",
-    ]
-    current = ctx.get("current") or {}
-    if current:
-        lines.append(
-            f"Current: bid={current.get('bid')}, ask={current.get('ask')}, last={current.get('last')}"
-        )
-
-    tfs = ctx.get("timeframes") or {}
-    if tfs:
-        lines.append("")
-        lines.append("Timeframes:")
-        for tf_name, tf_data in tfs.items():
-            if not isinstance(tf_data, dict):
-                continue
-            parts = ", ".join(f"{k}={v}" for k, v in tf_data.items() if v is not None)
-            lines.append(f"  {tf_name}: {parts}")
-
-    daily = ctx.get("daily_levels") or {}
-    if daily:
-        lines.append("")
-        lines.append("Daily levels:")
-        if "pivot_p" in daily:
-            lines.append(
-                f"  Floor pivots: P={daily.get('pivot_p')}, "
-                f"R1={daily.get('pivot_r1')}, R2={daily.get('pivot_r2')}, R3={daily.get('pivot_r3')}, "
-                f"S1={daily.get('pivot_s1')}, S2={daily.get('pivot_s2')}, S3={daily.get('pivot_s3')}"
-            )
-        if "today_high" in daily:
-            lines.append(f"  Today: high={daily.get('today_high')}, low={daily.get('today_low')}")
-        if "yesterday_high" in daily:
-            lines.append(
-                f"  Yesterday: high={daily.get('yesterday_high')}, "
-                f"low={daily.get('yesterday_low')}, close={daily.get('yesterday_close')}"
-            )
-
-    lines.append("")
-    lines.append(
-        "Use the prices above as authoritative — do not re-read them from the chart axis. "
-        "Use the chart screenshot for structural interpretation (trend, pullbacks, support/resistance) only."
-    )
-    return "\n".join(lines)
 
 

@@ -8,6 +8,7 @@ resumes. Keys on the signal's leg state, not the garbled raw fill position colum
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 import dashboard.api.auto_trader as at
 
@@ -81,3 +82,45 @@ def test_false_outcome_with_open_legs_is_still_open():
             {"bracket_idx": 1, "result": "neither"}]
     assert at._trade_still_open(_filled(outcome="stop", legs=legs)) is True
     assert at._trade_still_open(_filled(outcome="target", legs=legs)) is True
+
+
+def test_duplicate_bar_not_placed_twice(tmp_path, monkeypatch):
+    """One order per (instrument, bar): a duplicate-bar signal must NOT be offered
+    when a sibling for the same bar already went out -- even after the first
+    filled and closed fast, freeing the instrument (the real 14:00 MES double).
+    """
+    from src import signal_storage
+
+    log = tmp_path / "signals.jsonl"
+    acct = "SIMTEST"
+    bar = 1780686000
+    monkeypatch.setattr(at.bridge, "SIGNALS_LOG", log)
+    monkeypatch.setattr(at.settings_mod, "in_blackout", lambda *a, **k: (False, None))
+    monkeypatch.setattr(at.settings_mod, "auto_trader_config", lambda: SimpleNamespace(
+        enabled=True, account=acct, max_concurrent=3, max_contracts_per_order=10,
+        entry_window_minutes=15, enabled_at=None, min_account_balance=0))
+
+    prop = {"instrument": "MES", "direction": "short", "entry": 7416.5,
+            "atm_strategy": "MES_1c", "qty": 1}
+    # Sibling #1: same bar, FILLED then CLOSED fast (resolved) -> frees instrument
+    # but stays in acted_bars.
+    signal_storage.append_signal(log, {
+        "timestamp": "2026-06-05T14:00:09", "proposal": dict(prop),
+        "headless_bar_ts": bar,
+        "exec": {"state": "filled", "account": acct, "fill_price": 7416.5},
+        "outcome": {"result": "target"}})
+    # Sibling #2: SAME bar, armed seconds later (the duplicate dispatch).
+    dup_ts = "2026-06-05T14:00:17"
+    signal_storage.append_signal(log, {
+        "timestamp": dup_ts, "proposal": dict(prop),
+        "headless_bar_ts": bar, "arm_account": acct,
+        "exec": {"state": "armed", "armed_at": datetime.now().isoformat(timespec="seconds")}})
+
+    res = at.exec_queue(acct)
+
+    # The duplicate is NOT offered to the strategy...
+    assert all(s["ts"] != dup_ts for s in res["signals"])
+    # ...and it's resolved no_fill with the duplicate-bar reason.
+    rec = signal_storage.load_all(log)[dup_ts]
+    assert rec["outcome"]["result"] == "no_fill"
+    assert "duplicate bar" in rec["outcome"]["note"]

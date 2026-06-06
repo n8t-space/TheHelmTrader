@@ -1,47 +1,55 @@
 // =====================================================================
-//  HelmFeed — live bar/tick publisher to The Helm bot
+//  HelmFeed — live bar/tick publisher + market-context dispatcher
 //  Project: Lodestone & Purser / The Helm
 //  Companion to: %USERPROFILE%\Documents\Projects\TradingBot\app
 // =====================================================================
 //
-//  WHAT THIS DOES
-//  --------------
-//  Apply this indicator to any chart you want piped into the bot. Two
-//  streams flow to the dashboard FastAPI on 127.0.0.1:8000:
+//  WHAT THIS DOES (merged HelmFeed + HelmAnalyzer, 2026-06-05)
+//  ----------------------------------------------------------
+//  One indicator per fed chart. Three streams flow to the dashboard
+//  FastAPI on 127.0.0.1:8000:
 //
-//      POST /api/feed/bar    — one closed bar (chart's native period)
-//      POST /api/feed/ticks  — batch of trade prints, flushed every 250 ms
+//      POST /api/feed/bar         — one closed bar + screenshot + RICH
+//                                   market context (auto path)
+//      POST /api/feed/ticks       — batch of trade prints, every 250 ms
+//      POST /api/capture-from-nt  — on hotkey (Ctrl+Shift+F): context +
+//                                   screenshot for the manual snip flow
 //
-//  Bars come via OnBarUpdate (Calculate.OnBarClose). Ticks come via
-//  OnMarketData filtered to MarketDataType.Last (trade prints, not
-//  bid/ask quote updates) — the two event streams are independent in
-//  NS8 so we don't need to choose.
+//  The rich context (EMA90, ADXR, Donchian, pivots, session levels, and
+//  Smart-Money market structure at 3 retrace lenses) used to live only in
+//  HelmAnalyzer (hotkey-only). It now rides every realtime bar close so the
+//  AUTO analyzer reasons over the same verified context the manual path
+//  gets -- closing the structure gap between the two paths.
 //
-//  Multi-chart safe: the bot dedupes bars on (instrument, period, ts)
-//  and ticks on (instrument, ts_ms, price). Two charts on MES 5m fire
-//  twice; the bot keeps one.
+//  Bars come via OnBarUpdate (Calculate.OnBarClose) on the primary series.
+//  Ticks come via OnMarketData filtered to MarketDataType.Last. The 4 HTF
+//  AddDataSeries (30m/1h/daily/weekly) feed the context builder only; their
+//  OnBarUpdate calls (BarsInProgress != 0) are ignored.
 //
-//  Historical bars/ticks are skipped (only State.Realtime) — chart load
-//  would otherwise flood the bot with weeks of useless past data.
+//  Multi-chart safe: the bot dedupes bars on (instrument, period, ts) and
+//  ticks on (instrument, ts_ms, price). The bot also dedupes the analysis
+//  dispatch per bar, so a re-sent bar never double-fires.
+//
+//  Historical bars/ticks are skipped for publishing (only State.Realtime),
+//  but the structure lenses ARE fed historical bars so structure is warm
+//  before the first realtime publish.
 //
 //  INSTALL
 //  -------
-//  1. Copy this file to:
+//  1. Copy to:
 //       %USERPROFILE%\Documents\NinjaTrader 8\bin\Custom\Indicators\_Helm Locker\HelmFeed.cs
-//  2. NinjaScript Editor → F5 to compile.
-//  3. On any chart you want fed: Indicators (Ctrl+I) → HelmFeed → Apply.
-//     The chart's period (5m / 15m / 1h ...) becomes the published period.
+//  2. NinjaScript Editor -> F5 to compile. (HelmAnalyzer.cs is retired;
+//     its structure classes now live here -- keeping both would be a
+//     duplicate-class CS0101 compile error.)
+//  3. On any chart you want fed + analyzed: Indicators (Ctrl+I) -> HelmFeed.
 //
 //  NOTES FOR FUTURE EDITS
 //  ----------------------
-//    - HttpClient is lazy-initialized — same rationale as HelmAnalyzer
-//      (static field initializer exceptions silently exclude us from
-//      type-discovery).
+//    - HttpClient is lazy-initialized (static-field-initializer exceptions
+//      silently exclude us from NS type discovery).
 //    - Hand-rolled JSON to avoid pulling serializers into the NS sandbox.
-//    - Instrument is published as MasterInstrument.Name (e.g., "MES"),
-//      so contract-month suffixes ("MES 06-26") never reach the bot.
-//    - Tick batching uses System.Threading.Timer firing every 250 ms.
-//      Buffer is swap-on-flush so OnMarketData never blocks on IO.
+//    - Instrument published as MasterInstrument.Name (e.g. "MES").
+//    - AddDataSeries order MUST match the IDX_* constants.
 // =====================================================================
 
 #region Using declarations
@@ -54,6 +62,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media.Imaging;
 using NinjaTrader.Cbi;
@@ -64,6 +73,177 @@ using NinjaTrader.NinjaScript.Indicators;
 
 namespace NinjaTrader.NinjaScript.Indicators
 {
+    // =====================================================================
+    //  StructureSwing — one confirmed pivot. Named StructureSwing (not
+    //  "Swing") because NT8 ships a built-in `Swing` indicator in this
+    //  namespace; a second `Swing` symbol is a CS0101 compile error.
+    // =====================================================================
+    public class StructureSwing
+    {
+        public string   Type;
+        public string   Label;
+        public double   Price;
+        public DateTime Time;
+        public bool     IsConfirmed;
+    }
+
+    // =====================================================================
+    //  MarketStructureLens — one Smart-Money-Concepts state machine at one
+    //  retrace sensitivity. While in an up leg we track the running high;
+    //  the leg confirms (and the high becomes a swing high) when price
+    //  retraces by RetracePct of the leg range. Labels HH/HL/LH/LL drive
+    //  BOS (continuation) / CHoCH (reversal) events. See full notes in the
+    //  pre-merge HelmAnalyzer history.
+    // =====================================================================
+    public class MarketStructureLens
+    {
+        public readonly double RetracePct;
+
+        public string         Trend              = "Up";
+        public string         Structure          = "Transitional";
+        public string         LastStructureEvent = null;
+        public double         BreakPrice         = 0.0;
+        public StructureSwing LastSwing          = null;
+        public StructureSwing LastConfirmedHigh  = null;
+        public StructureSwing LastConfirmedLow   = null;
+
+        private double   currentLegHigh = double.MinValue;
+        private double   currentLegLow  = double.MaxValue;
+        private DateTime currentLegHighTime;
+        private DateTime currentLegLowTime;
+        private double   legStartPrice;
+        private bool     initialized = false;
+
+        public MarketStructureLens(double retracePct)
+        {
+            RetracePct = retracePct;
+        }
+
+        public void OnBar(double high, double low, double close, DateTime barTime)
+        {
+            if (!initialized)
+            {
+                currentLegHigh     = high;
+                currentLegLow      = low;
+                currentLegHighTime = barTime;
+                currentLegLowTime  = barTime;
+                legStartPrice      = close;
+                initialized        = true;
+                return;
+            }
+
+            if (high > currentLegHigh) { currentLegHigh = high; currentLegHighTime = barTime; }
+            if (low  < currentLegLow)  { currentLegLow  = low;  currentLegLowTime  = barTime; }
+
+            if (Trend == "Up")
+            {
+                double legRange = currentLegHigh - legStartPrice;
+                if (legRange <= 0) return;
+
+                double retraceLevel = currentLegHigh - legRange * RetracePct;
+                BreakPrice = retraceLevel;
+
+                if (low <= retraceLevel)
+                {
+                    ConfirmSwingHigh();
+                    Trend              = "Down";
+                    legStartPrice      = currentLegHigh;
+                    currentLegHigh     = high;
+                    currentLegHighTime = barTime;
+                    currentLegLow      = low;
+                    currentLegLowTime  = barTime;
+                }
+            }
+            else
+            {
+                double legRange = legStartPrice - currentLegLow;
+                if (legRange <= 0) return;
+
+                double retraceLevel = currentLegLow + legRange * RetracePct;
+                BreakPrice = retraceLevel;
+
+                if (high >= retraceLevel)
+                {
+                    ConfirmSwingLow();
+                    Trend              = "Up";
+                    legStartPrice      = currentLegLow;
+                    currentLegLow      = low;
+                    currentLegLowTime  = barTime;
+                    currentLegHigh     = high;
+                    currentLegHighTime = barTime;
+                }
+            }
+        }
+
+        private void ConfirmSwingHigh()
+        {
+            var s = new StructureSwing
+            {
+                Type        = "High",
+                Price       = currentLegHigh,
+                Time        = currentLegHighTime,
+                IsConfirmed = true
+            };
+
+            bool isHH = (LastConfirmedHigh == null) || (s.Price > LastConfirmedHigh.Price);
+            s.Label = isHH ? "HH" : "LH";
+
+            if (isHH && LastConfirmedLow != null)
+            {
+                if      (LastConfirmedLow.Label == "HL") LastStructureEvent = "BullishBOS";
+                else if (LastConfirmedLow.Label == "LL") LastStructureEvent = "BullishCHoCH";
+            }
+
+            LastSwing         = s;
+            LastConfirmedHigh = s;
+            RecomputeStructure();
+        }
+
+        private void ConfirmSwingLow()
+        {
+            var s = new StructureSwing
+            {
+                Type        = "Low",
+                Price       = currentLegLow,
+                Time        = currentLegLowTime,
+                IsConfirmed = true
+            };
+
+            bool isLL = (LastConfirmedLow == null) || (s.Price < LastConfirmedLow.Price);
+            s.Label = isLL ? "LL" : "HL";
+
+            if (isLL && LastConfirmedHigh != null)
+            {
+                if      (LastConfirmedHigh.Label == "LH") LastStructureEvent = "BearishBOS";
+                else if (LastConfirmedHigh.Label == "HH") LastStructureEvent = "BearishCHoCH";
+            }
+
+            LastSwing        = s;
+            LastConfirmedLow = s;
+            RecomputeStructure();
+        }
+
+        private void RecomputeStructure()
+        {
+            bool hasHH = LastConfirmedHigh != null && LastConfirmedHigh.Label == "HH";
+            bool hasLH = LastConfirmedHigh != null && LastConfirmedHigh.Label == "LH";
+            bool hasLL = LastConfirmedLow  != null && LastConfirmedLow.Label  == "LL";
+            bool hasHL = LastConfirmedLow  != null && LastConfirmedLow.Label  == "HL";
+
+            if (LastStructureEvent != null && LastStructureEvent.EndsWith("CHoCH"))
+                Structure = "Transitional";
+            else if (hasHH && hasHL)
+                Structure = "Bullish";
+            else if (hasLL && hasLH)
+                Structure = "Bearish";
+            else if ((hasLH && hasHL) || (hasHH && hasLL))
+                Structure = "Range";
+            else
+                Structure = "Transitional";
+        }
+    }
+
+
     public class HelmFeed : Indicator
     {
         // =================================================================
@@ -71,9 +251,26 @@ namespace NinjaTrader.NinjaScript.Indicators
         // =================================================================
         private const string FEED_BAR_URL         = "http://127.0.0.1:8000/api/feed/bar";
         private const string FEED_TICKS_URL       = "http://127.0.0.1:8000/api/feed/ticks";
+        private const string CAPTURE_URL          = "http://127.0.0.1:8000/api/capture-from-nt";
         private const int    HTTP_TIMEOUT_SECONDS = 5;
         private const int    FLUSH_INTERVAL_MS    = 250;
         private const int    BACKFILL_BAR_COUNT   = 100;
+
+        // Hotkey: Ctrl+Shift+F (manual snip + analyze).
+        private const Key          HOTKEY_KEY       = Key.F;
+        private const ModifierKeys HOTKEY_MODIFIERS = ModifierKeys.Control | ModifierKeys.Shift;
+
+        // Timeframe series indices. Order MUST match the AddDataSeries calls
+        // in State.Configure.
+        private const int IDX_PRIMARY = 0;
+        private const int IDX_30M     = 1;
+        private const int IDX_1H      = 2;
+        private const int IDX_DAILY   = 3;
+        private const int IDX_WEEKLY  = 4;
+
+        // Structure lenses: 0.5 fast / 1.0 medium / 2.0 slow.
+        private static readonly double[] LENS_RETRACE_PCTS = { 0.5, 1.0, 2.0 };
+        private List<MarketStructureLens> lenses;
 
         private static readonly DateTime UNIX_EPOCH =
             new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
@@ -92,11 +289,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         private readonly object tickBufferLock = new object();
         private System.Threading.Timer flushTimer;
 
-        // ChartControl ref captured in DataLoaded -- needed by the
-        // BitBlt-based chart-capture path used on Realtime bar close.
-        // Auto Analysis on the bot side reads the latest screenshot per
-        // (instrument, period) and feeds it to the vision LLM.
+        // ChartControl + host Window: needed for the BitBlt capture and the
+        // window-level hotkey listener (chart panels rarely hold focus).
         private NinjaTrader.Gui.Chart.ChartControl chartControl;
+        private System.Windows.Window hostWindow;
+        private bool hotkeyAttached = false;   // guard against double-subscribe on a Historical re-fire
 
         // =================================================================
         //  HTTP — lazy singleton
@@ -129,36 +326,75 @@ namespace NinjaTrader.NinjaScript.Indicators
         // =================================================================
         protected override void OnStateChange()
         {
-            try { Print($"[HelmFeed] State → {State}"); } catch { }
+            try { Print($"[HelmFeed] State -> {State}"); } catch { }
 
             if (State == State.SetDefaults)
             {
-                Description              = "The Helm: publish closed bars + trade ticks to the local bot's feed endpoints.";
+                Description              = "The Helm: publish closed bars + ticks + rich market context, and snip-on-hotkey, to the local bot.";
                 Name                     = "HelmFeed";
                 IsOverlay                = true;
                 Calculate                = Calculate.OnBarClose;
                 IsSuspendedWhileInactive = true;
             }
+            else if (State == State.Configure)
+            {
+                // HTF context series. Order MUST match the IDX_* constants.
+                AddDataSeries(BarsPeriodType.Minute, 30);
+                AddDataSeries(BarsPeriodType.Minute, 60);
+                AddDataSeries(BarsPeriodType.Day, 1);
+                AddDataSeries(BarsPeriodType.Week, 1);
+
+                lenses = new List<MarketStructureLens>(LENS_RETRACE_PCTS.Length);
+                foreach (var pct in LENS_RETRACE_PCTS)
+                    lenses.Add(new MarketStructureLens(pct));
+            }
             else if (State == State.DataLoaded)
             {
-                // Start the tick-flush timer once data is loaded. Firing
-                // earlier than first tick is harmless (empty buffer = no-op).
                 flushTimer = new System.Threading.Timer(
                     _ => FlushTicks(), null, FLUSH_INTERVAL_MS, FLUSH_INTERVAL_MS);
 
-                // Capture the WPF ChartControl ref for later bitmap grabs.
-                // Same pattern HelmAnalyzer uses. Safe to access in DataLoaded.
                 try { chartControl = ChartControl; }
-                catch { /* unattached or non-chart context; capture stays null */ }
+                catch { /* unattached / non-chart context; capture stays null */ }
+            }
+            else if (State == State.Historical)
+            {
+                // Wire the hotkey at the host-window level (ChartControl
+                // panels rarely hold keyboard focus). chartControl was
+                // captured in DataLoaded.
+                if (chartControl == null)
+                {
+                    try { chartControl = ChartControl; } catch { }
+                }
+                if (chartControl != null && !hotkeyAttached)
+                {
+                    chartControl.Dispatcher.InvokeAsync(() =>
+                    {
+                        try
+                        {
+                            hostWindow = System.Windows.Window.GetWindow(chartControl);
+                            if (hostWindow != null)
+                            {
+                                hostWindow.PreviewKeyDown += OnChartKeyDown;
+                                hotkeyAttached = true;
+                                Print($"[HelmFeed] Hotkey listener attached to window: {hostWindow.Title}");
+                            }
+                            else
+                            {
+                                Print("[HelmFeed] WARNING: could not resolve host window -- hotkey will not fire.");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Print($"[HelmFeed] Failed to attach hotkey: {ex.Message}");
+                        }
+                    });
+                }
             }
             else if (State == State.Realtime)
             {
-                // Historical backfill: publish the last N closed bars so the
-                // bot's feed.db is warm immediately, instead of waiting ~100
-                // minutes for 20 live 5m bars to accumulate. The bot tags
-                // bars whose ts is materially older than wall-clock now as
-                // "stale" and stores them WITHOUT triggering auto-analysis,
-                // so flooding 100 bars at once doesn't fire 100 LLM calls.
+                // Backfill last N closed bars so feed.db is warm immediately.
+                // Bot tags stale ts and stores them WITHOUT triggering
+                // analysis, so flooding bars doesn't fire N LLM calls.
                 try { BackfillHistoricalBars(BACKFILL_BAR_COUNT); }
                 catch (Exception ex) { Print($"[HelmFeed] backfill failed: {ex.Message}"); }
             }
@@ -169,46 +405,72 @@ namespace NinjaTrader.NinjaScript.Indicators
                     flushTimer.Dispose();
                     flushTimer = null;
                 }
-                // Final flush so anything still buffered makes it out.
-                FlushTicks();
+                FlushTicks();   // final flush of anything buffered
+
+                if (hostWindow != null)
+                {
+                    var hw = hostWindow;
+                    hw.Dispatcher.InvokeAsync(() =>
+                    {
+                        try { hw.PreviewKeyDown -= OnChartKeyDown; } catch { }
+                    });
+                    hostWindow = null;
+                }
+                hotkeyAttached = false;
+                chartControl = null;
             }
         }
 
         protected override void OnBarUpdate()
         {
-            // Only the chart's native series; ignore any future AddDataSeries.
-            if (BarsInProgress != 0) return;
-            if (State != State.Realtime) return;
+            // Primary series only -- the 4 HTF series also fire here.
+            if (BarsInProgress != IDX_PRIMARY) return;
             if (CurrentBar < 1) return;
 
-            string json;
-            try { json = BuildBarJson(); }
+            // Feed the structure lenses on EVERY closed bar (Historical +
+            // Realtime) so SMC structure is warm before the first publish.
+            if (lenses != null)
+            {
+                double lh = High[0], ll = Low[0], lc = Close[0];
+                DateTime lt = Time[0];
+                foreach (var lens in lenses) lens.OnBar(lh, ll, lc, lt);
+            }
+
+            // Publish only realtime closes (historical bars come via backfill).
+            if (State != State.Realtime) return;
+
+            string body;
+            try { body = BuildBarJson(); }
             catch (Exception ex)
             {
                 Print($"[HelmFeed] BuildBarJson failed: {ex.Message}");
                 return;
             }
 
-            // Attach a chart screenshot so the bot's headless / auto-analyzer
-            // has visual context, not just bar text. ~150-200 KB per closed
-            // bar; bot keeps only the latest per (instrument, period).
-            // Null on first call before DataLoaded -- caller path tolerates it.
-            string screenshotB64 = CaptureChartBase64();
-            if (!string.IsNullOrEmpty(screenshotB64))
-            {
-                json = json.Substring(0, json.Length - 1)
-                     + ",\"screenshot_b64\":\"" + screenshotB64 + "\"}";
-            }
+            // Strip the closing brace so we can append context + screenshot.
+            body = body.Substring(0, body.Length - 1);
 
+            // Rich NS context (best-effort: the bar still publishes without it).
+            try { body += ",\"context\":" + BuildContextJson(); }
+            catch (Exception ex) { Print($"[HelmFeed] BuildContextJson failed: {ex.Message}"); }
+
+            // Chart bitmap for the vision LLM (latest per combo on the bot side).
+            string shot = CaptureChartBase64();
+            if (!string.IsNullOrEmpty(shot))
+                body += ",\"screenshot_b64\":\"" + shot + "\"";
+
+            string json = body + "}";
             Task.Run(() => PostAsync(FEED_BAR_URL, json));
         }
 
         protected override void OnMarketData(MarketDataEventArgs e)
         {
-            // Trade prints only — skip bid/ask quote noise.
+            // With the 4 HTF AddDataSeries, OnMarketData fires once per series
+            // for the same instrument -- take only the primary so each trade
+            // print is buffered once (the bot also dedupes, but don't 5x the
+            // POST volume).
+            if (BarsInProgress != IDX_PRIMARY) return;
             if (e.MarketDataType != MarketDataType.Last) return;
-
-            // Belt-and-suspenders; OnMarketData generally only fires live.
             if (State != State.Realtime) return;
 
             var t = new Tick
@@ -222,6 +484,48 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 tickBuffer.Add(t);
             }
+        }
+
+        // =================================================================
+        //  HOTKEY -> manual snip + analyze (POST /api/capture-from-nt)
+        // =================================================================
+        private void OnChartKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key != HOTKEY_KEY) return;
+            if (e.KeyboardDevice.Modifiers != HOTKEY_MODIFIERS) return;
+
+            // Multi-tab guard: only the visible chart's instance handles the
+            // hotkey (the listener is window-level, so every tab's instance
+            // would otherwise race to POST).
+            if (chartControl == null || !chartControl.IsVisible) return;
+
+            e.Handled = true;
+            Print($"[HelmFeed] Hotkey caught -- snapshot for {Instrument.FullName}");
+            TriggerSnapshot();
+        }
+
+        private void TriggerSnapshot()
+        {
+            string screenshotB64 = CaptureChartBase64();
+
+            string json;
+            try { json = BuildContextJson(); }
+            catch (Exception ex)
+            {
+                Print($"[HelmFeed] BuildContextJson failed: {ex.Message}");
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(screenshotB64))
+            {
+                json = json.Substring(0, json.Length - 1)
+                     + ",\"screenshot_b64\":\"" + screenshotB64 + "\"}";
+            }
+
+            Task.Run(() => PostAsync(CAPTURE_URL, json));
+            Print(screenshotB64 != null
+                ? "[HelmFeed] Context POSTed with embedded chart bitmap."
+                : "[HelmFeed] Context POSTed (no screenshot; bot falls back to snip overlay).");
         }
 
         // =================================================================
@@ -248,7 +552,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         }
 
         // =================================================================
-        //  JSON BUILDERS
+        //  BAR / TICK JSON BUILDERS
         // =================================================================
         private string BuildBarJson()
             => BuildBarJsonAt(ToUnixSeconds(Time[0]),
@@ -275,23 +579,16 @@ namespace NinjaTrader.NinjaScript.Indicators
             return sb.ToString();
         }
 
-        // -----------------------------------------------------------------
-        //  Historical backfill — runs once on State.Realtime transition.
-        //  Walks the chart's loaded historical bars (absolute index, NOT
-        //  barsAgo — same access pattern HelmAnalyzer uses for pivots, to
-        //  stay compatible with the WPF dispatcher thread quirks) and POSTs
-        //  each closed bar to /api/feed/bar. The bot recognizes stale ts
-        //  and stores them without triggering auto-analysis.
-        // -----------------------------------------------------------------
+        // Backfill runs once on State.Realtime. Plain bars only (no context /
+        // screenshot) -- the bot recognizes stale ts and stores without
+        // triggering analysis.
         private void BackfillHistoricalBars(int count)
         {
             if (Bars == null) return;
             int total = Bars.Count;
             if (total < 2) return;
 
-            // Bars.Count - 1 is the still-forming current bar; back off one
-            // so we only publish CLOSED bars.
-            int endIdx   = total - 2;
+            int endIdx   = total - 2;   // total-1 is the still-forming bar
             int startIdx = Math.Max(0, endIdx - count + 1);
 
             int published = 0;
@@ -309,12 +606,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     c  = Bars.GetClose(i);
                     v  = (long)Bars.GetVolume(i);
                 }
-                catch
-                {
-                    // Skip bars NT refuses to deliver at absolute index;
-                    // they're typically session-boundary placeholders.
-                    continue;
-                }
+                catch { continue; }
 
                 string json = BuildBarJsonAt(ts, o, h, l, c, v);
                 Task.Run(() => PostAsync(FEED_BAR_URL, json));
@@ -340,6 +632,231 @@ namespace NinjaTrader.NinjaScript.Indicators
                     t.TsMs, t.Price, t.Volume);
             }
             sb.Append("]}");
+            return sb.ToString();
+        }
+
+        // =================================================================
+        //  CONTEXT JSON BUILDER (folded in from HelmAnalyzer)
+        // =================================================================
+        private string BuildContextJson()
+        {
+            var sb = new StringBuilder(1024);
+            sb.Append('{');
+
+            WriteKv(sb, "instrument", Instrument.FullName, leading: false);
+            WriteKv(sb, "timestamp",  DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture));
+            WriteKv(sb, "schema_version", "1");
+
+            // Current price. Bid/ask pinned to the PRIMARY series (the
+            // index-less overloads return whatever series BarsInProgress last
+            // touched -> a stale/foreign quote). Fall back to last close.
+            sb.Append(",\"current\":{");
+            double bid  = GetCurrentBid(IDX_PRIMARY);
+            double ask  = GetCurrentAsk(IDX_PRIMARY);
+            double last = Closes[IDX_PRIMARY][0];
+            WriteKv(sb, "bid",  bid > 0 ? bid : last, leading: false);
+            WriteKv(sb, "ask",  ask > 0 ? ask : last);
+            WriteKv(sb, "last", last);
+            sb.Append('}');
+
+            sb.Append(",\"timeframes\":{");
+            AppendTimeframe(sb, "primary", IDX_PRIMARY, leading: false);
+            AppendTimeframe(sb, "30m",     IDX_30M);
+            AppendTimeframe(sb, "1h",      IDX_1H);
+            AppendTimeframe(sb, "daily",   IDX_DAILY);
+            AppendTimeframe(sb, "weekly",  IDX_WEEKLY);
+            sb.Append('}');
+
+            sb.Append(",\"daily_levels\":{");
+            AppendPivots(sb);
+            AppendSessionLevels(sb);
+            sb.Append('}');
+
+            sb.Append(",\"market_structure\":[");
+            if (lenses != null)
+            {
+                bool first = true;
+                foreach (var lens in lenses)
+                {
+                    if (!first) sb.Append(',');
+                    AppendLens(sb, lens);
+                    first = false;
+                }
+            }
+            sb.Append(']');
+
+            sb.Append('}');
+            return sb.ToString();
+        }
+
+        // Per-timeframe block:
+        //   "5m":{"ema90":4519.8,"adxr":27.4,...,"swing_high_20":4523.5}
+        private void AppendTimeframe(StringBuilder sb, string label, int idx, bool leading = true)
+        {
+            if (leading) sb.Append(',');
+            sb.Append('"').Append(label).Append("\":{");
+
+            var bars = BarsArray[idx];
+
+            // The user's chart stack uses ONLY EMA(90); adding lines invites
+            // the LLM to cite levels not on screen.
+            WriteKv(sb, "ema90",  EMA(bars,  90)[0],  leading: false);
+            // ADXR (trend-strength rating) replaced ATR14 2026-06-05: the ATM
+            // templates own stop/target sizing, so trend strength is the more
+            // useful signal. >25 trending, <20 chop.
+            WriteKv(sb, "adxr",   ADXR(bars, 14, 14)[0]);
+
+            var dc = DonchianChannel(bars, 14);
+            WriteKv(sb, "donchian_upper",  dc.Upper[0]);
+            WriteKv(sb, "donchian_lower",  dc.Lower[0]);
+            WriteKv(sb, "donchian_middle", dc.Mean[0]);
+
+            WriteKv(sb, "swing_high_20", MAX(Highs[idx], 20)[0]);
+            WriteKv(sb, "swing_low_20",  MIN(Lows[idx],  20)[0]);
+
+            sb.Append('}');
+        }
+
+        // Per-lens block inside market_structure[].
+        private void AppendLens(StringBuilder sb, MarketStructureLens lens)
+        {
+            sb.Append('{');
+            WriteKv(sb, "retrace_pct",          lens.RetracePct, leading: false);
+            WriteKvString(sb, "trend",          lens.Trend);
+            WriteKvString(sb, "structure",      lens.Structure);
+            WriteKvString(sb, "last_structure_event", lens.LastStructureEvent);
+            WriteKv(sb, "break_price",          lens.BreakPrice);
+
+            sb.Append(",\"last_swing\":");
+            AppendSwing(sb, lens.LastSwing);
+            sb.Append(",\"last_confirmed_high\":");
+            AppendSwing(sb, lens.LastConfirmedHigh);
+            sb.Append(",\"last_confirmed_low\":");
+            AppendSwing(sb, lens.LastConfirmedLow);
+
+            sb.Append('}');
+        }
+
+        private void AppendSwing(StringBuilder sb, StructureSwing s)
+        {
+            if (s == null) { sb.Append("null"); return; }
+            sb.Append('{');
+            WriteKvString(sb, "type",  s.Type,  leading: false);
+            WriteKvString(sb, "label", s.Label);
+            WriteKv(sb, "price", s.Price);
+            WriteKvString(sb, "time", s.Time.ToString("o", CultureInfo.InvariantCulture));
+            sb.Append(",\"is_confirmed\":").Append(s.IsConfirmed ? "true" : "false");
+            sb.Append('}');
+        }
+
+        // Standard floor-trader pivots from yesterday's daily H/L/C. Manual
+        // math (NT8's Pivots plot names vary across versions). Absolute
+        // GetHigh/GetLow index (barsAgo can throw off the dispatcher thread).
+        private void AppendPivots(StringBuilder sb)
+        {
+            try
+            {
+                var bars = BarsArray[IDX_DAILY];
+                int n = bars.Count;
+                if (n < 2) return;
+
+                int yIdx = n - 2;
+                double yh = bars.GetHigh(yIdx);
+                double yl = bars.GetLow(yIdx);
+                double yc = bars.GetClose(yIdx);
+                double pp = (yh + yl + yc) / 3.0;
+                double range = yh - yl;
+
+                WriteKv(sb, "pivot_p",  Math.Round(pp,                  2), leading: false);
+                WriteKv(sb, "pivot_r1", Math.Round(2 * pp - yl,         2));
+                WriteKv(sb, "pivot_s1", Math.Round(2 * pp - yh,         2));
+                WriteKv(sb, "pivot_r2", Math.Round(pp + range,          2));
+                WriteKv(sb, "pivot_s2", Math.Round(pp - range,          2));
+                WriteKv(sb, "pivot_r3", Math.Round(yh + 2 * (pp - yl),  2));
+                WriteKv(sb, "pivot_s3", Math.Round(yl - 2 * (yh - pp),  2));
+            }
+            catch (Exception ex)
+            {
+                Print($"[HelmFeed] Pivots calculation failed: {ex.Message}");
+            }
+        }
+
+        private void AppendSessionLevels(StringBuilder sb)
+        {
+            try
+            {
+                var bars = BarsArray[IDX_DAILY];
+                int n = bars.Count;
+
+                if (n >= 1)
+                {
+                    int tIdx = n - 1;
+                    WriteKv(sb, "today_high", bars.GetHigh(tIdx));
+                    WriteKv(sb, "today_low",  bars.GetLow(tIdx));
+                }
+                if (n >= 2)
+                {
+                    int yIdx = n - 2;
+                    WriteKv(sb, "yesterday_high",  bars.GetHigh(yIdx));
+                    WriteKv(sb, "yesterday_low",   bars.GetLow(yIdx));
+                    WriteKv(sb, "yesterday_close", bars.GetClose(yIdx));
+                }
+            }
+            catch (Exception ex)
+            {
+                Print($"[HelmFeed] Session levels unavailable: {ex.Message}");
+            }
+        }
+
+        // =================================================================
+        //  JSON helpers (invariant culture; NaN/Inf -> null)
+        // =================================================================
+        private static void WriteKv(StringBuilder sb, string key, double value, bool leading = true)
+        {
+            if (leading) sb.Append(',');
+            sb.Append('"').Append(key).Append("\":");
+            if (double.IsNaN(value) || double.IsInfinity(value))
+                sb.Append("null");
+            else
+                sb.Append(value.ToString("0.########", CultureInfo.InvariantCulture));
+        }
+
+        private static void WriteKv(StringBuilder sb, string key, string value, bool leading = true)
+        {
+            if (leading) sb.Append(',');
+            sb.Append('"').Append(key).Append("\":\"")
+              .Append(EscapeJson(value))
+              .Append('"');
+        }
+
+        // String key/value that emits `null` (not "") for null values.
+        private static void WriteKvString(StringBuilder sb, string key, string value, bool leading = true)
+        {
+            if (leading) sb.Append(',');
+            sb.Append('"').Append(key).Append("\":");
+            if (value == null) sb.Append("null");
+            else sb.Append('"').Append(EscapeJson(value)).Append('"');
+        }
+
+        private static string EscapeJson(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return string.Empty;
+            var sb = new StringBuilder(s.Length);
+            foreach (var c in s)
+            {
+                switch (c)
+                {
+                    case '\\': sb.Append("\\\\"); break;
+                    case '"':  sb.Append("\\\""); break;
+                    case '\n': sb.Append("\\n");  break;
+                    case '\r': sb.Append("\\r");  break;
+                    case '\t': sb.Append("\\t");  break;
+                    default:
+                        if (c < 0x20) sb.AppendFormat("\\u{0:x4}", (int)c);
+                        else          sb.Append(c);
+                        break;
+                }
+            }
             return sb.ToString();
         }
 
@@ -372,9 +889,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         // =================================================================
         //  CHART CAPTURE — desktop framebuffer at the chart's screen rect,
-        //  via Win32 BitBlt + WPF PNG encode. Duplicated from HelmAnalyzer
-        //  because NS doesn't make cross-indicator helpers easy to share.
-        //  Returns null if the chart isn't ready / off-screen / fails.
+        //  via Win32 BitBlt + WPF PNG encode. Returns null if not ready.
         // =================================================================
         [DllImport("user32.dll")]  private static extern IntPtr GetDesktopWindow();
         [DllImport("user32.dll")]  private static extern IntPtr GetWindowDC(IntPtr hWnd);
@@ -452,7 +967,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 {
                     if (!response.IsSuccessStatusCode)
                     {
-                        Print($"[HelmFeed] {url} → {(int)response.StatusCode} {response.ReasonPhrase}");
+                        Print($"[HelmFeed] {url} -> {(int)response.StatusCode} {response.ReasonPhrase}");
                     }
                 }
             }
