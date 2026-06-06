@@ -12,6 +12,7 @@ pipeline still owns the manual case.
 """
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import time
@@ -19,6 +20,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import proposal_sanity, runtime_config, signal_storage
+from .context_format import format_ns_context
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +36,7 @@ DEFAULT_BAR_COUNT = 60
 # "Chart conventions"). The user's charts use only EMA(90).
 EMA_PERIOD = 90
 ATR_PERIOD = 14
+ADXR_PERIOD = 14   # trend-strength rating on the visual path (ATM owns sizing)
 
 DATA_DIR     = Path(__file__).resolve().parent.parent / "data"
 FEED_DB_PATH = DATA_DIR / "feed.db"
@@ -68,6 +71,27 @@ def _latest_auto_screenshot(instrument: str, period: str) -> Path | None:
                     SCREENSHOT_MAX_AGE_S)
         return None
     return path
+
+
+def _latest_auto_context(instrument: str, period: str, bar_ts: int) -> dict | None:
+    """Return the NS rich context the merged HelmFeed dropped for THIS bar, or
+    None. feed.py writes context_{i}_{p}.json with the bar_ts embedded; we only
+    trust it when that ts matches the bar we're analyzing (so a newer bar's
+    context can never leak into this analysis). None -> use the thin context."""
+    path = SCREENSHOTS_DIR / f"context_{_safe_seg(instrument)}_{_safe_seg(period)}.json"
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if payload.get("bar_ts") != bar_ts:
+        logger.info("[headless] NS context for %s @ %s is for bar %s, not %s; "
+                    "using thin context", instrument, period,
+                    payload.get("bar_ts"), bar_ts)
+        return None
+    ctx = payload.get("context")
+    return ctx if isinstance(ctx, dict) else None
 
 
 def _has_active_trade(instrument: str) -> bool:
@@ -151,15 +175,19 @@ def analyze(instrument: str, period: str, bar_ts: int,
         return None
 
     context = _build_context(instrument, period, bars)
+    # Prefer the merged HelmFeed's rich NS context (incl. market structure) for
+    # THIS bar; None on old HelmFeed / mismatch -> thin context.
+    ns_ctx = _latest_auto_context(instrument, period, bar_ts)
     shot_path = _latest_auto_screenshot(instrument, period)
 
     if shot_path:
-        return _analyze_visual(instrument, period, bar_ts, context, shot_path)
+        return _analyze_visual(instrument, period, bar_ts, context, shot_path, ns_ctx)
     return _analyze_text(instrument, period, bar_ts, context, len(bars))
 
 
 def _analyze_visual(instrument: str, period: str, bar_ts: int,
-                    context: dict, shot_path: Path) -> dict | None:
+                    context: dict, shot_path: Path,
+                    ns_ctx: dict | None = None) -> dict | None:
     """Vision-LLM path: call the same provider-dispatched analyzer the manual
     snip pipeline uses. Reuses analyzer.txt (vocabulary + ATM menu + JSON
     schema) so visual headless proposals are shape-compatible with hotkey
@@ -167,7 +195,13 @@ def _analyze_visual(instrument: str, period: str, bar_ts: int,
     import shutil
     from . import local_llm_analyzer  # local import: avoids dep cycle in tests
 
-    market_ctx_block = _format_visual_context_block(instrument, period, context)
+    # With NS context present, render the SAME rich block the manual path uses
+    # (structure + pivots + HTF) so auto and manual reason identically. Without
+    # it, fall back to the thin bars-derived anchors.
+    if ns_ctx:
+        market_ctx_block = format_ns_context(ns_ctx)
+    else:
+        market_ctx_block = _format_visual_context_block(instrument, period, context)
     template = VISION_PROMPT_PATH.read_text(encoding="utf-8")
     full_prompt = market_ctx_block + "\n\n---\n\n" + template
 
@@ -217,7 +251,8 @@ def _analyze_visual(instrument: str, period: str, bar_ts: int,
         "headless_period":     period,
         "headless_bar_ts":     bar_ts,
         "headless_vision":     True,
-        "market_context":      context,
+        "market_context":      ns_ctx or context,
+        "context_source":      "ninjascript" if ns_ctx else "thin",
     }
     if not is_valid:
         record["deleted"]               = True
@@ -307,12 +342,13 @@ def _format_visual_context_block(instrument: str, period: str, context: dict) ->
         f"Current price (last close): {context.get('current_price')}",
         f"Recent {context.get('bar_count')}-bar high: {context.get('period_high')}",
         f"Recent {context.get('bar_count')}-bar low:  {context.get('period_low')}",
-        f"ATR({ATR_PERIOD}) (volatility, for stop/target sizing): {context.get('atr_value')}",
+        f"ADXR({ADXR_PERIOD}) (trend strength: >25 trending, <20 chop): "
+        f"{context.get('adxr_value')}",
         "",
-        "These are exact numeric anchors -- use them instead of reading prices off the "
-        "axis. Read the trend, levels, and ALL indicators from the chart image itself "
-        "(whatever the trader has applied); cite only indicators/levels you can actually "
-        "see on the chart or that appear above.",
+        "These are the VERIFIED source of truth -- treat them as authoritative and "
+        "do not re-read prices off the chart axis. Use the chart image ONLY for visual "
+        "structure (trend, pullbacks, support/resistance, candle patterns). Do not cite "
+        "specific indicator values or levels that are not provided above.",
     ]
     return "\n".join(lines)
 
@@ -348,8 +384,9 @@ def _build_context(instrument: str, period: str,
     current = closes[-1]
     period_high = max(highs)
     period_low  = min(lows)
-    ema = _ema(closes, EMA_PERIOD)
-    atr = _atr(highs, lows, closes, ATR_PERIOD)
+    ema  = _ema(closes, EMA_PERIOD)
+    atr  = _atr(highs, lows, closes, ATR_PERIOD)
+    adxr = _adxr(highs, lows, closes, ADXR_PERIOD)
 
     # Compact table: ts | o h l c v. Use ISO time so the LLM can reason
     # about session timing.
@@ -365,6 +402,7 @@ def _build_context(instrument: str, period: str,
         "period_low":    period_low,
         "ema_value":     round(ema, 2) if ema is not None else None,
         "atr_value":     round(atr, 2) if atr is not None else None,
+        "adxr_value":    round(adxr, 1) if adxr is not None else None,
         "bar_count":     len(bars),
         "bar_table":     bar_table,
     }
@@ -418,3 +456,61 @@ def _atr(highs: list[float], lows: list[float], closes: list[float],
     for tr in trs[period:]:
         atr = (atr * (period - 1) + tr) / period
     return atr
+
+
+def _adxr(highs: list[float], lows: list[float], closes: list[float],
+          period: int) -> float | None:
+    """Wilder's Average Directional Movement Index Rating (trend strength).
+    ADXR = (ADX_now + ADX_(period bars ago)) / 2. >25 trending, <20 chop.
+    Needs > 3*period bars for ADX to stabilize plus the rating lookback;
+    returns None when the feed window is too thin."""
+    n = len(closes)
+    if n <= 3 * period:
+        return None
+    plus_dm: list[float] = []
+    minus_dm: list[float] = []
+    trs: list[float] = []
+    for i in range(1, n):
+        up   = highs[i] - highs[i-1]
+        down = lows[i-1] - lows[i]
+        plus_dm.append(up   if (up > down and up > 0) else 0.0)
+        minus_dm.append(down if (down > up and down > 0) else 0.0)
+        trs.append(max(highs[i] - lows[i],
+                       abs(highs[i] - closes[i-1]),
+                       abs(lows[i]  - closes[i-1])))
+
+    def _wilder(values: list[float], p: int) -> list[float]:
+        # Wilder running sum: seed = sum of first p, then s = s - s/p + v.
+        s = sum(values[:p])
+        out = [s]
+        for v in values[p:]:
+            s = s - (s / p) + v
+            out.append(s)
+        return out
+
+    str_ = _wilder(trs, period)
+    sdmp = _wilder(plus_dm, period)
+    sdmn = _wilder(minus_dm, period)
+
+    dxs: list[float] = []
+    for i in range(len(str_)):
+        tr = str_[i]
+        if tr == 0:
+            dxs.append(0.0)
+            continue
+        pdi = 100.0 * sdmp[i] / tr
+        mdi = 100.0 * sdmn[i] / tr
+        denom = pdi + mdi
+        dxs.append(100.0 * abs(pdi - mdi) / denom if denom != 0 else 0.0)
+
+    if len(dxs) <= period:
+        return None
+    adx = sum(dxs[:period]) / period
+    adx_series = [adx]
+    for v in dxs[period:]:
+        adx = (adx * (period - 1) + v) / period
+        adx_series.append(adx)
+
+    if len(adx_series) <= period:
+        return None
+    return (adx_series[-1] + adx_series[-1 - period]) / 2.0

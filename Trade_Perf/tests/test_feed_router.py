@@ -27,9 +27,15 @@ pytestmark = pytest.mark.integration
 def client():
     """Single TestClient + reset module-level state per test."""
     feed_mod._last_bar_ts.clear()
+    feed_mod._last_dispatch_ts.clear()
+    # These tests share the production feed.db; a recent prior run's WGT_* bars
+    # would poison feed_store.last_bar_ts (warmup seed) and desync the warmup
+    # asserts. Purge them on entry AND exit so each test starts clean.
+    feed_store._get_conn().execute("DELETE FROM bars WHERE instrument LIKE 'WGT%'")
     snap = feed_store.list_config()
     with TestClient(app) as c:
         yield c
+    feed_store._get_conn().execute("DELETE FROM bars WHERE instrument LIKE 'WGT%'")
     feed_store.replace_config(snap)
 
 
@@ -85,6 +91,19 @@ def test_out_of_order_bar_does_not_regress_last_ts(client):
     pre = feed_mod._last_bar_ts["WGT_TEST"]
     _bar(client, BASE_TS)                  # backwards bar
     assert feed_mod._last_bar_ts["WGT_TEST"] == pre
+
+
+def test_duplicate_bar_is_not_re_dispatched(client):
+    # HelmFeed re-posts the same close: the re-sent bar is stored but must NOT
+    # trigger a second analysis (that caused the 14:00 MES double-order).
+    feed_store.replace_config([
+        {"instrument": "WGT_TEST", "period": "5m", "enabled": True}])
+    _bar(client, BASE_TS)                       # warmup
+    r1 = _bar(client, BASE_TS + 300)            # armed -> dispatched
+    assert r1.json()["armed"] is True
+    r2 = _bar(client, BASE_TS + 300)            # SAME bar again -> deduped
+    assert r2.json()["armed"] is False
+    assert r2.json()["reason"] == "duplicate bar (already analyzed)"
 
 
 def test_unarmed_pair_never_triggers(client):

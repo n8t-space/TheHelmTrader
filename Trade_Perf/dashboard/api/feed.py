@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 import re
 from datetime import datetime
@@ -50,6 +51,23 @@ def _save_auto_screenshot(instrument: str, period: str, b64: str) -> Path:
     path.write_bytes(base64.b64decode(b64))
     return path
 
+
+def _auto_context_path(instrument: str, period: str) -> Path:
+    safe_i = _SAFE_NAME.sub("_", instrument)
+    safe_p = _SAFE_NAME.sub("_", period)
+    return AUTO_SHOTS_DIR / f"context_{safe_i}_{safe_p}.json"
+
+
+def _save_auto_context(instrument: str, period: str, ctx: dict, bar_ts: int) -> Path:
+    """Persist the NS-emitted rich context for the latest bar of this combo,
+    mirroring the screenshot cache. The headless analyzer reads it and verifies
+    the embedded bar_ts so it never reasons over a different bar's context."""
+    AUTO_SHOTS_DIR.mkdir(parents=True, exist_ok=True)
+    path = _auto_context_path(instrument, period)
+    payload = {"bar_ts": bar_ts, "context": ctx}
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
 router = APIRouter(prefix="/api/feed", tags=["feed"])
 logger = logging.getLogger(__name__)
 
@@ -63,6 +81,10 @@ feed_store.init_schema()
 GAP_SECONDS        = 30 * 60   # silence > this = session boundary, skip first bar after
 STALE_BAR_SECONDS  = 120       # bar.ts older than this vs now = backfill, store but don't analyze
 _last_bar_ts: dict[str, int] = {}
+# Newest bar ts we've already DISPATCHED analysis for, per (instrument, period).
+# A re-sent / duplicate bar (HelmFeed double-posts the same close) is stored but
+# must NOT trigger a second analysis -> a second signal -> a second order.
+_last_dispatch_ts: dict[tuple[str, str], int] = {}
 
 
 class Bar(BaseModel):
@@ -78,6 +100,10 @@ class Bar(BaseModel):
     # analyzer can see the chart, not just bar text. Absent on historical
     # backfill (BackfillHistoricalBars publishes JSON without it).
     screenshot_b64: str | None = None
+    # Rich NS market context (EMA/ADXR/Donchian/pivots/market-structure),
+    # emitted by the merged HelmFeed on primary bar close. Absent on the old
+    # HelmFeed and on backfill -> headless falls back to its thin context.
+    context: dict | None = None
 
 
 class Tick(BaseModel):
@@ -136,12 +162,30 @@ async def ingest_bar(bar: Bar) -> dict:
             logger.exception("failed to save auto screenshot for %s @ %s",
                              bar.instrument, bar.period)
 
+    # Persist the NS rich context (same combo cache) BEFORE dispatch so the
+    # headless analyzer finds this bar's context when it runs. Old HelmFeed
+    # sends no context -> headless falls back to its thin context.
+    if bar.context:
+        try:
+            _save_auto_context(bar.instrument, bar.period, bar.context, bar.ts)
+        except Exception:
+            logger.exception("failed to save auto context for %s @ %s",
+                             bar.instrument, bar.period)
+
     armed = await asyncio.to_thread(feed_store.is_armed, bar.instrument, bar.period)
     if armed:
         # Automation blackout: pause signal generation during a configured window.
         blackout, label = settings_mod.in_blackout()
         if blackout:
             return {"status": "ok", "armed": False, "reason": f"automation blackout ({label})"}
+        # Dispatch dedup (one analysis per bar): only fire for a bar NEWER than the
+        # last we analyzed for this instrument+period. A re-sent/duplicate bar_ts
+        # is stored above but never re-analyzed -> no duplicate signal/order. The
+        # check + claim are sync (no await between) so concurrent dupes can't race.
+        key = (bar.instrument, bar.period)
+        if bar.ts <= _last_dispatch_ts.get(key, 0):
+            return {"status": "ok", "armed": False, "reason": "duplicate bar (already analyzed)"}
+        _last_dispatch_ts[key] = bar.ts
         await auto_analyzer.submit(bar.instrument, bar.period, bar.ts)
 
     return {"status": "ok", "armed": armed}

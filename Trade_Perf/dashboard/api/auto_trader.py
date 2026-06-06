@@ -405,6 +405,22 @@ def exec_queue(account: str) -> dict:
                     len(open_instruments), cfg.max_concurrent)
         return {"account": account, "count": 0, "signals": [], "held_for_open": len(open_instruments)}
 
+    # Execution dedup -- at most ONE order per (instrument, bar). If a SIBLING
+    # signal for the same instrument+bar was already acted on (placed/filled/
+    # cancelled/etc), never place a second for that same bar -- even if the first
+    # filled and closed fast, freeing the instrument. This guards against a
+    # duplicate-bar signal that slips past the feed-side dispatch dedup. (The
+    # supersede pass collapses concurrent armed siblings to the newest; this
+    # catches the cross-poll case where a sibling already went out.)
+    acted_bars = {
+        (instruments.normalize_symbol(str((r.get("proposal") or {}).get("instrument") or "")),
+         r.get("headless_bar_ts"))
+        for r in raw.values()
+        if not r.get("deleted")
+        and (r.get("exec") or {}).get("state") in ("working", "filled", "cancelled", "rejected", "disarmed")
+        and r.get("headless_bar_ts") is not None
+    }
+
     out: list[dict] = []
     for ts, rec in raw.items():
         if rec.get("deleted"):
@@ -423,6 +439,20 @@ def exec_queue(account: str) -> dict:
         # One open trade per instrument: skip if this instrument is already live.
         instr = instruments.normalize_symbol(str(proposal.get("instrument") or ""))
         if instr in open_instruments:
+            continue
+
+        # One order per bar: a sibling signal for this exact instrument+bar was
+        # already placed -> resolve this duplicate as no_fill, never place it.
+        bar_ts = rec.get("headless_bar_ts")
+        if bar_ts is not None and (instr, bar_ts) in acted_bars:
+            signal_storage.append_update(
+                bridge.SIGNALS_LOG, ts,
+                entry_triggered=False,
+                outcome={"result": "no_fill",
+                         "note": "duplicate bar (an order was already placed this bar)",
+                         "closing_price": None},
+            )
+            logger.info("[auto-trader] duplicate-bar skip %s (%s bar=%s)", ts, instr, bar_ts)
             continue
 
         # Time the strategy should cancel this entry if still unfilled (~1 min
