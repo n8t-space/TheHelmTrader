@@ -98,12 +98,11 @@ Use the active front-month contract for each instrument. Slots are checked again
 
 ## 5. NinjaScript indicators
 
-Both Helm indicators live under `_Helm Locker` after install. Add them to each chart you trade:
+One Helm indicator lives under `_Helm Locker` after install (as of v1.1.0-beta.1, `HelmFeed` absorbed the retired `HelmAnalyzer`). Add it to each chart you trade:
 
 | Indicator | Add to | Purpose |
 |---|---|---|
-| `HelmAnalyzer` | Every chart you might Ctrl+Shift+F | Captures the chart bitmap + market context and POSTs to the dashboard |
-| `HelmFeed` | Every chart used in Auto Analysis | Streams live bars + ticks into `feed.db` for the headless pipeline |
+| `HelmFeed` | Every chart used in Auto Analysis or manual capture | Streams live bars + ticks + chart screenshot + rich market context (EMA/ADXR/Donchian/pivots/BOS-CHoCH) into the bot on each bar close; Ctrl+Shift+F triggers a manual capture to `/api/capture-from-nt` |
 
 After adding, compile via NinjaScript Editor (F11 → F5). **Compile succeeded** at the bottom = ready.
 

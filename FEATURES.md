@@ -16,7 +16,7 @@ reports performance from real broker fills.
 ## 1. Analysis Pipeline (signal generation)
 
 - **Chart screenshot capture** - pulls a live chart image from NT8 on demand or
-  on a schedule (`screenshot_capturer.py`, `HelmAnalyzer.cs`).
+  on a schedule (`screenshot_capturer.py`, `HelmFeed.cs`).
 - **Vision-LLM analysis** - sends the chart image to a vision model and parses a
   structured trade proposal: direction, entry, stop, target, reasoning
   (`local_llm_analyzer.py`, `pipeline.py`).
@@ -177,9 +177,11 @@ reports performance from real broker fills.
 
 ## 9. NinjaScript Components (NT8 side)
 
-- **HelmFeed.cs** - streams live bars/ticks from NT8 into the feed store so the
-  pipeline and resolvers have market data.
-- **HelmAnalyzer.cs** - captures chart screenshots for the analysis pipeline.
+- **HelmFeed.cs** - the single Helm chart indicator (as of v1.1.0-beta.1, absorbed
+  the retired HelmAnalyzer). Streams live bars/ticks into the feed store, attaches a
+  chart screenshot, and emits rich market context (EMA/ADXR/Donchian/pivots/session
+  levels + 3-lens BOS/CHoCH market structure) on each realtime bar close. Ctrl+Shift+F
+  triggers a manual capture to the analysis pipeline.
 - **HelmAutoTrader.cs** - polls the dashboard for armed signals, places ATM
   trades on the scoped account, reports live equity for the balance fail-safe,
   keeps its account in sync with the dashboard, and detects chart-side cancels.

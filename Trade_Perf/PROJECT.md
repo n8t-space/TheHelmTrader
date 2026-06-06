@@ -17,8 +17,8 @@ This file orients a fresh conversation in *current state*. For history, see [`..
 │      ↓ recorder.py polls every 1s
 │   trades.db  ──────────────────┐                        │
 │                                │                        │
-│   HelmAnalyzer NS indicator    │                        │
-│   (Ctrl+Shift+F) ──────────POST→ FastAPI :8000 ◄───────► Vite-built React SPA
+│   HelmFeed NS indicator        │                        │
+│   (bar close + Ctrl+Shift+F) POST→ FastAPI :8000 ◄───────► Vite-built React SPA
 │                                │   ├── /api/* (signals, trades, home, health)
 │                                │   └── / (SPA — index.html + bundled assets)
 │                                │
@@ -59,10 +59,9 @@ This file orients a fresh conversation in *current state*. For history, see [`..
 
 ## 4. NS indicators
 
-Two indicators ship in [`TradingBot/ninjascript/_Helm Locker/`](../TradingBot/ninjascript/_Helm%20Locker/):
+One indicator ships in [`TradingBot/ninjascript/_Helm Locker/`](../TradingBot/ninjascript/_Helm%20Locker/) (v1.1.0-beta.1 merged the former `HelmAnalyzer.cs` into `HelmFeed.cs`):
 
-- **`HelmAnalyzer.cs`** — hotkey-driven (Ctrl+Shift+F). POSTs the chart's higher-timeframe context + indicators + market-structure (3-lens BOS/CHoCH) to `:8000/api/capture-from-nt`. Bot opens the Snipping overlay, snips → analyze → store, with the NS payload prepended to the prompt as authoritative price context.
-- **`HelmFeed.cs`** *(added 2026-05-08, Phase 1 of the live-feed pipeline)* — auto-publisher. On every closed bar (chart's native period) POSTs to `:8000/api/feed/bar`; via `OnMarketData` filtered to `MarketDataType.Last`, batches trade ticks every ~250 ms to `:8000/api/feed/ticks`. Skips historical replay (only `State.Realtime`). Multi-chart safe — the bot dedupes on `(instrument, period, ts)` for bars and `(instrument, ts_ms, price)` for ticks, so two charts on the same MES 5m don't double-store. Apply to any chart you want piped into the bot.
+- **`HelmFeed.cs`** — the single Helm chart indicator. On every closed bar (chart's native period) POSTs to `:8000/api/feed/bar` with a **chart screenshot + rich market context** (HTF EMA/ADXR/Donchian, pivots, session levels, 3-lens BOS/CHoCH market structure) attached; via `OnMarketData` (primary series, `MarketDataType.Last`) batches trade ticks every ~250 ms to `:8000/api/feed/ticks`. Skips historical replay for publishing (only `State.Realtime`), but feeds the structure lenses on historical bars so structure is warm. On **Ctrl+Shift+F** it posts the same context + screenshot to `:8000/api/capture-from-nt` (manual path). The 4 HTF `AddDataSeries` and the SMC engine power the context builder. Multi-chart safe — the bot dedupes on `(instrument, period, ts)` for bars and `(instrument, ts_ms, price)` for ticks, and dedupes analysis dispatch per bar. Apply to any chart you want piped into the bot.
 
 The **two-copy gotcha** applies to both: project canonicals live in `TradingBot/ninjascript/_Helm Locker/`, but NT compiles from `~/Documents/NinjaTrader 8/bin/Custom/Indicators/_Helm Locker/`. Edits must be synced; NT must be **fully restarted** (F5 alone has been unreliable when class names change or files move).
 

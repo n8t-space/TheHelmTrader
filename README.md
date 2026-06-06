@@ -10,7 +10,7 @@ This is a monorepo containing two coupled projects.
 TheHelmTrader/
 +- TradingBot/        # LLM chart-analysis bot + NinjaScript bridges
 |   +- app/           # Python: pipeline, analyzer, outcome resolver, feed store
-|   +- ninjascript/   # HelmAnalyzer.cs (hotkey) + HelmFeed.cs (live bars/ticks)
+|   +- ninjascript/   # HelmFeed.cs (live bars/ticks + context + hotkey) + HelmAutoTrader.cs
 |   +- PROJECT.md     # design + history
 |   +- MIGRATION.md   # what's changed since v1, what's outstanding
 +- Trade_Perf/    # FastAPI + React dashboard, NT fill recorder, watchdog
@@ -80,7 +80,7 @@ When the script finishes:
 
 1. Start NinjaTrader 8 (the watchdog will spawn uvicorn within 5s)
 2. In NT: NinjaScript Editor (F11) -> Compile (F5)
-3. Add `HelmAnalyzer` and `HelmFeed` to each chart you want to use them on
+3. Add `HelmFeed` to each chart you want to use (it does live feed + context + the Ctrl+Shift+F hotkey)
 4. Open http://127.0.0.1:8000/ -> Settings -> AI Backend (pick a provider and configure) and account categorization
 5. Click **Test connection** on the AI Backend tab
 
@@ -153,7 +153,7 @@ Copy-Item -Recurse -Force "$src\*" $dst
 
 Then in NinjaTrader: **NinjaScript Editor (F11) -> Compile (F5)**. Look for "Compile succeeded" in the bottom panel.
 
-Add `HelmAnalyzer` and `HelmFeed` to each chart you want to use them on (right-click chart -> Indicators).
+Add `HelmFeed` to each chart you want to use (right-click chart -> Indicators). It does live feed + context + the Ctrl+Shift+F hotkey.
 
 ### Install the Windows service
 
@@ -208,7 +208,7 @@ Pre-trade context sits at the top of the **Home** page in the **Economic Calenda
 
 - **Recorder:** make a paper trade in NT (or wait for one in Sim). Within ~5 seconds the dashboard's Trade Performance page should show the new fill.
 - **Manual snip pipeline:** focus an NT chart and press **Ctrl+Shift+F**. The snipping overlay should dim the screen. Drag a rectangle around the chart. Within 30 seconds (cold) or 1 second (warm), a new entry appears on the Signal Analysis page.
-- **Live feed:** if both `HelmAnalyzer` and `HelmFeed` are on charts, the Health page's log tail should show `[feed.bar]` POSTs every minute (or per your bar period).
+- **Live feed:** if `HelmFeed` is on a chart, the Health page's log tail should show `[feed.bar]` POSTs every minute (or per your bar period).
 
 ### Frontend dev mode (optional)
 
@@ -237,7 +237,7 @@ The page reloads automatically once the new bundle is live (~30-60s total). Prog
 
 API surface: `GET /api/version`, `POST /api/version/check`, `POST /api/version/update`, `GET /api/version/update/status`.
 
-NS-side note: if anything under `_Helm Locker\*.cs` changed (the **HelmAnalyzer** / **HelmFeed** indicators), open NT and run **NinjaScript Editor (F11) → Compile (F5)** to pick up the new C#. The one-click updater handles the dashboard side but cannot drive NT's compiler.
+NS-side note: if anything under `_Helm Locker\*.cs` changed (the **HelmFeed** indicator or **HelmAutoTrader** strategy), open NT and run **NinjaScript Editor (F11) → Compile (F5)** to pick up the new C#. The one-click updater handles the dashboard side but cannot drive NT's compiler.
 
 The **Support** page (`http://127.0.0.1:8000/support`) breaks the same surface into four tabs — **Overview** (version + uninstall + help), **Update** (full procedure), **Troubleshooting** (FAQ + log locations), and **Configuration** (recommended settings, mirrored from [`CONFIGURATION.md`](CONFIGURATION.md)). Deep-linkable via `/support#update`, `/support#troubleshooting`, `/support#configuration`.
 
