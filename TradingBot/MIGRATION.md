@@ -846,6 +846,26 @@ A large correctness session. The throughline: **Signal Analysis must mirror real
 
 ---
 
+### 2026-06-05 (evening) — HelmFeed/HelmAnalyzer merge, dup-order safeguards, ADXR/structure context, versioning
+
+Throughline: **one indicator, one context source, and a production-app release process.**
+
+**Done:**
+- **Duplicate-order safeguards** (the 14:00 MES double-submit — a re-sent bar triggered a second analysis, both filled). (1) `feed.py` dispatch dedup: a bar only triggers analysis if its ts is newer than the last analyzed for that (instrument, period) — re-sent bars are stored but never re-analyzed. (2) `auto_trader.py` exec dedup: at most one order per (instrument, bar) via an `acted_bars` set, even after the first fills+closes fast. Tests in `test_auto_trader.py` (replays the 14:00 case) + `test_feed_router.py`.
+- **Context overhaul (manual path, HelmAnalyzer before the merge):** ADXR(14) replaced ATR(14) in the emitted per-timeframe context (trend strength; ATM owns sizing). Bid/ask pinned to `GetCurrentBid/Ask(IDX_PRIMARY)` (fixed a ~165pt stale/foreign-series quote). Market structure (BOS/CHoCH), previously computed and dropped, is now rendered into the prompt.
+- **Shared renderer** (`context_format.py`): `format_ns_context()` used by both `pipeline.py` (manual) and `headless_analyzer.py` (auto) so the two paths can't drift. Auto path now reads the NS context via `feed.py` `context_{i}_{p}.json` (bar_ts-keyed cache); records tag `context_source`. Thin Python `_build_context` + a new Wilder `_adxr()` remain as the fallback.
+- **HelmFeed + HelmAnalyzer MERGED** (`HelmFeed.cs`). HelmFeed is now the single chart indicator: publishes bars+ticks+screenshot+**rich context** on each realtime primary bar close, feeds the SMC lenses on historical bars too (warm structure), and keeps the Ctrl+Shift+F manual hotkey → `/api/capture-from-nt`. Absorbed the 4 HTF `AddDataSeries`, the `MarketStructureLens`/`StructureSwing` engine, pivots, session levels. Added `OnMarketData` primary guard (added series would 5x ticks) + a hotkey double-subscribe guard. **`HelmAnalyzer.cs` deleted** (canonical + deployed; duplicate classes would be CS0101). Reviewed by `ninjascript-reviewer`; its 4 "compile blockers" were **reflection-verified false positives** (`Bars : ISeries<double>`; `GetCurrentBid(int)` on `NinjaScriptBase`).
+- **Validated:** manual hotkey path in **Playback** — the captured MES signal carried 3 structure lenses (BullishBOS/BearishCHoCH), all 7 pivots, session levels, ADXR=50, donchian. (Playback's stale-gate blocks the auto path; bid/ask diverge in Playback on the live-vs-replay clock — both expected, validate auto + bid/ask **live**.)
+- **Versioning adopted** (`VERSIONING.md`, `CHANGELOG.md`, `VERSION`). Semver + two channels: `main`=production (bot's updater tracks `origin/main`), `beta` branch=staging. Tagged `v1.0.0` (baseline 8f67725) and **`v1.1.0-beta.1`** (this work) on branch `beta`, both pushed. Local checkout is now on `beta`.
+- Full backup before the merge: `C:\Users\pilot\Documents\Helm-Backups\2026-06-05_170923_pre-merge`. Merge plan: `docs/helmfeed-analyzer-merge.md`.
+
+**Not done / next session:**
+- **Live validation of the auto path:** confirm an auto signal shows `context_source: "ninjascript"` + `market_structure` on a fresh live bar; confirm bid/ask are tight live. Then **promote**: merge `beta`→`main`, tag `v1.1.0`.
+- **`IsSuspendedWhileInactive` decision** (HelmFeed, still `true`): if armed charts are tabs, background ones get suspended and won't feed — likely the cause of "one instrument pending, others didn't run." Flip to `false` for a background publisher (one line + re-F5).
+- Carried from the earlier 2026-06-05 entry: fill-data quality (garbled NT8 `position` column) is still the deep root cause; `max_concurrent` vs 3 instruments.
+
+---
+
 ### Closure
 
 The original four-phase AI-offload migration is fully done; the eight-checkpoint dashboard merger is fully done; four post-merge improvement tiers are done; rebrand is done. The Live Feed Pipeline is functionally complete — Phases 1–4 all shipped (2026-05-08 → 2026-05-09); only live Phase 1 verification at market open remains. The 10-item improvement sweep closed the headless-analyzer + auto-prune carry-forwards from earlier in the day, plus added pytest, schema versioning, NSSM-service watchdog, project-local CLAUDE.md scaffolding, and an `ninjascript-reviewer` subagent. **Next major initiative: SHARING** (config page + installer). The list under "Outstanding (next session pickup)" near the top of this doc is the source of truth for what's next.

@@ -81,7 +81,7 @@ Settings is the source of truth for which NT accounts are visible site-wide. The
 
 ## NS bridge
 
-`HelmAnalyzer.cs` (hotkey-driven, Ctrl+Shift+F → `/api/capture-from-nt`) and `HelmFeed.cs` (auto-publisher → `/api/feed/{bar,ticks}`) live in `../TradingBot/ninjascript/_Helm Locker/`. Two-copy gotcha applies: project canonical there, NT compiles from `~/Documents/NinjaTrader 8/bin/Custom/Indicators/_Helm Locker/`.
+`HelmFeed.cs` is the single Helm chart indicator (v1.1.0-beta.1 merged the retired `HelmAnalyzer.cs` into it). It auto-publishes `/api/feed/{bar,ticks}` with a screenshot + rich market context attached to each bar, AND on Ctrl+Shift+F posts context to `/api/capture-from-nt`. Lives in `../TradingBot/ninjascript/_Helm Locker/`. Two-copy gotcha applies: project canonical there, NT compiles from `~/Documents/NinjaTrader 8/bin/Custom/Indicators/_Helm Locker/`.
 
 ## Logging
 

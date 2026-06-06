@@ -10,7 +10,7 @@
 
 ## One-breath architecture
 
-NinjaScript indicator (`HelmAnalyzer.cs`) on hotkey → POSTs HTF context to FastAPI on `:8000` (hosted by `Trade_Perf/`) → bot opens snip overlay → snip + context → Ollama (local or LAN, per Settings) → proposal in `app/data/signals.jsonl` → unified React dashboard renders.
+NinjaScript indicator (`HelmFeed.cs`, the single Helm chart indicator since v1.1.0-beta.1) publishes bars+ticks+screenshot+rich context to FastAPI on `:8000` (hosted by `Trade_Perf/`) on each bar close → headless analyzer (or Ctrl+Shift+F manual capture) → Ollama (local or LAN, per Settings) → proposal in `app/data/signals.jsonl` → unified React dashboard renders.
 
 NT fills are mirrored independently into `Trade_Perf/trades.db` via `recorder.py`.
 
@@ -36,7 +36,7 @@ NT fills are mirrored independently into `Trade_Perf/trades.db` via `recorder.py
 
 ## NinjaScript bridge
 
-- Project canonical: `ninjascript/_Helm Locker/HelmAnalyzer.cs` (and `HelmFeed.cs` for the live-feed pipeline).
+- Project canonical: `ninjascript/_Helm Locker/HelmFeed.cs` (single indicator: live feed + screenshot + rich context + Ctrl+Shift+F hotkey). `HelmAutoTrader.cs` is the auto-exec strategy. `HelmAnalyzer.cs` was merged into HelmFeed and deleted (v1.1.0-beta.1).
 - NT compiles from: `~/Documents/NinjaTrader 8/bin/Custom/Indicators/_Helm Locker/`.
 - **Two-copy gotcha:** edit project file, **copy to NT's path**, F5 in NS Editor. Forgetting = NT runs stale code despite "Compile succeeded."
 - Hotkey: **Ctrl+Shift+F**. POSTs to `:8000/api/capture-from-nt`.
@@ -47,6 +47,15 @@ NT fills are mirrored independently into `Trade_Perf/trades.db` via `recorder.py
 - `HttpClient` static field initializer can fail in NS sandbox; lazy-init inside a property.
 - Hotkey: hook on the parent `Window` (via `System.Windows.Window.GetWindow(...)`), not `ChartControl` — chart panels rarely hold focus.
 - JSON `NaN`/`Infinity` break FastAPI's JSON parsing → emit `null` instead.
+- `Bars` implements `ISeries<double>`, so `EMA(BarsArray[idx], n)` / `ADXR/DonchianChannel(BarsArray[idx], ...)` all bind to the `(ISeries, ...)` overload. `GetCurrentBid(int)`/`GetCurrentAsk(int)` exist on `NinjaScriptBase` (indicators too, not just strategies) — use the index to pin a multi-series quote to the primary.
+- On a multi-series indicator, guard `OnMarketData` with `if (BarsInProgress != 0) return;` or each tick fires once per added series.
+
+## Versioning & releases (since v1.1.0-beta.1)
+
+Semantic versioning, two channels — see [`VERSIONING.md`](../VERSIONING.md).
+- **`main` = production.** The bot's version-check + in-place updater track `origin/main` (`version.py`, SHA compare). Only **validated** work lands here, tagged `vX.Y.Z`.
+- **`beta` branch = staging.** Unvalidated work, tagged `vX.Y.Z-beta.N`; the production updater does NOT pull it. Validate (Sim/Playback/live) → merge `beta`→`main` → tag stable.
+- Bump `VERSION` + `CHANGELOG.md` at each cut. Conventional commits. Don't push unvalidated work to `main`. Don't click the in-app updater while the local checkout is on `beta` (it resets to `origin/main`).
 
 ## Chart conventions (instrument-invariant)
 
@@ -63,7 +72,7 @@ The user's 5-minute charts use the **same indicator stack regardless of instrume
 - **PriorDayOHLC** — open dashed steel blue, high dark cyan, low crimson, close dashed slate blue. (On some charts; not all.)
 - **OrderFlowVolumeProfile** — sessions, letters, value area 68%. (On some charts; not all.)
 
-**Implication for HelmAnalyzer:** the bot's emitted context must match what the user sees on screen. Don't compute and emit indicator values the user doesn't have on chart (e.g., EMA-20 / 50 / 200) — the LLM will reference them in its reasoning and the user can't validate against the chart. Keep the bot's indicator set ≤ the chart's indicator set.
+**Implication for HelmFeed's context builder:** the bot's emitted context must match what the user sees on screen. Don't compute and emit indicator values the user doesn't have on chart (e.g., EMA-20 / 50 / 200) — the LLM will reference them in its reasoning and the user can't validate against the chart. Keep the bot's indicator set ≤ the chart's indicator set. (Current emitted set per timeframe: EMA90, ADXR14, Donchian14, 20-bar swings; plus pivots/session levels + 3-lens BOS/CHoCH structure.)
 
 ## v1 scope (locked)
 
