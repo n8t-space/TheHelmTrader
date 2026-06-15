@@ -4,7 +4,10 @@ All notable changes are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses
 [Semantic Versioning](VERSIONING.md).
 
-## [1.1.0-beta.2] - 2026-06-15 (beta)
+## [1.1.0] - 2026-06-15
+
+Promoted to production from beta (beta.1 + beta.2). Manual context path validated
+in Playback; the live auto-path NS context surfaces on the next live bar.
 
 ### Added
 - **Estimated tax per account** (IRC Section 1256 60/40). New `GET /api/tax-estimate`
@@ -14,13 +17,6 @@ All notable changes are documented here. Format follows
   (default 20% LT / 37% ST / 0% state = 26.8% blended). Surfaced as a card on the
   Trade Performance page. Estimate only -- excludes year-end mark-to-market of open
   positions and loss carrybacks; not tax advice.
-
-## [1.1.0-beta.1] - 2026-06-05 (beta)
-
-Beta channel -- not yet promoted to production. Pending live validation of the
-auto-analysis context path (manual hotkey path validated in Playback).
-
-### Added
 - **Shared NinjaScript-context renderer** (`context_format.py`): the manual and
   auto paths now render the same authoritative-context block, including
   Smart-Money market structure (BOS/CHoCH), so the two flows can't drift.
