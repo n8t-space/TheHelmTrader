@@ -5,6 +5,7 @@ import {
   type DimensionsResp, type DrawdownResp, type DrawdownState,
   type Filters, type HealthResp, type SettingsResp, type StatsResp,
   type Trade, type TradesResp, type Fill, type FillsResp,
+  type TaxEstimateResp,
 } from './api'
 import { arrow, flip, sortBy, type Sort } from './lib/sorting'
 
@@ -373,6 +374,62 @@ export function DrawdownsCard() {
       </div>
       <p className="subtle" style={{ marginTop: 8, marginBottom: 0 }}>
         Realized P&amp;L only. Open positions not included. Daily window: midnight {q.data.tz}.
+      </p>
+    </div>
+  )
+}
+
+export function TaxEstimateCard() {
+  const q = useQuery<TaxEstimateResp>({
+    queryKey: ['tax-estimate'],
+    queryFn: () => fetchJSON<TaxEstimateResp>('/api/tax-estimate'),
+    refetchInterval: 30_000,
+  })
+  if (q.isLoading || !q.data || !q.data.enabled) return null
+  const d = q.data
+  const ratePct = (d.rates.blended_rate * 100).toFixed(1)
+  return (
+    <div className="card">
+      <h2>
+        Estimated tax {d.tax_year}{' '}
+        <span className="subtle">(Section 1256 60/40, {ratePct}% blended)</span>
+      </h2>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Account</th>
+              <th className="num">Trades</th>
+              <th className="num">Realized P&amp;L</th>
+              <th className="num">Taxable gain</th>
+              <th className="num">Est. tax</th>
+            </tr>
+          </thead>
+          <tbody>
+            {d.accounts.map((a) => (
+              <tr key={a.account}>
+                <td><strong>{a.account}</strong></td>
+                <td className="num">{a.trades}</td>
+                <td className={'num ' + pnlClass(a.realized_pnl)}>{fmtMoney(a.realized_pnl)}</td>
+                <td className="num">{fmtMoney(a.taxable_gain)}</td>
+                <td className="num">{fmtMoney(a.estimated_tax)}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td><strong>Total (netted)</strong></td>
+              <td className="num"></td>
+              <td className={'num ' + pnlClass(d.total.realized_pnl)}>{fmtMoney(d.total.realized_pnl)}</td>
+              <td className="num">{fmtMoney(d.total.taxable_gain)}</td>
+              <td className="num"><strong>{fmtMoney(d.total.estimated_tax)}</strong></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <p className="subtle" style={{ marginTop: 8, marginBottom: 0 }}>
+        Total nets all accounts (a losing account offsets a winning one on one Form 6781),
+        so it can be less than the per-account taxes summed. {d.note}
       </p>
     </div>
   )

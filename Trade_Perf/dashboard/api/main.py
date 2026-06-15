@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from . import _tradebot_bridge as bridge, atm_strategies as atm_routes, auditor as auditor_routes, auto_analysis as auto_analysis_routes, auto_trader as auto_trader_routes, db, drawdown as drawdown_routes, feed as feed_routes, health as health_routes, home as home_routes, news as news_routes, settings as settings_routes, signals as signals_routes, trades as tradelib, version as version_routes
+from . import _tradebot_bridge as bridge, atm_strategies as atm_routes, auditor as auditor_routes, auto_analysis as auto_analysis_routes, auto_trader as auto_trader_routes, db, drawdown as drawdown_routes, feed as feed_routes, health as health_routes, home as home_routes, news as news_routes, settings as settings_routes, signals as signals_routes, tax as tax_mod, trades as tradelib, version as version_routes
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +265,22 @@ def stats(
     trades_rows = tradelib.derive_trades(fills_rows)
     tz_name = settings_routes.get_settings().appearance.timezone
     return tradelib.compute_stats(trades_rows, tz=tz_name)
+
+
+@app.get("/api/tax-estimate")
+def tax_estimate(year: Annotated[int | None, Query()] = None):
+    """Per-account Section 1256 60/40 estimated tax for a calendar year
+    (defaults to the current one). Self-contained: always derives over ALL
+    fills and filters by trade year, so it's independent of any page filter."""
+    s = settings_routes.get_settings()
+    tz_name = s.appearance.timezone
+    yr = year or tax_mod.current_tax_year(tz_name)
+    try:
+        fills_rows = db.fetch_fills_for_derivation()
+    except FileNotFoundError as e:
+        raise HTTPException(503, str(e))
+    trades_rows = tradelib.derive_trades(fills_rows)
+    return tax_mod.estimate_by_account(trades_rows, s.tax, year=yr, tz=tz_name)
 
 
 def _capture_with_context_async(ctx: dict, image_path: Path | None) -> None:

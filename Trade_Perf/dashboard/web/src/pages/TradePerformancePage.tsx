@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { EMPTY_FILTERS, fetchJSON, type Filters, type SettingsResp } from '../api'
-import { DrawdownsCard, FillsTable, FilterBar, StatsPanel, StatusPanel, TradesTable } from '../panels'
+import { DrawdownsCard, FillsTable, FilterBar, StatsPanel, StatusPanel, TaxEstimateCard, TradesTable } from '../panels'
 import { currentTradingDay } from '../lib/trading_day'
 
 export function TradePerformancePage() {
@@ -29,6 +29,7 @@ export function TradePerformancePage() {
       </div>
 
       <DrawdownsCard />
+      <TaxEstimateCard />
 
       <TradesTable filters={filters} />
       <FillsTable filters={filters} />

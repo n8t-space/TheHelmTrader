@@ -224,6 +224,24 @@ class Automation(BaseModel):
     blackout_windows: list[BlackoutWindow] = Field(default_factory=list)
 
 
+class Tax(BaseModel):
+    """Estimated tax on realized futures P&L. Futures are IRC Section 1256
+    contracts: gains are taxed 60% at long-term, 40% at short-term/ordinary
+    rates regardless of holding period. The blended effective rate is
+    0.60*lt_rate + 0.40*st_rate + state_rate (state typically taxes all gains
+    as ordinary, outside the 60/40 split). Rates are fractions (0.20 = 20%).
+    This is an ESTIMATE, not tax advice -- it ignores year-end mark-to-market
+    of open positions, loss carrybacks, and the wash-sale exemption nuances."""
+    enabled: bool = True
+    lt_rate: float = Field(default=0.20, ge=0.0, le=1.0)     # long-term cap gains
+    st_rate: float = Field(default=0.37, ge=0.0, le=1.0)     # short-term / ordinary
+    state_rate: float = Field(default=0.0, ge=0.0, le=1.0)   # flat state, on all gains
+
+    @property
+    def blended_rate(self) -> float:
+        return round(0.60 * self.lt_rate + 0.40 * self.st_rate + self.state_rate, 6)
+
+
 class Settings(BaseModel):
     schema_version: int = SCHEMA_VERSION
     appearance: Appearance = Field(default_factory=Appearance)
@@ -234,6 +252,7 @@ class Settings(BaseModel):
     auto_trader: AutoTrader = Field(default_factory=AutoTrader)
     auditor: Auditor = Field(default_factory=Auditor)
     automation: Automation = Field(default_factory=Automation)
+    tax: Tax = Field(default_factory=Tax)
 
 
 # ---------------------------------------------------------------------------

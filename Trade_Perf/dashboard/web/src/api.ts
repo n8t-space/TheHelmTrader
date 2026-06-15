@@ -145,6 +145,27 @@ export interface StatsResp {
   by_account: AccountBreakdown[]
 }
 
+export interface TaxAccount {
+  account: string
+  trades: number
+  realized_pnl: number
+  taxable_gain: number
+  estimated_tax: number
+}
+
+export interface TaxEstimateResp {
+  tax_year: number
+  enabled: boolean
+  rates: { lt_rate: number; st_rate: number; state_rate: number; blended_rate: number }
+  accounts: TaxAccount[]
+  total: { realized_pnl: number; taxable_gain: number; estimated_tax: number }
+  note: string
+}
+
+export function fetchTaxEstimate(year?: number): Promise<TaxEstimateResp> {
+  return fetchJSON<TaxEstimateResp>(`/api/tax-estimate${year ? `?year=${year}` : ''}`)
+}
+
 export interface TradeFill {
   time: string
   qty: number
@@ -611,6 +632,13 @@ export interface SettingsAutomation {
   blackout_windows: BlackoutWindow[]
 }
 
+export interface SettingsTax {
+  enabled: boolean
+  lt_rate: number       // long-term cap-gains fraction (0.20 = 20%)
+  st_rate: number       // short-term / ordinary fraction
+  state_rate: number    // flat state fraction on all gains
+}
+
 export interface HungTrade {
   ts: string
   instrument?: string
@@ -632,6 +660,7 @@ export interface SettingsDoc {
   auto_trader: SettingsAutoTrader
   auditor: SettingsAuditor
   automation: SettingsAutomation
+  tax: SettingsTax
 }
 
 export interface AuditorLogEntry {

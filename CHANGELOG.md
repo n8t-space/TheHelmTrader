@@ -4,6 +4,17 @@ All notable changes are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses
 [Semantic Versioning](VERSIONING.md).
 
+## [1.1.0-beta.2] - 2026-06-15 (beta)
+
+### Added
+- **Estimated tax per account** (IRC Section 1256 60/40). New `GET /api/tax-estimate`
+  computes per-account tax on realized P&L for the current calendar year: each
+  account taxed on its own positive net, the total netted across accounts (losses
+  offset gains, as on one Form 6781). Rates configurable in **Settings -> Tax**
+  (default 20% LT / 37% ST / 0% state = 26.8% blended). Surfaced as a card on the
+  Trade Performance page. Estimate only -- excludes year-end mark-to-market of open
+  positions and loss carrybacks; not tax advice.
+
 ## [1.1.0-beta.1] - 2026-06-05 (beta)
 
 Beta channel -- not yet promoted to production. Pending live validation of the

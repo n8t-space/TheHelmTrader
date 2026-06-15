@@ -18,7 +18,7 @@ import {
 } from '../api'
 import { applyAppearance, cacheAppearance } from '../lib/theme'
 
-type Tab = 'appearance' | 'ai' | 'strategy' | 'accounts' | 'autotrader' | 'automation' | 'news' | 'integrity'
+type Tab = 'appearance' | 'ai' | 'strategy' | 'accounts' | 'autotrader' | 'automation' | 'news' | 'integrity' | 'tax'
 
 export function SettingsPage() {
   const qc = useQueryClient()
@@ -125,7 +125,7 @@ export function SettingsPage() {
       {save.error && <div className="card error">Save failed: {String(save.error)}</div>}
 
       <div className="card settings-tabs">
-        {(['appearance', 'ai', 'strategy', 'accounts', 'autotrader', 'automation', 'news', 'integrity'] as Tab[]).map((t) => (
+        {(['appearance', 'ai', 'strategy', 'accounts', 'autotrader', 'automation', 'news', 'integrity', 'tax'] as Tab[]).map((t) => (
           <button
             key={t}
             type="button"
@@ -188,6 +188,12 @@ export function SettingsPage() {
             onChange={(a) => setDraft({ ...draft, auditor: a })}
           />
         )}
+        {tab === 'tax' && (
+          <TaxTab
+            value={draft.tax}
+            onChange={(t) => setDraft({ ...draft, tax: t })}
+          />
+        )}
       </div>
 
       <div className="card">
@@ -215,7 +221,52 @@ function tabLabel(t: Tab): string {
     : t === 'autotrader' ? 'Auto-Trader'
     : t === 'automation' ? 'Automation'
     : t === 'news' ? 'News'
-    : 'Data Integrity'
+    : t === 'integrity' ? 'Data Integrity'
+    : 'Tax'
+}
+
+function TaxTab({ value, onChange }: {
+  value: import('../api').SettingsTax
+  onChange: (v: import('../api').SettingsTax) => void
+}) {
+  const pct = (f: number) => (f * 100).toFixed(1)
+  const setPct = (key: 'lt_rate' | 'st_rate' | 'state_rate') => (e: React.ChangeEvent<HTMLInputElement>) => {
+    const n = parseFloat(e.target.value)
+    onChange({ ...value, [key]: isNaN(n) ? 0 : Math.min(100, Math.max(0, n)) / 100 })
+  }
+  const blended = 0.6 * value.lt_rate + 0.4 * value.st_rate + value.state_rate
+  return (
+    <div>
+      <h3 style={{ marginTop: 0 }}>Estimated Tax</h3>
+      <p className="subtle">
+        Futures (MES/MCL incl. micros) are IRC <strong>Section 1256</strong> contracts: net gains are
+        taxed <strong>60% long-term / 40% short-term</strong> regardless of holding period. The blended
+        effective rate below is applied to realized gains per account on the Trade Performance page.
+        Estimate only -- not tax advice.
+      </p>
+      <label className="kv">
+        <span>Show tax estimate</span>
+        <input type="checkbox" checked={value.enabled}
+          onChange={(e) => onChange({ ...value, enabled: e.target.checked })} />
+      </label>
+      <label className="kv">
+        <span>Long-term rate (60%)</span>
+        <span><input type="number" step="0.5" min="0" max="100" value={pct(value.lt_rate)} onChange={setPct('lt_rate')} /> %</span>
+      </label>
+      <label className="kv">
+        <span>Short-term / ordinary rate (40%)</span>
+        <span><input type="number" step="0.5" min="0" max="100" value={pct(value.st_rate)} onChange={setPct('st_rate')} /> %</span>
+      </label>
+      <label className="kv">
+        <span>State rate (on all gains, optional)</span>
+        <span><input type="number" step="0.5" min="0" max="100" value={pct(value.state_rate)} onChange={setPct('state_rate')} /> %</span>
+      </label>
+      <p className="subtle" style={{ marginTop: 10 }}>
+        Blended effective rate: <strong>{(blended * 100).toFixed(2)}%</strong>
+        {' '}= 0.60 x {pct(value.lt_rate)}% + 0.40 x {pct(value.st_rate)}% + {pct(value.state_rate)}%
+      </p>
+    </div>
+  )
 }
 
 // ---------- Automation (blackout windows) ----------
