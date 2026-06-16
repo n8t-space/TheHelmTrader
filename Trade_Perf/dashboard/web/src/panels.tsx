@@ -104,6 +104,7 @@ export function FilterBar({ filters, setFilters }: { filters: Filters; setFilter
         Simulation: settings.data.settings.accounts.simulation,
       }
     : ACCOUNT_GROUPS
+  const names = settings.data?.settings.accounts.names
   const update = (patch: Partial<Filters>) => setFilters({ ...filters, ...patch })
   const cleared = JSON.stringify(filters) === JSON.stringify(EMPTY_FILTERS)
   const accounts = dims.data?.accounts ?? []
@@ -171,7 +172,7 @@ export function FilterBar({ filters, setFilters }: { filters: Filters; setFilter
                 checked={accountSet.has(a)}
                 onChange={() => toggleAccount(a)}
               />
-              {a}
+              {accountLabel(a, names)}
             </label>
           ))}
         </div>
@@ -219,6 +220,12 @@ export function TradesTable({ filters }: { filters: Filters }) {
     queryKey: ['trades', filters],
     queryFn: () => fetchJSON<TradesResp>('/api/trades' + buildQuery(filters)),
   })
+  const settings = useQuery({
+    queryKey: ['settings'],
+    queryFn: () => fetchJSON<SettingsResp>('/api/settings'),
+    staleTime: 60_000,
+  })
+  const names = settings.data?.settings.accounts.names
   const trades = useMemo(() => {
     if (!q.data) return []
     return sortBy(q.data.trades, sort, (t, k) => t[k])
@@ -275,7 +282,7 @@ export function TradesTable({ filters }: { filters: Filters }) {
                           : ''}
                       </td>
                       <td>{fmtTime(t.entry_time)}</td>
-                      <td>{t.account}</td>
+                      <td>{accountLabel(t.account, names)}</td>
                       <td>{t.contract || t.symbol}</td>
                       <td>{t.direction}</td>
                       <td className="num">{t.qty}</td>
@@ -533,6 +540,12 @@ export function FillsTable({ filters }: { filters: Filters }) {
     queryKey: ['fills', filters, limit],
     queryFn: () => fetchJSON<FillsResp>('/api/fills' + buildQuery(filters, { limit })),
   })
+  const settings = useQuery({
+    queryKey: ['settings'],
+    queryFn: () => fetchJSON<SettingsResp>('/api/settings'),
+    staleTime: 60_000,
+  })
+  const names = settings.data?.settings.accounts.names
   const fills = useMemo(() => {
     if (!q.data) return []
     return sortBy(q.data.fills, sort, (f, k) => f[k])
@@ -587,7 +600,7 @@ export function FillsTable({ filters }: { filters: Filters }) {
                 <tr key={f.id}>
                   <td className="num">{f.id}</td>
                   <td>{fmtTime(f.time_utc)}</td>
-                  <td>{f.account_name}</td>
+                  <td>{accountLabel(f.account_name, names)}</td>
                   <td>{f.symbol}</td>
                   <td>{f.order_name}</td>
                   <td>{f.order_action}</td>

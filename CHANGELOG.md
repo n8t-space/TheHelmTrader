@@ -4,6 +4,14 @@ All notable changes are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses
 [Semantic Versioning](VERSIONING.md).
 
+## [1.1.2] - 2026-06-16
+
+### Changed
+- **Friendly account names across all of Trade Performance.** Extended the
+  `accountLabel` lookup beyond the Tax + Drawdown cards to the trades table,
+  fills table, and the account filter checkboxes -- every account rendering on
+  the page now shows the friendly name (falling back to the raw ID).
+
 ## [1.1.1] - 2026-06-16
 
 ### Added
