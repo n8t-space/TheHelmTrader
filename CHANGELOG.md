@@ -4,6 +4,20 @@ All notable changes are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses
 [Semantic Versioning](VERSIONING.md).
 
+## [1.1.3] - 2026-06-16
+
+### Added
+- **AI-config disclaimer on Signal Analysis.** A banner reads `/api/health/bot-stats`
+  and warns (red) when no AI provider is configured -- "no new signals will be
+  generated until you configure it" -- with a link to Settings -> AI Backend;
+  a subtle note when AI is configured. Surfaces the silent no-signals state.
+
+### Security
+- **Scrubbed broker account IDs from `MIGRATION.md` at HEAD** (`<redacted-acct>`).
+  Keys/secrets were never tracked (they live in `~/.helm/credentials.json`,
+  outside the repo); this removes the remaining plaintext account IDs from the
+  public tree. Full git-history rewrite of those IDs still pending.
+
 ## [1.1.2] - 2026-06-16
 
 ### Changed
