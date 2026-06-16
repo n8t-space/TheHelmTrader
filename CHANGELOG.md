@@ -4,6 +4,24 @@ All notable changes are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses
 [Semantic Versioning](VERSIONING.md).
 
+## [1.1.1] - 2026-06-16
+
+### Added
+- **Friendly account names.** Settings -> Accounts has a name field per account
+  (ID -> display name); the Estimated Tax and Account Drawdowns cards show the
+  name, falling back to the raw ID. Display-only (`Accounts.names`).
+
+### Changed
+- **Analyzer prompt** (`prompts/analyzer.txt`) revised; dropped the unused
+  `range_top`/`range_bottom` output fields. Read per call -- no restart.
+
+### Fixed
+- **Recorder garbage-expiry guard.** A rolled contract that came in from NT8
+  with a bogus expiry (e.g. `199211`) rendered "MCL NOV92". `expiry_to_contract`
+  now rejects implausible years and falls back to the bare master symbol;
+  existing mislabeled rows cleaned. P&L was never affected (keys on master
+  symbol). Requires a restart of the standalone recorder process.
+
 ## [1.1.0] - 2026-06-15
 
 Promoted to production from beta (beta.1 + beta.2). Manual context path validated

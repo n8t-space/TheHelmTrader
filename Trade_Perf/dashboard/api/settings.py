@@ -141,6 +141,10 @@ class Accounts(BaseModel):
     # here. Missing entries get NO drawdown tracking -- the account just
     # doesn't show up in the Drawdown card.
     drawdowns: dict[str, DrawdownConfig] = Field(default_factory=dict)
+    # Friendly display names keyed by NT account ID. Display-only -- the UI
+    # shows the name (falling back to the raw ID) wherever an account appears.
+    # Empty/whitespace names are dropped client-side.
+    names: dict[str, str] = Field(default_factory=dict)
 
 
 class AutoTrader(BaseModel):

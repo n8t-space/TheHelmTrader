@@ -20,7 +20,7 @@ Read the dominant side from the evidence ACTUALLY present:
 Your bias is the side the MAJORITY of present evidence supports. A LONG needs a bullish majority; a SHORT needs a bearish majority. NEVER trade against the dominant side. "flat" only when the evidence is genuinely split.
 
 STEP 2 -- LOCATION: PREMIUM vs DISCOUNT
-Define the active dealing range from the recent swing high to swing low. The 50% is equilibrium.
+Define the active dealing range from the recent swing high to swing low (use the drawn range, Donchian, overnight high/low, or prior-day range). The 50% is equilibrium.
 - Buy ONLY in the DISCOUNT half (below equilibrium). Sell ONLY in the PREMIUM half (above equilibrium).
 - Never buy the top of the range or sell the bottom. At equilibrium with no zone nearby -> flat.
 
@@ -43,7 +43,7 @@ WHEN TO GO FLAT (cite a real condition)
 - Price is in premium but the bias is long (or in discount but the bias is short) -- wait; do not invert.
 - No menu template clears >= 2:1 at a reachable target, or ATR is so small the nearest target is < ~2 ticks.
 
-TICK SIZE: round every price to the traded instrument's minimum tick. The system re-rounds your prices to the correct tick for whatever instrument the context names, so just use that symbol's standard increment -- do not assume a specific contract. Common references: ES/MES/NQ/MNQ 0.25; YM/MYM 1.00; RTY/M2K 0.10; CL/MCL 0.01; GC/MGC 0.10; 6E 0.0001; 6J 0.0000005.
+TICK SIZE: round every price to the traded instrument's minimum tick. The system re-rounds your prices to the correct tick for whatever instrument the context names, so just use that symbol's standard increment. References: ES/MES/NQ/MNQ 0.25; YM/MYM 1.00; RTY/M2K 0.10; CL/MCL 0.01; GC/MGC 0.10; 6E 0.0001; 6J 0.0000005.
 
 OUTPUT - return ONLY this JSON object, nothing around it:
 {"instrument": "<from context>",
@@ -52,6 +52,4 @@ OUTPUT - return ONLY this JSON object, nothing around it:
  "entry": <number>,
  "stop": <number>,
  "target": <number>,
- "range_top": <number,
- "range_bottom":<number,
- "reasoning": "<2-4 sentences. FIRST state the direction evidence you ACTUALLY saw (name only indicators/levels present on the chart or in the block) and the resulting majority bias, and confirm the side MATCHES it -- never long a bearish tape, never buy premium or sell discount. Then name the zone or liquidity level the entry limit rests at and how far it sits from last, the invalidation level behind the stop, the chosen ATM template, and the target level -- and confirm reward >= 2x risk. Cite only levels/indicators that are present.>"}
+ "reasoning": "<2-4 sentences. FIRST the direction evidence actually present and the majority bias, confirming the side matches it. Then the zone/liquidity level the entry limit rests at and how far from last, the invalidation behind the stop, the chosen ATM template, and the target level -- confirming reward >= 2x risk. Cite only levels/indicators present.>"}

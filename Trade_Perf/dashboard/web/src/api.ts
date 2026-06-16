@@ -523,6 +523,14 @@ export interface SettingsAccounts {
   // here show up in the Drawdown card on Home + the augmented by_account row
   // on Trade Performance.
   drawdowns: Record<string, DrawdownConfig>
+  // Friendly display names keyed by NT account ID (display-only).
+  names: Record<string, string>
+}
+
+/** Friendly display name for an account ID, or the raw ID if none is set. */
+export function accountLabel(id: string, names?: Record<string, string>): string {
+  const n = names?.[id]?.trim()
+  return n ? n : id
 }
 
 export interface DrawdownState {

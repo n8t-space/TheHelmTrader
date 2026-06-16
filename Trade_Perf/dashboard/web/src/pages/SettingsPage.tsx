@@ -1259,6 +1259,14 @@ function AccountsTab({ value, onChange }: {
     .filter((a) => a !== '')
     .sort()
 
+  const names = value.names || {}
+  const setName = (acct: string, name: string) => {
+    const next = { ...names }
+    if (name.trim() === '') delete next[acct]
+    else next[acct] = name
+    onChange({ ...value, names: next })
+  }
+
   const visibleCount = allKnown.filter((a) => where(a) !== 'hidden').length
   const hiddenCount  = allKnown.length - visibleCount
 
@@ -1279,6 +1287,7 @@ function AccountsTab({ value, onChange }: {
           <thead>
             <tr>
               <th>Account ID</th>
+              <th>Friendly name</th>
               <th>Hidden</th>
               <th>Live</th>
               <th>Eval</th>
@@ -1298,6 +1307,16 @@ function AccountsTab({ value, onChange }: {
                         (no fills yet)
                       </span>
                     )}
+                  </td>
+                  <td>
+                    <input
+                      type="text"
+                      placeholder="e.g. Main Sim"
+                      value={names[acct] ?? ''}
+                      onChange={(e) => setName(acct, e.target.value)}
+                      aria-label={`Friendly name for ${acct}`}
+                      style={{ width: '100%' }}
+                    />
                   </td>
                   {(['hidden', 'live', 'evals', 'simulation'] as Visibility[]).map((opt) => (
                     <td key={opt} style={{ textAlign: 'center' }}>

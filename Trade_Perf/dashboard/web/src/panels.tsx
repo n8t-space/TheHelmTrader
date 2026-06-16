@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
-  ACCOUNT_GROUPS, buildQuery, fetchJSON, EMPTY_FILTERS,
+  ACCOUNT_GROUPS, accountLabel, buildQuery, fetchJSON, EMPTY_FILTERS,
   type DimensionsResp, type DrawdownResp, type DrawdownState,
   type Filters, type HealthResp, type SettingsResp, type StatsResp,
   type Trade, type TradesResp, type Fill, type FillsResp,
@@ -340,6 +340,12 @@ export function DrawdownsCard() {
     queryFn: () => fetchJSON<DrawdownResp>('/api/drawdown/accounts'),
     refetchInterval: 10_000,
   })
+  const settings = useQuery({
+    queryKey: ['settings'],
+    queryFn: () => fetchJSON<SettingsResp>('/api/settings'),
+    staleTime: 60_000,
+  })
+  const names = settings.data?.settings.accounts.names
   if (q.isLoading || !q.data) return null
   if (q.data.accounts.length === 0) return null
   const worst = q.data.accounts[0]?.status
@@ -368,7 +374,7 @@ export function DrawdownsCard() {
             </tr>
           </thead>
           <tbody>
-            {q.data.accounts.map((a) => <DrawdownRow key={a.account} a={a} />)}
+            {q.data.accounts.map((a) => <DrawdownRow key={a.account} a={a} names={names} />)}
           </tbody>
         </table>
       </div>
@@ -385,6 +391,12 @@ export function TaxEstimateCard() {
     queryFn: () => fetchJSON<TaxEstimateResp>('/api/tax-estimate'),
     refetchInterval: 30_000,
   })
+  const settings = useQuery({
+    queryKey: ['settings'],
+    queryFn: () => fetchJSON<SettingsResp>('/api/settings'),
+    staleTime: 60_000,
+  })
+  const names = settings.data?.settings.accounts.names
   if (q.isLoading || !q.data || !q.data.enabled) return null
   const d = q.data
   const ratePct = (d.rates.blended_rate * 100).toFixed(1)
@@ -408,7 +420,7 @@ export function TaxEstimateCard() {
           <tbody>
             {d.accounts.map((a) => (
               <tr key={a.account}>
-                <td><strong>{a.account}</strong></td>
+                <td><strong>{accountLabel(a.account, names)}</strong></td>
                 <td className="num">{a.trades}</td>
                 <td className={'num ' + pnlClass(a.realized_pnl)}>{fmtMoney(a.realized_pnl)}</td>
                 <td className="num">{fmtMoney(a.taxable_gain)}</td>
@@ -435,13 +447,13 @@ export function TaxEstimateCard() {
   )
 }
 
-function DrawdownRow({ a }: { a: DrawdownState }) {
+function DrawdownRow({ a, names }: { a: DrawdownState; names?: Record<string, string> }) {
   const trailingPct = a.trailing_drawdown > 0 ? a.trailing_dd_left / a.trailing_drawdown : 1
   const dailyPct    = a.daily_drawdown    > 0 ? a.daily_dd_left    / a.daily_drawdown    : 1
   const tProgress   = a.profit_target > 0 ? (a.profit_target - a.profit_target_left) / a.profit_target : 0
   return (
     <tr>
-      <td><strong>{a.account}</strong> {a.profit_target_hit && <span className="badge auto-res">target hit</span>}</td>
+      <td><strong>{accountLabel(a.account, names)}</strong> {a.profit_target_hit && <span className="badge auto-res">target hit</span>}</td>
       <td className="num">{fmtMoney(a.current_balance)}</td>
       <td className="num">{fmtMoney(a.peak_balance)}</td>
       <td className={'num ' + pnlClass(a.today_pnl)}>{fmtMoney(a.today_pnl)}</td>

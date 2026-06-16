@@ -41,17 +41,28 @@ def decode_ticks(ticks: int) -> datetime.datetime:
 
 
 def expiry_to_contract(expiry_int: int | None) -> str:
-    # NT8 stores futures expiry as int YYYYMM -> render as 'MMMYY' e.g. 202606 -> 'JUN26'
+    # NT8 stores futures expiry as int YYYYMM (or YYYYMMDD) -> render 'MMMYY'
+    # e.g. 202606 -> 'JUN26'. Returns "" (bare master symbol) for missing or
+    # IMPLAUSIBLE expiries: a rolled contract occasionally comes in from NT8
+    # with garbage like Expiry=199211, which used to render "MCL NOV92".
+    # Futures expiries are near-dated, so anything outside a sane year window
+    # is bad NT8 data -> fall back to the bare master symbol.
     if not expiry_int:
         return ""
     s = str(expiry_int)
     if len(s) < 6:
         return ""
-    year2 = s[2:4]
-    month = int(s[4:6])
+    try:
+        year = int(s[0:4])
+        month = int(s[4:6])
+    except ValueError:
+        return ""
+    this_year = datetime.datetime.now(datetime.timezone.utc).year
+    if not (this_year - 1 <= year <= this_year + 6) or not (1 <= month <= 12):
+        return ""
     months = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN",
               "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
-    return f"{months[month - 1]}{year2}" if 1 <= month <= 12 else ""
+    return f"{months[month - 1]}{s[2:4]}"
 
 
 # ---- local schema ----
