@@ -334,7 +334,10 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Name                     = "HelmFeed";
                 IsOverlay                = true;
                 Calculate                = Calculate.OnBarClose;
-                IsSuspendedWhileInactive = true;
+                // false so an armed chart keeps feeding + emitting context even
+                // when its tab is in the background (true suspended background
+                // tabs -- the cause of "one instrument fed, the others didn't").
+                IsSuspendedWhileInactive = false;
             }
             else if (State == State.Configure)
             {

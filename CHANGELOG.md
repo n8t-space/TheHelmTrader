@@ -4,6 +4,20 @@ All notable changes are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses
 [Semantic Versioning](VERSIONING.md).
 
+## [1.1.4] - 2026-06-16
+
+### Changed
+- **HelmFeed `IsSuspendedWhileInactive = false`** so an armed chart keeps feeding
+  bars/ticks + emitting context while its tab is in the background (true
+  suspended background tabs -- the cause of "one instrument fed, the others
+  didn't"). Requires an F5 recompile.
+
+### Security
+- **Purged the leaked broker account IDs from all git history** via
+  `git filter-repo` + force-push (HEAD was already clean as of 1.1.3). A fresh
+  clone of origin now contains zero account IDs across all commits. Note: old
+  unreachable commit SHAs may linger in GitHub's cache until their GC.
+
 ## [1.1.3] - 2026-06-16
 
 ### Added
