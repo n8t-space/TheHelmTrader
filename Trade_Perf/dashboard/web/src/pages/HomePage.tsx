@@ -9,7 +9,6 @@ import {
   type AutoAnalysisEntry,
   type AutoAnalysisStatusResp,
 } from '../api'
-import { DrawdownsCard } from '../panels'
 import { NewsCard } from '../NewsPanel'
 
 interface HomeData {
@@ -29,6 +28,13 @@ interface HomeData {
     simulation: number
     signals: number
   }
+  session_calendar: SessionDay[]
+}
+
+interface SessionDay {
+  date: string  // YYYY-MM-DD (trading day, CME 5 PM CT roll)
+  net_pnl: number
+  trade_count: number
 }
 
 const fmtMoney = (n: number) =>
@@ -54,13 +60,94 @@ export function HomePage() {
         <CumulativeEarningsCard e={d.cumulative_earnings} />
         <AutoAnalysisCard />
       </div>
-      <DrawdownsCard />
+      <SessionCalendarCard days={d.session_calendar} />
     </>
   )
 }
 
-// DrawdownsCard + DrawdownRow live in panels.tsx (shared between Home and
-// Trade Performance pages).
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
+const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+const fmtCompactMoney = (n: number) => {
+  const abs = Math.abs(n)
+  const sign = n < 0 ? '-' : ''
+  if (abs >= 1000) return `${sign}$${(abs / 1000).toFixed(abs >= 10000 ? 0 : 1)}k`
+  return `${sign}$${abs.toFixed(0)}`
+}
+
+function SessionCalendarCard({ days }: { days: SessionDay[] }) {
+  const byDate = new Map(days.map(d => [d.date, d]))
+
+  // Default the view to the most recent month that has a session; fall back
+  // to the current calendar month when there's no history yet.
+  const latest = days.length ? days[days.length - 1].date : null
+  const initial = latest ? latest.slice(0, 7) : null
+  const fallback = (() => {
+    const now = new Date()
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  })()
+  const [ym, setYm] = useState<string>(initial ?? fallback)
+
+  const [year, month] = ym.split('-').map(Number)  // month is 1-based
+  const firstDow = new Date(year, month - 1, 1).getDay()
+  const daysInMonth = new Date(year, month, 0).getDate()
+
+  const cells: (SessionDay | null)[] = []
+  for (let i = 0; i < firstDow; i++) cells.push(null)
+  for (let day = 1; day <= daysInMonth; day++) {
+    const iso = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    cells.push(byDate.get(iso) ?? { date: iso, net_pnl: NaN, trade_count: 0 })
+  }
+
+  const shiftMonth = (delta: number) => {
+    const dt = new Date(year, month - 1 + delta, 1)
+    setYm(`${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`)
+  }
+
+  const monthTotal = days
+    .filter(d => d.date.startsWith(ym))
+    .reduce((acc, d) => acc + d.net_pnl, 0)
+
+  return (
+    <div className="card calendar-card">
+      <div className="calendar-head">
+        <h2>Session Results</h2>
+        <div className="calendar-nav">
+          <button type="button" onClick={() => shiftMonth(-1)} aria-label="Previous month">&lsaquo;</button>
+          <span className="calendar-title">{MONTH_NAMES[month - 1]} {year}</span>
+          <button type="button" onClick={() => shiftMonth(1)} aria-label="Next month">&rsaquo;</button>
+        </div>
+        <span className={`calendar-total ${pnlClass(monthTotal)}`}>{fmtMoney(monthTotal)}</span>
+      </div>
+      <div className="calendar-grid">
+        {WEEKDAY_LABELS.map(w => (
+          <div key={w} className="calendar-weekday">{w}</div>
+        ))}
+        {cells.map((c, i) => {
+          if (!c) return <div key={`pad-${i}`} className="calendar-cell calendar-empty" />
+          const dayNum = Number(c.date.slice(8, 10))
+          const hasSession = !Number.isNaN(c.net_pnl)
+          const tone = !hasSession ? '' : c.net_pnl > 0 ? 'win' : c.net_pnl < 0 ? 'loss' : 'flat'
+          return (
+            <div
+              key={c.date}
+              className={`calendar-cell ${tone}`}
+              title={hasSession ? `${c.date} · ${c.trade_count} trade${c.trade_count === 1 ? '' : 's'} · ${fmtMoney(c.net_pnl)}` : c.date}
+            >
+              <span className="calendar-daynum">{dayNum}</span>
+              {hasSession && (
+                <span className="calendar-amount">{fmtCompactMoney(c.net_pnl)}</span>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
 function TodayCard({ t }: { t: HomeData['today'] }) {
   // Trades-only on Home. Signal KPI lives on the Signal Analysis page.

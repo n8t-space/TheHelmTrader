@@ -282,6 +282,124 @@ tr.pending-suggestion td {
   margin-bottom: 16px;
 }
 
+/* ---------- Session calendar ---------- */
+
+.calendar-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.calendar-head h2 {
+  margin: 0;
+}
+
+.calendar-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.calendar-nav button {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.calendar-nav button:hover {
+  border-color: var(--accent);
+}
+
+.calendar-title {
+  min-width: 130px;
+  text-align: center;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.calendar-total {
+  margin-left: auto;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+
+.calendar-weekday {
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding-bottom: 2px;
+}
+
+.calendar-cell {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 60px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.calendar-cell.calendar-empty {
+  border: none;
+  background: transparent;
+}
+
+.calendar-daynum {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.calendar-amount {
+  font-size: 13px;
+  font-weight: 700;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.calendar-cell.win {
+  background: rgba(63, 185, 80, 0.15);
+  border-color: var(--pos);
+}
+
+.calendar-cell.win .calendar-amount {
+  color: var(--pos);
+}
+
+.calendar-cell.loss {
+  background: rgba(248, 81, 73, 0.15);
+  border-color: var(--neg);
+}
+
+.calendar-cell.loss .calendar-amount {
+  color: var(--neg);
+}
+
+.calendar-cell.flat {
+  background: rgba(125, 133, 144, 0.12);
+}
+
+.calendar-cell.flat .calendar-amount {
+  color: var(--muted);
+}
+
 /* ---------- Settings page ---------- */
 
 .settings-header {

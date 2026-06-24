@@ -102,13 +102,23 @@ def home() -> dict[str, Any]:
     #   signals     - realized P/L from the LLM-proposed trades in signals.jsonl
     # Bucket membership is user-configured via the Settings page.
     cumulative_earnings = {"live": 0.0, "evals": 0.0, "simulation": 0.0, "signals": 0.0}
+    # Per-trading-day rollup for the Home calendar. Keyed by trading day
+    # (CME 5 PM CT roll), value = {net_pnl, trade_count}.
+    by_day: dict[str, dict[str, float]] = {}
     try:
         all_fills = db.fetch_fills_for_derivation()
         all_trades = tradelib.derive_trades(all_fills)
         for t in all_trades:
             cat = _account_category(t.get("account", ""))
+            net = t.get("net_pnl", 0.0) or 0.0
             if cat is not None:
-                cumulative_earnings[cat] += t.get("net_pnl", 0.0) or 0.0
+                cumulative_earnings[cat] += net
+            day = trading_day_for_ts(t.get("exit_time", ""), tz_name) \
+                or (t.get("exit_time", "") or "")[:10]
+            if day:
+                slot = by_day.setdefault(day, {"net_pnl": 0.0, "trade_count": 0})
+                slot["net_pnl"] += net
+                slot["trade_count"] += 1
     except FileNotFoundError:
         pass
     for s in enriched:
@@ -116,6 +126,15 @@ def home() -> dict[str, Any]:
         if pnl is not None:
             cumulative_earnings["signals"] += pnl
     cumulative_earnings = {k: round(v, 2) for k, v in cumulative_earnings.items()}
+
+    session_calendar = [
+        {
+            "date": d,
+            "net_pnl": round(v["net_pnl"], 2),
+            "trade_count": int(v["trade_count"]),
+        }
+        for d, v in sorted(by_day.items())
+    ]
 
     return {
         "today": {
@@ -134,4 +153,5 @@ def home() -> dict[str, Any]:
         },
         "open_positions": [],  # TODO: depends on NS account-state indicator
         "cumulative_earnings": cumulative_earnings,
+        "session_calendar": session_calendar,
     }
