@@ -25,6 +25,11 @@ $projectRoot = (Resolve-Path "$PSScriptRoot\..").Path
 $logFile     = Join-Path $projectRoot 'data\watchdog.log'
 $null        = New-Item -ItemType Directory -Force -Path (Split-Path $logFile) | Out-Null
 
+# Kill-switch sentinel, written by POST /api/control/kill. Beside settings.json
+# in ~/.helm so the API and watchdog resolve the same path.
+$helmHome       = if ($env:HELM_HOME) { $env:HELM_HOME } else { Join-Path $env:USERPROFILE '.helm' }
+$killSwitchPath = Join-Path $helmHome 'kill-switch.json'
+
 function Write-Log {
     param([string]$Msg, [string]$Level = 'INFO')
     $line = '{0} {1} {2}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Level, $Msg
@@ -129,13 +134,76 @@ function Stop-Dashboard($proc) {
     }
 }
 
+function Stop-DashboardByPort([int]$port) {
+    # Kill whatever is listening on the port, even if this watchdog didn't start
+    # it (adopted/unmanaged instance). Used by the kill switch so the stop is
+    # guaranteed regardless of who owns uvicorn.
+    $conns = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+    foreach ($c in $conns) {
+        try {
+            Stop-Process -Id $c.OwningProcess -Force -ErrorAction Stop
+            Write-Log "kill switch: stopped PID $($c.OwningProcess) on port $port"
+        } catch {
+            Write-Log "kill switch: stop-by-port failed for PID $($c.OwningProcess): $_" 'ERROR'
+        }
+    }
+}
+
 function Get-NtProcess {
     return Get-Process -Name $ProcessName -ErrorAction SilentlyContinue
+}
+
+# Returns $true while the kill switch should keep the dashboard DOWN. Stamps the
+# armed sentinel with the NT instance live at kill time (PID + start time), then
+# lifts the switch (deletes the file) once that instance is gone -- i.e. NT
+# restarted or closed. A malformed/unstampable sentinel is cleared defensively.
+function Test-KillSwitch($nt) {
+    if (-not (Test-Path $killSwitchPath)) { return $false }
+
+    $data = $null
+    try { $data = Get-Content -Path $killSwitchPath -Raw -ErrorAction Stop | ConvertFrom-Json } catch { }
+    if ($null -eq $data) {
+        Write-Log "kill switch: unreadable sentinel, clearing" 'ERROR'
+        Remove-Item $killSwitchPath -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+
+    $ntStart = if ($nt) { $nt[0].StartTime.ToString('o') } else { $null }
+
+    if (-not $data.nt_pid) {
+        # First sighting: pin to the currently-running NT instance.
+        if ($nt) {
+            $data | Add-Member -NotePropertyName nt_pid   -NotePropertyValue $nt[0].Id    -Force
+            $data | Add-Member -NotePropertyName nt_start -NotePropertyValue $ntStart      -Force
+            $data | ConvertTo-Json -Compress | Set-Content -Path $killSwitchPath -Encoding UTF8
+            Write-Log "kill switch armed; pinned to NinjaTrader PID $($nt[0].Id)"
+            return $true
+        }
+        # Nothing to pin to (NT not running) -- the pause has no anchor; clear it.
+        Write-Log "kill switch: no NinjaTrader to pin to, clearing"
+        Remove-Item $killSwitchPath -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+
+    # Already pinned: still the same NT instance?
+    $sameNt = $nt -and ($nt[0].Id -eq $data.nt_pid) -and ($ntStart -eq $data.nt_start)
+    if ($sameNt) { return $true }
+
+    Write-Log "kill switch: NinjaTrader restarted/closed; lifting"
+    Remove-Item $killSwitchPath -Force -ErrorAction SilentlyContinue
+    return $false
 }
 
 # ---------- main loop ----------
 
 Write-Log "watchdog starting (process=$ProcessName, port=$Port, interval=${IntervalSeconds}s)"
+
+# A manual (or boot) service start resumes the Helm: drop any kill switch left
+# over from a prior watchdog lifetime.
+if (Test-Path $killSwitchPath) {
+    Remove-Item $killSwitchPath -Force -ErrorAction SilentlyContinue
+    Write-Log "cleared stale kill switch on startup (service start resumes Helm)"
+}
 
 $dashboard = $null
 
@@ -152,7 +220,18 @@ while ($true) {
         $nt = Get-NtProcess
         $dashAlive = ($null -ne $dashboard) -and -not $dashboard.HasExited
 
-        if ($nt -and -not $dashAlive) {
+        if (Test-KillSwitch $nt) {
+            # Kill switch armed: keep the dashboard down regardless of NT.
+            if ($dashAlive) {
+                Write-Log "kill switch armed; bringing dashboard down"
+                Stop-Dashboard $dashboard
+                $dashboard = $null
+            }
+            elseif (Test-PortInUse $Port) {
+                Stop-DashboardByPort $Port
+            }
+        }
+        elseif ($nt -and -not $dashAlive) {
             if (Test-PortInUse $Port) {
                 Write-Log "NinjaTrader detected, but port $Port already in use -- skipping start"
             } else {

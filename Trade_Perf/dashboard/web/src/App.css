@@ -430,6 +430,11 @@ tr.journal-detail > td {
   color: var(--neg);
 }
 
+.btn-danger:hover:not(:disabled) {
+  color: #fff;
+  background: var(--neg);
+}
+
 .btn-ghost {
   background: transparent;
   color: var(--muted);

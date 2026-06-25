@@ -1,7 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { fetchJSON } from '../api'
+import { fetchJSON, postJSON } from '../api'
 
 interface BotStats {
   provider: 'ollama' | 'claude' | 'openai'
@@ -45,9 +45,55 @@ export function HealthPage() {
     <>
       <div className="grid">
         <BotHealthCard h={stats.data ?? null} loading={stats.isLoading} />
+        <KillSwitchCard />
       </div>
       <LogsViewer />
     </>
+  )
+}
+
+function KillSwitchCard() {
+  const [state, setState] = useState<'idle' | 'killing' | 'down'>('idle')
+  const [error, setError] = useState<string | null>(null)
+
+  const kill = async () => {
+    if (!window.confirm(
+      'Stop the Helm dashboard now?\n\n'
+      + 'It will go offline within ~5 seconds and STAY down until you restart '
+      + 'NinjaTrader (or restart the Helm service). This page will become '
+      + 'unreachable.'
+    )) return
+    setState('killing')
+    setError(null)
+    try {
+      await postJSON('/api/control/kill')
+      setState('down')
+    } catch (e) {
+      setError(String(e))
+      setState('idle')
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2>Service Control</h2>
+      <p className="subtle" style={{ marginTop: -4 }}>
+        Stop the Helm dashboard for the rest of this NinjaTrader session. The
+        watchdog keeps it down until NinjaTrader restarts or the Helm service is
+        restarted, then brings it back automatically.
+      </p>
+      {state === 'down' ? (
+        <p className="pnl-neg">
+          Kill switch armed — the dashboard is shutting down. This page will stop
+          responding shortly. Restart NinjaTrader or the Helm service to bring it back.
+        </p>
+      ) : (
+        <button type="button" className="btn-danger" onClick={kill} disabled={state === 'killing'}>
+          {state === 'killing' ? 'Stopping…' : 'Kill Helm until NT restart'}
+        </button>
+      )}
+      {error && <p className="error">{error}</p>}
+    </div>
   )
 }
 
