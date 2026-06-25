@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from . import _tradebot_bridge as bridge, atm_strategies as atm_routes, auditor as auditor_routes, auto_analysis as auto_analysis_routes, auto_trader as auto_trader_routes, db, drawdown as drawdown_routes, feed as feed_routes, health as health_routes, home as home_routes, news as news_routes, settings as settings_routes, signals as signals_routes, tax as tax_mod, trades as tradelib, version as version_routes
+from . import _tradebot_bridge as bridge, atm_strategies as atm_routes, auditor as auditor_routes, auto_analysis as auto_analysis_routes, auto_trader as auto_trader_routes, compliance as compliance_mod, db, feed as feed_routes, health as health_routes, home as home_routes, journal as journal_routes, news as news_routes, settings as settings_routes, signals as signals_routes, tax as tax_mod, trades as tradelib, version as version_routes
 
 logger = logging.getLogger(__name__)
 
@@ -142,10 +142,10 @@ app.include_router(auto_analysis_routes.router)
 app.include_router(settings_routes.router)
 app.include_router(atm_routes.router)
 app.include_router(version_routes.router)
-app.include_router(drawdown_routes.router)
 app.include_router(news_routes.router)
 app.include_router(auto_trader_routes.router)
 app.include_router(auditor_routes.router)
+app.include_router(journal_routes.router)
 
 
 @app.get("/api/health")
@@ -281,6 +281,21 @@ def tax_estimate(year: Annotated[int | None, Query()] = None):
         raise HTTPException(503, str(e))
     trades_rows = tradelib.derive_trades(fills_rows)
     return tax_mod.estimate_by_account(trades_rows, s.tax, year=yr, tz=tz_name)
+
+
+@app.get("/api/microscalp-compliance")
+def microscalp_compliance():
+    """All-time per-account microscalping compliance (prop-firm eval rule:
+    sub-10s trades capped at 50% of count AND 50% of gross profit). Derives
+    over ALL fills, independent of any page filter."""
+    s = settings_routes.get_settings()
+    try:
+        fills_rows = db.fetch_fills_for_derivation()
+    except FileNotFoundError as e:
+        raise HTTPException(503, str(e))
+    trades_rows = tradelib.derive_trades(fills_rows)
+    return compliance_mod.microscalp_by_account(
+        trades_rows, eval_accounts=s.accounts.evals)
 
 
 def _capture_with_context_async(ctx: dict, image_path: Path | None) -> None:

@@ -96,14 +96,24 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         private sealed class Tracked
         {
-            public string   ExecTag;     // == AtmId; the dashboard linkage key
-            public string   AtmId;       // atmStrategyId for GetAtmStrategy* + close
-            public string   OrderId;     // entry orderId for AtmStrategyCancelEntryOrder
+            public string   ExecTag;     // == AtmId for ATM path; dashboard linkage key
+            public string   AtmId;       // atmStrategyId for GetAtmStrategy* + close (ATM path)
+            public string   OrderId;     // entry orderId for AtmStrategyCancelEntryOrder (ATM path)
             public string   SignalTs;
             public int      Qty;
             public DateTime PlacedAt;
             public DateTime ExpiresAt;   // assessment-expiry cancel time; MinValue = none
             public bool     Filled;
+
+            // --- OCO path (Item 1B): ATM-less bare-LIMIT entry + stop/target OCO ---
+            public bool     IsOco;
+            public string   EntrySignal; // managed entry signalName == ExecTag + "-OCOE"
+            public double   Stop;
+            public double   Target;
+            public string   Direction;   // "long" | "short" -- which Exit* methods to use
+            public Order    EntryOrder;  // cache the Order returned by Enter*Limit for a reliable cancel
+            public bool     ExitsPlaced; // stop+target submitted after the entry fill
+            public int      FilledQty;   // cumulative filled qty (partial fills)
         }
 
         // One queue item from /api/exec/queue. Plain POCO -- parsed by the
@@ -118,6 +128,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             public double LimitPrice;
             public string AtmStrategy;
             public int    Qty;
+            public double Stop;        // ATM-less OCO stop price (0 = none)
+            public double Target;      // ATM-less OCO target price (0 = none)
             public double ExpiresAt;   // unix seconds; 0 = no assessment-expiry
         }
 
@@ -382,31 +394,35 @@ namespace NinjaTrader.NinjaScript.Strategies
         private void Place(QueueItem it, int qty)
         {
             string action = (it.Direction ?? "").ToLowerInvariant() == "short" ? "SellShort" : "Buy";
+            bool isOco = string.IsNullOrEmpty(it.AtmStrategy);
 
             // NT8 requires the entry orderId and the atmStrategyId to be two
             // DISTINCT strings. atmId stays == exec_tag (the dashboard linkage
             // key); the entry order gets a derived id.
             string atmId   = it.ExecTag;
             string orderId = it.ExecTag + "-E";
+            string entrySignal = it.ExecTag + "-OCOE";   // managed entry signalName (OCO path)
             DateTime expiresAt = it.ExpiresAt > 0
                 ? DateTimeOffset.FromUnixTimeSeconds((long)it.ExpiresAt).LocalDateTime
                 : DateTime.MinValue;
 
             if (DryRun)
             {
-                Print($"[HelmAuto] WOULD place: {action} LIMIT {qty} {it.Instrument} @ {it.LimitPrice} "
-                    + $"template='{it.AtmStrategy}' atm={atmId} order={orderId}");
+                if (isOco)
+                    Print($"[HelmAuto] WOULD place OCO: {action} LIMIT {qty} {it.Instrument} @ {it.LimitPrice} "
+                        + $"+ stop {it.Stop} + target {it.Target} entry={entrySignal}");
+                else
+                    Print($"[HelmAuto] WOULD place: {action} LIMIT {qty} {it.Instrument} @ {it.LimitPrice} "
+                        + $"template='{it.AtmStrategy}' atm={atmId} order={orderId}");
                 handled.Add(it.ExecTag);
-                tracked[it.ExecTag] = new Tracked { ExecTag = it.ExecTag, AtmId = atmId, OrderId = orderId, SignalTs = it.Ts, Qty = qty, PlacedAt = DateTime.Now, ExpiresAt = expiresAt, Filled = false };
+                tracked[it.ExecTag] = new Tracked { ExecTag = it.ExecTag, AtmId = atmId, OrderId = orderId, SignalTs = it.Ts, Qty = qty, PlacedAt = DateTime.Now, ExpiresAt = expiresAt, Filled = false, IsOco = isOco, EntrySignal = entrySignal, Stop = it.Stop, Target = it.Target, Direction = (it.Direction ?? "").ToLowerInvariant() };
                 PostExec(it.Ts, "working", it.ExecTag, null, null, dryRun: true, note: "dry-run: no order placed");
                 return;
             }
 
-            if (string.IsNullOrEmpty(it.AtmStrategy))
+            if (isOco)
             {
-                Print($"[HelmAuto] reject {it.ExecTag}: no ATM template on the proposal.");
-                PostExec(it.Ts, "rejected", it.ExecTag, null, null, dryRun: false, note: "no ATM template");
-                handled.Add(it.ExecTag);
+                PlaceOco(it, qty, action, entrySignal, expiresAt);
                 return;
             }
 
@@ -443,6 +459,109 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
 
+        // =================================================================
+        //  OCO path (Item 1B): bare LIMIT entry via the MANAGED layer, then
+        //  on fill a StopMarket + Limit pair sharing the entry's signalName so
+        //  NT8 auto-OCOs them and auto-resizes to the live position. Strategy
+        //  thread only (called from ProcessOnStrategyThread).
+        // =================================================================
+        private void PlaceOco(QueueItem it, int qty, string action, string entrySignal, DateTime expiresAt)
+        {
+            handled.Add(it.ExecTag);
+            string dir = (it.Direction ?? "").ToLowerInvariant();
+            var t = new Tracked
+            {
+                ExecTag = it.ExecTag, AtmId = it.ExecTag, OrderId = entrySignal,
+                SignalTs = it.Ts, Qty = qty, PlacedAt = DateTime.Now, ExpiresAt = expiresAt,
+                Filled = false, IsOco = true, EntrySignal = entrySignal,
+                Stop = it.Stop, Target = it.Target, Direction = dir,
+            };
+            tracked[it.ExecTag] = t;
+
+            try
+            {
+                // Cache the returned Order for a reliable cancel handle. Managed
+                // Enter*Limit(qty, limitPrice, signalName) returns the entry Order.
+                t.EntryOrder = dir == "short"
+                    ? EnterShortLimit(0, true, qty, it.LimitPrice, entrySignal)
+                    : EnterLongLimit(0, true, qty, it.LimitPrice, entrySignal);
+                Print($"[HelmAuto] placed OCO {action} LIMIT {qty} {it.Instrument} @ {it.LimitPrice} "
+                    + $"(stop {it.Stop} / target {it.Target}) entry={entrySignal}");
+                PostExec(it.Ts, "working", it.ExecTag, null, null, dryRun: false, note: null);
+            }
+            catch (Exception ex)
+            {
+                Print($"[HelmAuto] OCO place threw for {it.ExecTag}: {ex.GetType().Name}: {ex.Message}");
+                PostExec(it.Ts, "rejected", it.ExecTag, null, null, dryRun: false, note: ex.Message);
+                tracked.Remove(it.ExecTag);
+            }
+        }
+
+        // Place the OCO protective stop (StopMarket) + target (Limit) bound to the
+        // entry's signalName. NT8 auto-OCOs the pair and auto-resizes it to the
+        // live position (handles partial fills). Strategy thread only.
+        private void PlaceOcoExits(Tracked t, int filledQty)
+        {
+            try
+            {
+                if (t.Direction == "short")
+                {
+                    if (t.Stop > 0)   ExitShortStopMarket(0, true, filledQty, t.Stop, t.EntrySignal + "-S", t.EntrySignal);
+                    if (t.Target > 0) ExitShortLimit(0, true, filledQty, t.Target, t.EntrySignal + "-T", t.EntrySignal);
+                }
+                else
+                {
+                    if (t.Stop > 0)   ExitLongStopMarket(0, true, filledQty, t.Stop, t.EntrySignal + "-S", t.EntrySignal);
+                    if (t.Target > 0) ExitLongLimit(0, true, filledQty, t.Target, t.EntrySignal + "-T", t.EntrySignal);
+                }
+                Print($"[HelmAuto] OCO exits placed for {t.ExecTag}: stop {t.Stop} / target {t.Target} x{filledQty}");
+            }
+            catch (Exception ex)
+            {
+                Print($"[HelmAuto] OCO exits threw for {t.ExecTag}: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        private Tracked FindOcoByEntrySignal(string signalName)
+        {
+            if (string.IsNullOrEmpty(signalName)) return null;
+            foreach (var kv in tracked)
+                if (kv.Value.IsOco && string.Equals(kv.Value.EntrySignal, signalName, StringComparison.Ordinal))
+                    return kv.Value;
+            return null;
+        }
+
+        // OnExecutionUpdate fires on the STRATEGY thread. We detect the OCO entry
+        // fill here (keyed on execution.Order.Name == EntrySignal) and place the
+        // stop/target exits for the FILLED qty. Partial fills update the qty and
+        // the managed exits auto-resize.
+        protected override void OnExecutionUpdate(Execution execution, string executionId, double price,
+                                                  int quantity, MarketPosition marketPosition,
+                                                  string orderId, DateTime time)
+        {
+            if (DryRun || execution == null || execution.Order == null) return;
+            var t = FindOcoByEntrySignal(execution.Order.Name);
+            if (t == null) return;
+
+            // Only the entry order's fills size the position; exit fills resolve
+            // it (handled in MonitorTracked via Flat detection).
+            if (!string.Equals(execution.Order.Name, t.EntrySignal, StringComparison.Ordinal))
+                return;
+
+            t.FilledQty += quantity;
+            t.Filled = true;
+            int filled = t.FilledQty;
+            double avg = execution.Order.AverageFillPrice > 0 ? execution.Order.AverageFillPrice : price;
+            Print($"[HelmAuto] OCO entry fill {t.ExecTag} @ {avg} x{quantity} (cum {filled})");
+            PostExec(t.SignalTs, "filled", t.ExecTag, avg, filled, dryRun: false, note: null);
+
+            // Place (or resize) the protective stop/target for the filled qty.
+            // Re-issuing on a subsequent partial fill replaces the prior managed
+            // exits for the same fromEntrySignal (managed layer resizes).
+            PlaceOcoExits(t, filled);
+            t.ExitsPlaced = true;
+        }
+
         // Fill detection + entry-expiry cancel + closed-position realized P&L.
         private void MonitorTracked()
         {
@@ -452,6 +571,15 @@ namespace NinjaTrader.NinjaScript.Strategies
             foreach (var kv in tracked)
             {
                 var t = kv.Value;
+
+                // --- OCO path -------------------------------------------------
+                if (t.IsOco)
+                {
+                    MonitorOco(t, done);
+                    continue;
+                }
+
+                // --- ATM path -------------------------------------------------
                 // Getters + close take the atmStrategyId; cancel takes the orderId.
                 MarketPosition pos = GetAtmStrategyMarketPosition(t.AtmId);
 
@@ -501,6 +629,56 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
             }
             foreach (var tag in done) tracked.Remove(tag);
+        }
+
+        // OCO lifecycle on the strategy thread: cancel an unfilled entry at the
+        // window / assessment expiry; once filled, stop tracking when the
+        // position goes Flat (one OCO leg filled -> the managed layer auto-cancels
+        // the sibling). The outcome watcher + auditor resolve final P&L from real
+        // fills, mirroring the ATM path.
+        private void MonitorOco(Tracked t, List<string> done)
+        {
+            MarketPosition pos = Position != null ? Position.MarketPosition : MarketPosition.Flat;
+
+            if (!t.Filled)
+            {
+                // Entry-window / assessment-expiry cancel of an unfilled bare LIMIT.
+                if ((t.ExpiresAt != DateTime.MinValue && DateTime.Now >= t.ExpiresAt)
+                    || (DateTime.Now - t.PlacedAt).TotalMinutes > EntryWindowMinutes)
+                {
+                    bool assessment = t.ExpiresAt != DateTime.MinValue && DateTime.Now >= t.ExpiresAt;
+                    string why = assessment ? "assessment-expiry (next read due)" : "entry window expired";
+                    try
+                    {
+                        if (t.EntryOrder != null
+                            && (t.EntryOrder.OrderState == OrderState.Working
+                                || t.EntryOrder.OrderState == OrderState.Accepted))
+                            CancelOrder(t.EntryOrder);
+                    }
+                    catch (Exception ex) { Print($"[HelmAuto] OCO cancel threw for {t.ExecTag}: {ex.Message}"); }
+                    Print($"[HelmAuto] {why} for OCO {t.ExecTag}; cancelled unfilled entry");
+                    PostExec(t.SignalTs, "cancelled", t.ExecTag, null, null, dryRun: false, note: why);
+                    done.Add(t.ExecTag);
+                }
+                return;
+            }
+
+            // Filled then flat -> one OCO leg filled and the sibling auto-cancelled.
+            // Recompute the session realized from the strategy's cumulative managed
+            // P&L (DELTA, not re-add, so multiple OCO trades don't double-count).
+            // Best-effort for the daily-loss cutoff only; the auditor is ground
+            // truth for the dashboard's realized P&L.
+            if (pos == MarketPosition.Flat && t.ExitsPlaced)
+            {
+                try
+                {
+                    double cum = SystemPerformance.AllTrades.TradesPerformance.Currency.CumProfit;
+                    sessionRealized = cum;
+                }
+                catch { /* realized tally is best-effort; the auditor is ground truth */ }
+                Print($"[HelmAuto] OCO closed for {t.ExecTag} (flat); session realized {sessionRealized:0.00}");
+                done.Add(t.ExecTag);
+            }
         }
 
         // =================================================================
@@ -630,6 +808,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                     LimitPrice  = Num(m, "limit_price"),
                     AtmStrategy = Str(m, "atm_strategy"),
                     Qty         = (int)Num(m, "qty"),
+                    Stop        = Num(m, "stop"),
+                    Target      = Num(m, "target"),
                     ExpiresAt   = Num(m, "expires_at"),
                 });
             }

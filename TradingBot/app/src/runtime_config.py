@@ -38,6 +38,10 @@ class Defaults:
     reconciliation_cap: int = 3
     stale_bar_seconds:  int = 120
     retention_days:     int = 7
+    # Auto-Trader (Item 1A/1B). ATM is OPTIONAL by default: a blank-ATM
+    # directional proposal is accepted when it carries valid stop/target.
+    require_atm_for_directional: bool = False
+    default_qty:                 int  = 1
 
 
 _D = Defaults()
@@ -182,3 +186,16 @@ def stale_bar_seconds() -> int:
 def retention_days() -> int:
     s = _live()
     return s.strategy.retention_days if s else _D.retention_days
+
+
+def require_atm_for_directional() -> bool:
+    """Whether a directional proposal must name an ATM template (Item 1A). When
+    False (default) ATM is optional and the LLM's own stop/target are trusted.
+    Read live per-call so the toggle takes effect with no restart."""
+    s = _live()
+    return s.auto_trader.require_atm_for_directional if s else _D.require_atm_for_directional
+
+
+def default_qty() -> int:
+    s = _live()
+    return s.auto_trader.default_qty if s else _D.default_qty

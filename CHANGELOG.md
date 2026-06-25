@@ -4,6 +4,67 @@ All notable changes are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses
 [Semantic Versioning](VERSIONING.md).
 
+## [2.0.0] - 2026-06-18
+
+> 2nd major version. BREAKING on several settings-shape axes -- see
+> [MIGRATION-2.0.0.md](MIGRATION-2.0.0.md). Build + tag `v2.0.0-beta.N` on
+> `beta`, validate on Sim/Playback, then merge `beta` -> `main` and tag
+> `v2.0.0`. The in-app updater tracks `origin/main` only; do NOT click it while
+> the checkout is on `beta`.
+
+### Added
+- **ATM is now OPTIONAL on directional proposals (Item 1A).** New
+  `auto_trader.require_atm_for_directional` toggle (default `False` = ATM
+  optional). With ATM absent, the LLM's own numeric stop/target are trusted
+  (validated side-of-entry, tick-snapped, RR recomputed; 1:2 tick fallback if
+  invalid). Both prompts (`analyzer.txt`, `headless_analyzer.txt`) relaxed to
+  parity, still enforcing >= 2:1.
+- **ATM-less auto-execution OCO path (Item 1B).** `HelmAutoTrader.cs` places a
+  bare managed LIMIT entry plus a StopMarket + Limit OCO bracket (same
+  `fromEntrySignal`) for blank-ATM signals; the named-ATM `AtmStrategyCreate`
+  path is unchanged. Queue payload now carries `stop`/`target`.
+- **Per-account trading config (Item 3).** New top-level `account_configs` map
+  keyed by NT account id (secret-free), rendered as a card on the Strategy tab
+  for LIVE + EVAL accounts only. Holds friendly name, risk-per-trade
+  (percent|price), max daily loss, max concurrent/instrument, max
+  contracts/instrument, stop-if-below, and a user-entered trailing-DD limit.
+  Live cash + server-computed trailing-DD high-water-mark readout via
+  `GET /api/account-configs/live`.
+- **Per-trade risk sizing.** ATM-less order qty is computed from the per-account
+  config (% of live cash | fixed $) using `instruments.json` tick_value, clamped
+  to the per-account contract cap; falls back to `proposal.qty` ->
+  `auto_trader.default_qty` (new) -> 1.
+- **User-configurable news sources (Item 7).** New `news.sources` list
+  ({name, url, type[xml|scrape|ai-extract], enabled}) with per-source parsing
+  adapters; editable on the News tab. Seeded from the legacy booleans.
+
+### Changed
+- **Auto-Trader enforces per-account guardrails (Item 4).** Per-account values
+  override the matching global `auto_trader` fields via `effective_guardrails`;
+  the global fields remain the default and the SOLE source for Sim accounts.
+  `max_concurrent_per_instrument > 1` allows up to N open trades on an instrument
+  (default 1 preserves today's lock).
+- **Merged the Auto-Trader + Automation settings tabs (Item 6)** into one
+  "Auto-Trader & Automation" tab; both feature sets intact, no settings-shape
+  change. Global Auto-Trader limits relabeled as "defaults".
+
+### Removed
+- **Old manual drawdown tracker (Item 5).** Deleted `DrawdownConfig`,
+  `accounts.drawdowns`, `drawdown.py` (+ its `/api/drawdown/accounts` route),
+  the Accounts-tab Drawdown block, and the Home/Trade-Performance `DrawdownsCard`.
+  Replaced by Item 3's single user-entered trailing-DD limit with
+  server-computed HWM tracking. A stale `drawdowns` key in an existing
+  settings.json loads without error and is dropped on next save.
+
+### Migration notes
+- Every new field has a Pydantic default; a missing/old settings.json loads
+  unchanged except the intentionally-dropped `accounts.drawdowns`.
+- `news.forexfactory_enabled` / `econoday_enabled` stay READABLE through 2.0.x
+  for rollback (UI writes only `sources`); dropped in a later minor.
+- Trailing-DD intent is NOT lost: it moved to
+  `account_configs[id].trailing_dd_limit` (system-tracked HWM), so old
+  multi-field drawdown configs are NOT field-migrated.
+
 ## [1.1.4] - 2026-06-16
 
 ### Changed

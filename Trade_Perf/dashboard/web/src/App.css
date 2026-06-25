@@ -49,11 +49,24 @@ body {
 
 header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 16px;
   margin-bottom: 24px;
   border-bottom: 1px solid var(--border);
   padding-bottom: 16px;
+}
+
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-mark {
+  width: 28px;
+  height: 28px;
+  color: var(--text);
+  flex: none;
 }
 
 header h1 {
@@ -280,6 +293,195 @@ tr.pending-suggestion td {
 .app > .card,
 .app > .grid {
   margin-bottom: 16px;
+}
+
+/* ---------- Trade journal ---------- */
+
+.journal-btn {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 7px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.journal-btn:hover { border-color: var(--accent); }
+.journal-btn.has-entry { border-color: var(--accent); }
+
+tr.journal-detail > td {
+  background: rgba(88, 166, 255, 0.04);
+  border-top: 1px solid var(--border);
+}
+
+.journal-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 4px;
+  max-width: 720px;
+}
+
+.journal-snap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.journal-notes {
+  width: 100%;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font: inherit;
+  resize: vertical;
+}
+
+.journal-notes:focus { outline: none; border-color: var(--accent); }
+
+.journal-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.journal-label {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.journal-rating { display: flex; gap: 4px; }
+
+.rating-pip {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--muted);
+  border-radius: 4px;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.rating-pip.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #04121f;
+  font-weight: 700;
+}
+
+.journal-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+.journal-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(88, 166, 255, 0.12);
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  padding: 1px 4px 1px 9px;
+  font-size: 12px;
+}
+
+.journal-tag button {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.journal-tag-input {
+  flex: 1;
+  min-width: 120px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font: inherit;
+}
+
+.journal-tag-input:focus { outline: none; border-color: var(--accent); }
+
+.journal-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.btn-danger {
+  border-color: var(--neg) !important;
+  color: var(--neg);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--muted);
+}
+
+.journal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.journal-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 14px 10px;
+}
+
+.journal-meta { font-size: 11px; }
+
+.journal-shot-link { display: block; line-height: 0; }
+
+.journal-shot {
+  max-width: 100%;
+  max-height: 320px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  object-fit: contain;
+}
+
+.journal-shot-link:hover .journal-shot { border-color: var(--accent); }
+
+/* ---------- Compliance badge ---------- */
+
+.compliance-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.compliance-badge.ok {
+  color: var(--pos);
+  background: rgba(63, 185, 80, 0.15);
+  border: 1px solid var(--pos);
+}
+
+.compliance-badge.bad {
+  color: var(--neg);
+  background: rgba(248, 81, 73, 0.15);
+  border: 1px solid var(--neg);
 }
 
 /* ---------- Session calendar ---------- */

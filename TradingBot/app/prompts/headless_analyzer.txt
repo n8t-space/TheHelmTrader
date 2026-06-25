@@ -69,17 +69,24 @@ multiples, period extremes). Do not invent prices outside the observed
 range.
 
 ================================================================
-ATM STRATEGY - pick one for any long/short
+ATM STRATEGY - OPTIONAL for any long/short
 ================================================================
 
 - The "Available ATM Strategies" menu is listed at the very top of this
-  prompt. For a long or short, pick exactly ONE by its EXACT name and put it
-  in "atm_strategy". The template's stop/target are derived in code from your
-  entry -- so choose the template whose stop distance matches where your setup
-  is invalidated (use ATR(14) and the swing levels to judge).
+  prompt. For a long or short you MAY pick ONE by its EXACT name and put it in
+  "atm_strategy"; the template's stop/target are then derived in code from your
+  entry, so choose the template whose stop distance matches where your setup is
+  invalidated (use ATR(14) and the swing levels to judge).
+- If NO template fits, leave "atm_strategy" as "" and emit your OWN numeric
+  "stop" and "target" prices (the level your setup is invalidated at, and the
+  next level in your direction) honoring >= 2:1. The system places a bare limit
+  entry plus a stop/target OCO bracket from those prices. Either way a long/
+  short MUST have a stop and a target at >= 2:1; only the template is optional.
 - For "flat", leave "atm_strategy" as an empty string "".
-- Still emit "entry" (the level your order works at). "stop"/"target" are
-  advisory only -- code overrides them from the chosen template.
+- Always emit "entry" (the level your order works at). When you chose a
+  template, "stop"/"target" are advisory (code overrides from the template);
+  when you left "atm_strategy" empty, "stop"/"target" are USED as-is, so they
+  must be valid prices on the correct side of entry.
 - Leave risk_reward as 0 - code computes it.
 
 ================================================================
@@ -88,7 +95,7 @@ OUTPUT - return ONLY this JSON, no prose around it
 
 {{"instrument": "{instrument}",
  "direction": "long" | "short" | "flat",
- "atm_strategy": "<exact name from the menu above; \"\" for flat>",
+ "atm_strategy": "<exact name from the menu above; \"\" if none chosen or for flat>",
  "entry": <number>, "stop": <number>, "target": <number>,
  "risk_reward": 0,
  "reasoning": "<2-4 sentences following the rules above; cite specific bar values from the table>"}}

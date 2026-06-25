@@ -166,6 +166,57 @@ export function fetchTaxEstimate(year?: number): Promise<TaxEstimateResp> {
   return fetchJSON<TaxEstimateResp>(`/api/tax-estimate${year ? `?year=${year}` : ''}`)
 }
 
+export interface MicroscalpAccount {
+  account: string
+  is_eval: boolean
+  trades: number
+  scalp_trades: number
+  scalp_trade_pct: number
+  gross_profit: number
+  scalp_gross_profit: number
+  scalp_pnl_pct: number
+  compliant: boolean
+}
+
+export interface MicroscalpResp {
+  scalp_seconds: number
+  max_pct: number
+  accounts: MicroscalpAccount[]
+  note: string
+}
+
+// Per-trade journal. Closed set mirrors journal.py MOODS (minus the "" unset).
+export const JOURNAL_MOODS = [
+  'calm', 'focused', 'anxious', 'fomo', 'frustrated',
+  'greedy', 'confident', 'bored', 'revenge',
+] as const
+
+export interface JournalSnapshot {
+  symbol: string
+  account: string
+  direction: string
+  net_pnl: number
+  entry_time: string
+  exit_time: string
+  atm: string
+  entry_price: number
+  exit_price: number
+}
+
+export interface JournalEntry {
+  trade_key: string
+  notes: string
+  discipline: number | null
+  mood: string
+  tags: string[]
+  snapshot: JournalSnapshot
+  updated_at: string
+}
+
+export interface JournalListResp {
+  entries: JournalEntry[]
+}
+
 export interface TradeFill {
   time: string
   qty: number
@@ -508,58 +559,52 @@ export interface SettingsStrategy {
   stale_bar_seconds: number
 }
 
-export interface DrawdownConfig {
-  starting_balance: number
-  trailing_drawdown: number
-  daily_drawdown: number
-  profit_target: number
-}
-
 export interface SettingsAccounts {
   live: string[]
   evals: string[]
   simulation: string[]
-  // Per-account drawdown config, keyed by NT account ID. Only accounts listed
-  // here show up in the Drawdown card on Home + the augmented by_account row
-  // on Trade Performance.
-  drawdowns: Record<string, DrawdownConfig>
   // Friendly display names keyed by NT account ID (display-only).
   names: Record<string, string>
+}
+
+// Per-account trading config (Item 3), keyed by NT account id in
+// SettingsDoc.account_configs. Rendered as a card for LIVE + EVAL accounts only;
+// Sim accounts have no card and fall back to the global auto_trader defaults.
+export interface AccountConfig {
+  name: string
+  // User-entered base cash ("cash now" as of cash_basis_ts, stamped server-side).
+  // Current cash = base_cash + realized P&L of trades closed after the basis.
+  base_cash: number
+  // UTC ISO stamp of when base_cash was saved (server-managed; read-only here).
+  cash_basis_ts: string
+  risk_per_trade_value: number
+  risk_per_trade_mode: 'percent' | 'price'
+  max_daily_loss: number
+  max_concurrent_per_instrument: number
+  max_contracts_per_instrument: number
+  stop_if_balance_below: number
+  // User-entered trailing max-drawdown limit ($); tracked vs a server-computed HWM.
+  trailing_dd_limit: number
+}
+
+// Live readout for an account-config card (GET /api/account-configs/live).
+export interface AccountConfigLive {
+  account: string
+  // Computed current cash = base_cash + realized_since (null when no basis set).
+  cash: number | null
+  base_cash: number
+  cash_basis_ts: string
+  realized_since: number
+  high_water_mark: number | null
+  trailing_dd_used: number | null
+  trailing_dd_limit: number
+  dd_breached: boolean
 }
 
 /** Friendly display name for an account ID, or the raw ID if none is set. */
 export function accountLabel(id: string, names?: Record<string, string>): string {
   const n = names?.[id]?.trim()
   return n ? n : id
-}
-
-export interface DrawdownState {
-  account: string
-  starting_balance: number
-  current_balance: number
-  peak_balance: number
-  realized_pnl_total: number
-  today_pnl: number
-  trailing_drawdown: number
-  trailing_dd_used: number
-  trailing_dd_left: number
-  daily_drawdown: number
-  daily_dd_used: number
-  daily_dd_left: number
-  profit_target: number
-  profit_target_left: number
-  profit_target_hit: boolean
-  trade_count: number
-  trailing_status: 'ok' | 'warn' | 'breach'
-  daily_status:    'ok' | 'warn' | 'breach'
-  status:          'ok' | 'warn' | 'breach'
-}
-
-export interface DrawdownResp {
-  accounts: DrawdownState[]
-  warn_threshold: number
-  tz: string
-  error?: string
 }
 
 export interface ModelsResp {
@@ -569,47 +614,21 @@ export interface ModelsResp {
   error?:   string
 }
 
-export interface AtmXmlTrailStep {
-  profit_trigger_ticks: number | null
-  frequency_ticks:      number | null
-  stop_loss_ticks:      number | null
-}
-
-// Bracket as parsed from the NT8 ATM XML template file (Settings -> Strategy
-// "Existing ATM Strategies" block). Distinct from AtmBracket above, which is
-// the bot's runtime per-bracket plan stored on a Signal/Proposal.
-export interface AtmXmlBracket {
-  quantity:                 number | null
-  stop_loss_ticks:          number | null
-  target_ticks:             number | null
-  stop_strategy_template:   string | null
-  break_even_offset_ticks:  number | null
-  break_even_trigger_ticks: number | null
-  trail_steps:              AtmXmlTrailStep[]
-}
-
-export interface AtmStrategy {
+// A user-configurable economic-calendar source (Item 7).
+export interface NewsSource {
   name: string
-  bracket_count?: number
-  total_qty?: number
-  stop_ticks_min?: number
-  target_ticks_max?: number
-  has_stop_strategy?: boolean
-  brackets?: AtmXmlBracket[]
-}
-
-export interface AtmStrategiesResp {
-  templates_dir: string
-  exists: boolean
-  count?: number
-  strategies: AtmStrategy[]
-  warning?: string
+  url: string
+  type: 'xml' | 'scrape' | 'ai-extract'
+  enabled: boolean
 }
 
 export interface SettingsNews {
   enabled: boolean
+  // DEPRECATED (2.0.0): superseded by `sources`; kept readable for the 2.0.x
+  // rollback window. The UI writes only `sources` going forward.
   forexfactory_enabled: boolean
   econoday_enabled: boolean
+  sources: NewsSource[]
   impact_filter: string[]
   currency_filter: string[]
   refresh_interval_minutes: number
@@ -624,6 +643,7 @@ export interface SettingsAutoTrader {
   min_account_balance: number
   poll_seconds: number
   entry_window_minutes: number
+  capture_entry_screenshot: boolean
 }
 
 export interface SettingsAuditor {
@@ -664,6 +684,11 @@ export interface SettingsDoc {
   ai_backend: SettingsAiBackend
   strategy: SettingsStrategy
   accounts: SettingsAccounts
+  account_configs: Record<string, AccountConfig>
+  // User-entered commission ($/contract per side, NT8 commission-template
+  // style) keyed by master instrument symbol (e.g. "MES"). When > 0 it
+  // overrides the NT8-reported commission in P&L; 0/absent keeps the fills'.
+  commissions: Record<string, number>
   news: SettingsNews
   auto_trader: SettingsAutoTrader
   auditor: SettingsAuditor

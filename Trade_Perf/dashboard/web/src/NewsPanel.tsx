@@ -7,7 +7,7 @@ interface NewsEvent {
   currency: string
   impact: 'High' | 'Medium' | 'Low'
   title: string
-  source: 'forexfactory' | 'econoday'
+  source: string
   sources?: string[]
   forecast?: string | null
   previous?: string | null
@@ -90,8 +90,6 @@ export function NewsCard() {
   }
 
   const d = q.data
-  const ff = d.sources.forexfactory
-  const ed = d.sources.econoday
 
   return (
     <div className="card news-card">
@@ -112,7 +110,7 @@ export function NewsCard() {
         </div>
       </div>
 
-      <NewsSourceBar ff={ff} ed={ed} aiRequired={d.ai_required} aiOk={d.ai_ok} aiError={d.ai_error} />
+      <NewsSourceBar sources={d.sources} aiRequired={d.ai_required} aiOk={d.ai_ok} aiError={d.ai_error} />
 
       {d.events.length === 0 ? (
         <div className="news-empty subtle">
@@ -153,34 +151,20 @@ export function NewsCard() {
   )
 }
 
-function NewsSourceBar({ ff, ed, aiRequired, aiOk, aiError }: {
-  ff?: SourceState
-  ed?: SourceState
+function NewsSourceBar({ sources, aiRequired, aiOk, aiError }: {
+  sources: Record<string, SourceState>
   aiRequired: boolean
   aiOk: boolean
   aiError: string | null
 }) {
-  const items: Array<{ label: string; ok: boolean; detail: string }> = []
-  if (ff) items.push({
-    label: 'ForexFactory',
-    ok: ff.ok,
-    detail: ff.ok ? `${ff.count} events` : (ff.error || 'unavailable'),
-  })
-  if (ed) {
-    if (aiRequired && !aiOk) {
-      items.push({
-        label: 'Econoday',
-        ok: false,
-        detail: 'Configure AI to enable',
-      })
-    } else {
-      items.push({
-        label: 'Econoday',
-        ok: ed.ok,
-        detail: ed.ok ? `${ed.count} events` : (ed.error || 'unavailable'),
-      })
-    }
-  }
+  // One chip per configured source (Item 7), keyed by the source name the
+  // backend status map uses.
+  const items: Array<{ label: string; ok: boolean; detail: string }> =
+    Object.entries(sources).map(([name, st]) => ({
+      label: name,
+      ok: st.ok,
+      detail: st.ok ? `${st.count} events` : (st.error || 'unavailable'),
+    }))
   return (
     <div className="news-sources">
       {items.map((it) => (

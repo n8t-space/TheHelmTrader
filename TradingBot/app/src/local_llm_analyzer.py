@@ -392,6 +392,57 @@ def _filter_atm_for_instrument(strategies: list[dict], instrument: str | None) -
     return [s for s in strategies if _atm_root(s["name"]) == root]
 
 
+def _apply_llm_stop_target(proposal: dict, direction: str) -> bool:
+    """ATM-less path (Item 1A): trust the LLM's own numeric stop/target.
+
+    Validates entry/stop/target are numeric and on the correct side of entry
+    for the direction (long: stop < entry < target; short: stop > entry >
+    target), snaps all three to the instrument tick, and marks the proposal as
+    ATM-less (atm_strategy="", resolved=False, brackets=[], total_qty=1). The
+    outcome watcher + OCO path consume the resulting stop/target.
+
+    Returns True on success; False if the LLM values are missing/invalid (the
+    caller then falls back to the 1:2 tick default). _compute_rr recomputes RR
+    downstream regardless."""
+    try:
+        entry  = float(proposal["entry"])
+        stop   = float(proposal["stop"])
+        target = float(proposal["target"])
+    except (KeyError, TypeError, ValueError):
+        logger.warning("ATM-less proposal missing numeric entry/stop/target; "
+                       "falling back to 1:2 tick default")
+        return False
+
+    if direction == "long":
+        sides_ok = stop < entry < target
+    else:  # short
+        sides_ok = stop > entry > target
+    if not sides_ok:
+        logger.warning("ATM-less %s stop/target on wrong side of entry "
+                       "(entry=%s stop=%s target=%s); falling back to 1:2 default",
+                       direction, entry, stop, target)
+        return False
+
+    instrument = proposal.get("instrument", "")
+    tick_size, _ = instruments.lookup_tick_size(instrument, instruments.load_config())
+    if tick_size and tick_size > 0:
+        proposal["entry"]  = instruments.snap_to_tick(entry, tick_size)
+        proposal["stop"]   = instruments.snap_to_tick(stop, tick_size)
+        proposal["target"] = instruments.snap_to_tick(target, tick_size)
+    else:
+        logger.warning("No tick_size for %r; keeping unsnapped LLM stop/target", instrument)
+
+    proposal["atm_strategy"]          = ""
+    proposal["atm_strategy_resolved"] = False
+    proposal["atm_brackets"]          = []
+    proposal["atm_total_qty"]         = 1
+    proposal.pop("atm_stop_ticks", None)
+    proposal.pop("atm_target_ticks", None)
+    logger.info("ATM-less %s: kept LLM stop=%s target=%s (snapped to tick)",
+                direction, proposal["stop"], proposal["target"])
+    return True
+
+
 def _derive_stop_target(proposal: dict, strategies: list[dict]) -> None:
     """After the LLM picks an atm_strategy, fill in stop and target prices
     from the strategy's tick offsets + the entry + the direction + the
@@ -412,6 +463,17 @@ def _derive_stop_target(proposal: dict, strategies: list[dict]) -> None:
         return
 
     atm_name = proposal.get("atm_strategy")
+
+    # ATM-OPTIONAL path (Item 1A / D1): no template named AND the require-ATM
+    # kill-switch is off -> trust the LLM's own numeric stop/target instead of
+    # deriving from a template. Validate they are numeric and on the correct
+    # side of entry for the direction, snap to tick, and on any failure fall
+    # back to the 1:2 tick default + log. This trade executes via the OCO path.
+    if not str(atm_name or "").strip() and not runtime_config.require_atm_for_directional():
+        if _apply_llm_stop_target(proposal, direction):
+            return
+        # else: invalid LLM stop/target -> fall through to the 1:2 default below.
+
     # When the LLM picks an ATM, attach the full per-bracket plan so the
     # outcome resolver can run the trail state machine per leg and the
     # dashboard can show "TP1 + Runner" details. Single-bracket ATMs degrade

@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>The Helm - Master Operating Plan</title>
+<style>
+  :root {
+    --black: #000000;
+    --red: #C8102E;
+    --white: #FFFFFF;
+    --gray: #555555;
+    --light: #f4f4f4;
+    --border: #cccccc;
+  }
+  @page {
+    size: letter;
+    margin: 22mm 18mm 20mm 18mm;
+    @bottom-center {
+      content: "The Helm - Master Operating Plan  |  Confidential  |  Page " counter(page);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", Arial, Helvetica, sans-serif;
+    color: var(--black);
+    font-size: 10.5pt;
+    line-height: 1.5;
+    margin: 0;
+  }
+  /* ---- Cover ---- */
+  .cover {
+    height: 245mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    page-break-after: always;
+  }
+  .cover h1 {
+    font-size: 40pt;
+    font-weight: 800;
+    letter-spacing: 1px;
+    margin: 0;
+    color: var(--black);
+  }
+  .cover .rule {
+    width: 70%;
+    height: 6px;
+    background: var(--red);
+    margin: 14px 0 26px 0;
+  }
+  .cover .sub { font-size: 15pt; color: var(--gray); margin: 2px 0; }
+  .cover .meta { margin-top: 40px; font-size: 12pt; color: var(--gray); }
+  .cover .ver { margin-top: 28px; font-size: 11pt; color: var(--gray); }
+  .cover .brand { margin-top: 60px; font-size: 11pt; letter-spacing: 2px; color: var(--red); font-weight: 700; }
+
+  /* ---- Sections ---- */
+  h2 {
+    font-size: 17pt;
+    color: var(--black);
+    border-bottom: 3px solid var(--red);
+    padding-bottom: 6px;
+    margin: 26px 0 14px 0;
+    page-break-after: avoid;
+  }
+  h3 {
+    font-size: 12pt;
+    color: var(--black);
+    margin: 18px 0 6px 0;
+    page-break-after: avoid;
+  }
+  .section { page-break-before: always; }
+  p { margin: 8px 0; }
+  ul { margin: 6px 0 6px 0; padding-left: 20px; }
+  li { margin: 3px 0; }
+  strong { color: var(--black); }
+  code {
+    font-family: Consolas, "Courier New", monospace;
+    background: var(--light);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 9.5pt;
+  }
+
+  /* ---- Tables ---- */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 9.5pt;
+    page-break-inside: avoid;
+  }
+  th {
+    background: var(--black);
+    color: var(--white);
+    text-align: left;
+    padding: 7px 9px;
+    font-weight: 600;
+  }
+  td {
+    border: 1px solid var(--border);
+    padding: 6px 9px;
+    vertical-align: top;
+  }
+  tr:nth-child(even) td { background: var(--light); }
+  .tag-mand { color: var(--red); font-weight: 700; white-space: nowrap; }
+  .tag-best { color: var(--gray); font-weight: 600; white-space: nowrap; }
+  .tag-auto { color: var(--black); font-weight: 600; white-space: nowrap; }
+  .num { width: 34px; color: var(--gray); text-align: center; }
+
+  .callout {
+    border-left: 4px solid var(--red);
+    background: var(--light);
+    padding: 10px 14px;
+    margin: 14px 0;
+  }
+  .note { color: var(--gray); font-style: italic; font-size: 9.5pt; }
+  .kpi { font-weight: 700; color: var(--red); }
+</style>
+</head>
+<body>
+
+<!-- ===================== COVER ===================== -->
+<div class="cover">
+  <h1>MASTER OPERATING PLAN</h1>
+  <div class="rule"></div>
+  <div class="sub">The Helm</div>
+  <div class="sub">Rules, Risk Framework &amp; Execution Standard</div>
+  <div class="meta">
+    Markets: Micro Futures (MES / MCL primary; MNQ, MGC, ES, CL supported)<br>
+    Timeframes: Intraday (5m / 15m / 30m / 1h) | Higher-TF Daily bias<br>
+    Execution: Local LLM-assisted proposals + opt-in per-signal auto-execution<br>
+    Operator: Single locked account
+  </div>
+  <div class="ver">Version 1.1.4 (production / main) | Effective Date: 2026-06-17</div>
+  <div class="brand">LODESTONE &amp; PURSER</div>
+</div>
+
+<!-- ===================== 1. PURPOSE ===================== -->
+<div class="section">
+<h2>1. Purpose &amp; Mission</h2>
+<p>This Operating Plan governs all trading activity conducted through The Helm. It documents the system's rules, risk parameters, and execution standards exactly as they are implemented in code -- not as aspirations. The plan exists to make the process auditable: every guardrail named here is enforced by software, and every default is conservative by design.</p>
+
+<h3>1.1 Mission</h3>
+<p>To convert chart context into disciplined, structured trade proposals using a local vision-LLM, and to execute only the proposals a human deliberately arms. The system never decides to trade on its own. Discipline is mechanical: a proposal that fails a sanity check is dismissed automatically, and execution is gated behind a master switch that defaults OFF.</p>
+
+<h3>1.2 The Helm Is a Filter, Not a Trigger</h3>
+<p>The Helm produces proposals continuously, but most are <strong>flat</strong> -- the correct call when evidence conflicts or price sits at equilibrium with no anchor. A flat proposal is a successful screening pass, not a failed analysis. The system is built to do nothing when the market offers no structured edge, and to surface only setups that clear a reward-to-risk floor and a price-sanity check.</p>
+<div class="callout">
+<strong>Design principle:</strong> The bot proposes; the human disposes. Auto-execution is opt-in, per-signal, single-account, and Sim-capable by default. No autonomous order placement exists anywhere in the system.
+</div>
+
+<h3>1.3 Current Phase</h3>
+<p>Production version <span class="kpi">1.1.4</span> on the <code>main</code> branch. Confidence scoring was removed in this generation; proposals are single-pass with no retry loop. The Auto-Trader (<code>HelmAutoTrader.cs</code>) is code-complete and account-locked, validated in Sim/Playback. The primary objective at this stage is process fidelity and signal-quality measurement, not P&amp;L maximization.</p>
+
+<h3>1.4 Plan Hierarchy</h3>
+<p>Where operator judgment conflicts with an enforced rule, the enforced rule governs -- the code will reject the action regardless. Configurable guardrails (daily-loss cutoff, balance floor, max concurrent) may be tuned in Settings, but tightening is always permitted and loosening is a deliberate, logged act.</p>
+</div>
+
+<!-- ===================== 2. CORE PARAMETERS ===================== -->
+<div class="section">
+<h2>2. Core Operating Parameters at a Glance</h2>
+<p>All values below are read from the live configuration (<code>~/.helm/settings.json</code>, <code>instruments.json</code>, and the Pydantic settings schema). Defaults are conservative; the operator may tighten any limit.</p>
+
+<table>
+<thead><tr><th style="width:30%">Parameter</th><th style="width:24%">Value</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><strong>Primary instruments</strong></td><td>MES, MCL</td><td>MNQ, MGC, ES, CL and ~20 others supported via <code>instruments.json</code></td></tr>
+<tr><td><strong>Auto-Trader account</strong></td><td>Single locked account</td><td>Enforced by both dashboard and strategy (defense-in-depth)</td></tr>
+<tr><td><strong>Master switch</strong></td><td>OFF (default)</td><td>Must be deliberately enabled; no autonomous execution</td></tr>
+<tr><td><strong>Max concurrent trades</strong></td><td>1 per instrument</td><td>Global ceiling via <code>max_concurrent</code> (default 1)</td></tr>
+<tr><td><strong>Max contracts / order</strong></td><td>2 (default)</td><td>Arm rejected (409) if ATM template size exceeds this</td></tr>
+<tr><td><strong>Minimum reward:risk</strong></td><td>2:1</td><td>Enforced in prompt; lower-RR ideas forced flat</td></tr>
+<tr><td><strong>Max price drift</strong></td><td>5%</td><td>Proposal auto-dismissed if entry/stop/target &gt;5% off market</td></tr>
+<tr><td><strong>Entry window</strong></td><td>240 min (4 hr)</td><td>Unfilled resting limit auto-cancels; disarm 60s before expiry</td></tr>
+<tr><td><strong>Daily loss cutoff</strong></td><td>$0 = off (default)</td><td>When set &amp; hit: new entries blocked, signals disarmed (positions held)</td></tr>
+<tr><td><strong>Min account balance</strong></td><td>$0 = off (default)</td><td>When breached: master switch forced OFF (passive, no flatten)</td></tr>
+<tr><td><strong>Trading-day roll</strong></td><td>5:00 PM CT</td><td>CME Globex session boundary; all "today" aggregates use it</td></tr>
+<tr><td><strong>Stale-bar threshold</strong></td><td>120 seconds</td><td>Older bars skipped; first bar after 30+ min gap skipped</td></tr>
+<tr><td><strong>Auto-Trader poll</strong></td><td>3 seconds (default)</td><td>Frequency of <code>/api/exec/queue</code> checks</td></tr>
+<tr><td><strong>Signal retention</strong></td><td>7 days (default)</td><td>Old feed bars/signals pruned after this</td></tr>
+</tbody>
+</table>
+
+<div class="callout">
+<strong>Position sizing:</strong> The Helm has <em>no</em> automatic contract-sizing formula. Quantity is fixed by the selected ATM template's bracket definition. Risk per trade is therefore governed by (template stop distance x instrument point value x leg quantity), and capped at the order level by <code>max_contracts_per_order</code>. The operator sizes risk by choosing the template.
+</div>
+</div>
+
+<!-- ===================== 3. RISK RULES ===================== -->
+<div class="section">
+<h2>3. Risk Management Rules</h2>
+<p>Risk management is enforced in code, not by convention. A proposal or order that violates a MANDATORY rule below is rejected by the system regardless of how attractive the setup looks.</p>
+
+<table>
+<thead><tr><th class="num">#</th><th style="width:23%">Rule</th><th>Description</th><th style="width:14%">Category</th></tr></thead>
+<tbody>
+<tr><td class="num">01</td><td><strong>2:1 reward:risk floor</strong></td><td>Every directional proposal must clear a 2:1 reward-to-risk ratio. If no ATM template satisfies it given the reasoned stop, the proposal is forced flat.</td><td class="tag-mand">MANDATORY</td></tr>
+<tr><td class="num">02</td><td><strong>Price-drift sanity</strong></td><td>Entry, stop, and target must each sit within 5% of current market price. Any drift beyond that auto-dismisses the proposal with a logged reason (<code>MAX_PRICE_DRIFT = 0.05</code>).</td><td class="tag-mand">MANDATORY</td></tr>
+<tr><td class="num">03</td><td><strong>ATM template required</strong></td><td>A directional proposal with a blank <code>atm_strategy</code> field is auto-dismissed. Stop/target prices are derived from the template's tick offsets, never invented by the LLM.</td><td class="tag-mand">MANDATORY</td></tr>
+<tr><td class="num">04</td><td><strong>Max 1 trade / instrument</strong></td><td>An instrument with an open or pending trade blocks all new signals for that instrument across every timeframe. Scale-out runner legs must all be closed before it frees.</td><td class="tag-mand">MANDATORY</td></tr>
+<tr><td class="num">05</td><td><strong>Global concurrency cap</strong></td><td><code>max_concurrent</code> caps total simultaneous instruments. Example: cap 2 allows one MES and one MCL trade at once, no more.</td><td class="tag-mand">MANDATORY</td></tr>
+<tr><td class="num">06</td><td><strong>Contract ceiling</strong></td><td>Arm is rejected (409 Conflict) if the template's total quantity exceeds <code>max_contracts_per_order</code> (default 2). Micro contracts only at current account scale.</td><td class="tag-mand">MANDATORY</td></tr>
+<tr><td class="num">07</td><td><strong>Daily loss cutoff</strong></td><td>When configured and session realized P&amp;L &le; -cutoff: auto-trader forced OFF, new entries blocked, remaining signals disarmed. Open positions are <em>not</em> force-flattened (fail-safe is passive).</td><td class="tag-mand">MANDATORY</td></tr>
+<tr><td class="num">08</td><td><strong>Minimum balance floor</strong></td><td>When live equity &le; <code>min_account_balance</code>: master switch forced OFF; strategy refuses to run.</td><td class="tag-mand">MANDATORY</td></tr>
+<tr><td class="num">09</td><td><strong>Account lock</strong></td><td>All auto-execution targets one operator-selected account. <code>HelmAutoTrader.cs</code> refuses to run if <code>Account.Name</code> does not match the locked account.</td><td class="tag-mand">MANDATORY</td></tr>
+<tr><td class="num">10</td><td><strong>Prop-firm drawdown tracking</strong></td><td>Optional per-account trailing / daily drawdown and profit-target tracking, color-coded OK / WARN (75%) / BREACH. Informational halt signal; not an auto-flatten.</td><td class="tag-auto">OPTIONAL</td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- ===================== 4. ENTRY RULES ===================== -->
+<div class="section">
+<h2>4. Trade Entry Rules</h2>
+<p>Entries are generated by a vision-LLM reading authoritative market context. The prompt enforces a four-step decision process; a proposal that cannot satisfy every step resolves to flat.</p>
+
+<table>
+<thead><tr><th class="num">#</th><th style="width:23%">Rule</th><th>Description</th><th style="width:14%">Category</th></tr></thead>
+<tbody>
+<tr><td class="num">01</td><td><strong>Direction first, no long-bias</strong></td><td>Bullish requires HH/HL + price above MA + BOS; bearish requires LH/LL + price below MA + CHoCH. Conflicting evidence or equilibrium with no anchor resolves to <strong>flat</strong>.</td><td class="tag-mand">MANDATORY</td></tr>
+<tr><td class="num">02</td><td><strong>Premium / discount location</strong></td><td>Buy only in the discount half (below range equilibrium); sell only in the premium half. Equilibrium with no nearby level forces flat.</td><td class="tag-mand">MANDATORY</td></tr>
+<tr><td class="num">03</td><td><strong>Institutional resting entry</strong></td><td>Entry is a resting limit at an order block / sweep retrace / breakout retest -- away from last price. It may never fill if price does not return.</td><td class="tag-mand">MANDATORY</td></tr>
+<tr><td class="num">04</td><td><strong>Structure-anchored stop &amp; target</strong></td><td>Stop sits just beyond the invalidation zone (~0.4-0.6x ATR buffer past the swing); target is the next liquidity pool. Template tick offsets must reconcile with this.</td><td class="tag-mand">MANDATORY</td></tr>
+<tr><td class="num">05</td><td><strong>Authoritative context is truth</strong></td><td>The LLM must use the numeric context block (bid/ask, multi-TF OHLC, EMA-90, ATR-14, Donchian, floor pivots, 3-lens BOS/CHoCH) as ground truth -- not re-read pixels off the chart.</td><td class="tag-mand">MANDATORY</td></tr>
+<tr><td class="num">06</td><td><strong>HTF alignment</strong></td><td>Higher-timeframe structure (30m / 1h / daily) is supplied in every context block; counter-trend entries must be justified against it.</td><td class="tag-mand">MANDATORY</td></tr>
+<tr><td class="num">07</td><td><strong>Stale / post-gap guard</strong></td><td>Auto-analysis skips bars older than 120s and skips the first bar after a 30+ minute gap (avoids chaotic session opens). Minimum 20 bars of history required.</td><td class="tag-mand">MANDATORY</td></tr>
+<tr><td class="num">08</td><td><strong>Active-trade gate</strong></td><td>Headless analysis skips any instrument that already has an open/pending trade, preventing signal stacking.</td><td class="tag-mand">MANDATORY</td></tr>
+<tr><td class="num">09</td><td><strong>Single-pass, no confidence floor</strong></td><td>As of v1.1.4 there is no confidence threshold or retry loop. Every proposal -- flat or directional -- lands unless it fails a sanity check.</td><td class="tag-auto">CURRENT</td></tr>
+</tbody>
+</table>
+
+<h3>4.1 Two Entry Paths</h3>
+<p><strong>Manual (hotkey):</strong> Operator presses Ctrl+Shift+F on a focused NinjaTrader chart. HelmFeed captures a cropped screenshot plus rich context and POSTs to <code>/api/capture-from-nt</code>; a proposal card appears on the Signal Analysis page within ~1s (warm) to ~30s (cold).</p>
+<p><strong>Automated (headless, bar-driven):</strong> Up to 4 (Instrument, Period) slots configured on Home. Each live bar close publishes to <code>/api/feed/bar</code>; if all gates pass (provider configured, no open trade, &ge;20 bars, fresh bar, no recent gap) the analyzer fires automatically.</p>
+</div>
+
+<!-- ===================== 5. ATM / BRACKETS ===================== -->
+<div class="section">
+<h2>5. ATM Templates &amp; Bracket Structure</h2>
+<p>The Helm does not hardcode stop/target distances. It dynamically loads ATM templates from NinjaTrader's template folder on every analysis call and presents the matching ones as a scoped menu to the LLM. The template alone defines quantity, stop, target, breakeven, and trail behavior.</p>
+
+<h3>5.1 Naming Convention</h3>
+<p><code>{INSTRUMENT}_{STYLE}_{SIZE}c_{STOP}-{TARGET}</code> -- e.g. <code>MES_INTRA_2c_10-25</code> = MES, intraday, 2-contract scale-out, 10-tick stop, 25-tick target. Templates outside the convention or folder are invisible to the system.</p>
+
+<table>
+<thead><tr><th>Example template</th><th>Qty</th><th>Stop</th><th>Target</th><th>R:R</th><th>Use</th></tr></thead>
+<tbody>
+<tr><td><code>MES_SCALP_1c_6-15</code></td><td>1</td><td>6 t</td><td>15 t</td><td>2.5:1</td><td>Index scalp</td></tr>
+<tr><td><code>MES_INTRA_2c_10-25</code></td><td>2</td><td>10 t</td><td>25 t</td><td>2.5:1</td><td>Index intraday scale-out</td></tr>
+<tr><td><code>MCL_SCALP_1c_8-20</code></td><td>1</td><td>8 t</td><td>20 t</td><td>2.5:1</td><td>Crude scalp</td></tr>
+<tr><td><code>MCL_INTRA_2c_15-30</code></td><td>2</td><td>15 t</td><td>30 t</td><td>2:1</td><td>Crude intraday scale-out</td></tr>
+</tbody>
+</table>
+<p class="note">Templates are operator-defined and live in the NinjaTrader XML folder; the table above is representative, not exhaustive. The system adapts to whatever valid templates exist.</p>
+
+<h3>5.2 Scale-Out Legs</h3>
+<ul>
+<li><strong>TP1 (first bracket):</strong> tightest target, auto-breakeven at a profit trigger, plus trail steps.</li>
+<li><strong>Runner (second+ bracket):</strong> wider target, trails independently; stays open after TP1.</li>
+<li>Per-leg P&amp;L is computed independently; the aggregate outcome is final only when all legs close.</li>
+<li>Scale-out fills are stored at <code>signal.legs[]</code> (top level), not nested under outcome.</li>
+</ul>
+
+<h3>5.3 Trail Mechanics</h3>
+<ul>
+<li><strong>Auto-breakeven:</strong> at <code>AutoBreakEvenProfitTrigger</code> ticks of profit, stop moves to entry + <code>AutoBreakEvenPlus</code>.</li>
+<li><strong>Trail steps:</strong> at each <code>ProfitTrigger</code>, stop moves to current price minus <code>StopLoss</code> ticks.</li>
+<li>Trail is executed by NinjaTrader's ATM engine per-leg; The Helm reads the realized exit from NT8's SQLite.</li>
+</ul>
+
+<div class="callout">
+<strong>LLM's role is limited:</strong> it picks an exact template name from the scoped menu and supplies an entry price. Stop and target are derived from the template offsets + entry + direction. The LLM cannot invent a custom bracket.
+</div>
+</div>
+
+<!-- ===================== 6. EXIT RULES ===================== -->
+<div class="section">
+<h2>6. Trade Exit &amp; Outcome Resolution</h2>
+<p>Exits are managed by NinjaTrader's ATM engine; outcomes are resolved automatically by an independent tick-walk watcher and recorded against the real broker fills.</p>
+
+<table>
+<thead><tr><th class="num">#</th><th style="width:23%">Rule</th><th>Description</th><th style="width:14%">Category</th></tr></thead>
+<tbody>
+<tr><td class="num">01</td><td><strong>Stop is structural</strong></td><td>The stop is placed at the invalidation level at entry. ATM trail/breakeven only move it toward profit -- never wider.</td><td class="tag-mand">MANDATORY</td></tr>
+<tr><td class="num">02</td><td><strong>Scale at TP1</strong></td><td>First bracket exits at its target; remaining runner continues under trail or a wider target. Defined entirely by the chosen template.</td><td class="tag-best">BY TEMPLATE</td></tr>
+<tr><td class="num">03</td><td><strong>Trail the runner</strong></td><td>Runner trails per the template's <code>trail_steps[]</code>; breakeven and step logic are pre-defined before entry, never improvised mid-trade.</td><td class="tag-best">BY TEMPLATE</td></tr>
+<tr><td class="num">04</td><td><strong>Automatic outcome walk</strong></td><td><code>outcome_watcher.py</code> polls <code>feed.db</code> every 30s: did entry fill? then which hit first, target or stop? It stamps <code>outcome.result</code> = target / stop / breakeven / partial / no_fill.</td><td class="tag-auto">AUTOMATIC</td></tr>
+<tr><td class="num">05</td><td><strong>Entry/outcome invariant</strong></td><td>Code enforces <code>outcome=no_fill &hArr; entry_triggered=False</code>. Any other outcome implies the entry filled. Manual edits coerce the pair on every write.</td><td class="tag-mand">MANDATORY</td></tr>
+<tr><td class="num">06</td><td><strong>Entry window expiry</strong></td><td>Unfilled resting limit cancels after 240 min; the strategy disarms it 60s before expiry. Unfilled = <code>no_fill</code>.</td><td class="tag-mand">MANDATORY</td></tr>
+<tr><td class="num">07</td><td><strong>Ground-truth P&amp;L</strong></td><td>Realized P&amp;L is derived from actual NT8 fills in <code>trades.db</code> (recorded independently by <code>recorder.py</code>), not from a simulated estimate.</td><td class="tag-mand">MANDATORY</td></tr>
+<tr><td class="num">08</td><td><strong>Manual override</strong></td><td>The Signal Detail page exposes an outcome editor (result dropdown + optional closing price) for cases the watcher cannot resolve.</td><td class="tag-auto">OPERATOR</td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- ===================== 7. AUTO-EXECUTION ===================== -->
+<div class="section">
+<h2>7. Auto-Execution Standard</h2>
+<p>Auto-execution is the most safety-critical subsystem and is therefore the most heavily gated. It is opt-in at three independent levels and defaults fully OFF.</p>
+
+<h3>7.1 Three-Level Opt-In</h3>
+<ul>
+<li><strong>Global enable</strong> -- master switch in Settings, default <strong>OFF</strong>.</li>
+<li><strong>Account lock</strong> -- a single NT account ID; trades place only there, enforced by both dashboard and <code>HelmAutoTrader.cs</code>.</li>
+<li><strong>Per-signal arm</strong> -- the operator manually arms each proposal; only armed signals enter the execution queue.</li>
+</ul>
+
+<h3>7.2 Execution Flow</h3>
+<ul>
+<li>Operator arms a signal -&gt; <code>armed=True</code> on the locked account.</li>
+<li><code>HelmAutoTrader.cs</code> polls <code>/api/exec/queue?account=&lt;locked&gt;</code> every 3s; the queue returns only armed signals for instruments with no open trade, and only while the master switch is on and no fail-safe has tripped.</li>
+<li>Strategy places <code>AtmStrategyCreate(Limit@entry, template_name)</code>; quantity is fixed by the template.</li>
+<li>State machine advances <code>armed -&gt; working -&gt; filled</code>; <code>exec_tag</code> (<code>helm_&lt;ts&gt;</code>) links the proposal to the real fills.</li>
+</ul>
+
+<h3>7.3 Guardrails (all enforced)</h3>
+<table>
+<thead><tr><th style="width:34%">Guardrail</th><th>Behavior</th></tr></thead>
+<tbody>
+<tr><td>Dry-run mode (default ON)</td><td>Logs "WOULD place..." without touching the order book; flip OFF to go live</td></tr>
+<tr><td>Account lock</td><td>Strategy refuses to run on any account but the locked one</td></tr>
+<tr><td>Max concurrent</td><td>One open trade per instrument; checked before placing</td></tr>
+<tr><td>Contract ceiling</td><td>Arm rejected if template qty &gt; <code>max_contracts_per_order</code></td></tr>
+<tr><td>Entry window</td><td>240 min; cancel + disarm 60s before expiry</td></tr>
+<tr><td>Daily loss cutoff</td><td>Blocks new entries + disarms remaining signals when hit</td></tr>
+<tr><td>Min balance floor</td><td>Forces master switch OFF when breached (passive)</td></tr>
+<tr><td>Thread safety</td><td>ATM calls marshalled to the strategy thread via <code>TriggerCustomEvent</code></td></tr>
+</tbody>
+</table>
+
+<div class="callout">
+<strong>Forever rule:</strong> The Helm performs no autonomous execution. The human arms every signal explicitly; the strategy only places the named ATM template the human selected. The master switch always defaults OFF.
+</div>
+</div>
+
+<!-- ===================== 8. JOURNALING ===================== -->
+<div class="section">
+<h2>8. Signal &amp; Trade Journaling</h2>
+<p>Every proposal is persisted automatically -- journaling is not a manual chore but a property of the pipeline. The append-only record is the basis for measuring signal quality.</p>
+
+<h3>8.1 Captured Per Signal (<code>signals.jsonl</code>)</h3>
+<ul>
+<li>Timestamp (unix ns), instrument, direction, and the full proposal (entry / stop / target / ATM template).</li>
+<li>Cropped chart screenshot at capture (<code>screenshot_path</code>).</li>
+<li>Full authoritative market context block (multi-TF OHLC, EMA-90, ATR-14, Donchian, pivots, 3-lens BOS/CHoCH).</li>
+<li>Provider and model used (e.g. <code>qwen2.5vl:7b</code> via Ollama).</li>
+<li>Operator journal: verdict + free-text note.</li>
+<li>Outcome record (result, entry_triggered, entry_hit_ts) and scale-out <code>legs[]</code>.</li>
+<li>Execution record (state, placed_at, filled_at, exec_tag) once armed.</li>
+<li>Auto-dismissal flag + reason when a sanity check rejects a proposal.</li>
+</ul>
+
+<h3>8.2 Real Fills (<code>trades.db</code>)</h3>
+<p>Recorded independently from NinjaTrader's own SQLite by <code>recorder.py</code>: account, instrument, quantity, entry/exit fills, commissions, and real net P&amp;L. This is the ground truth the Trade Performance page and the outcome watcher rely on.</p>
+
+<h3>8.3 Storage &amp; Recovery</h3>
+<ul>
+<li><code>signals.jsonl</code> is append-only; updates append a new line with the same ts and the reader merges latest-wins.</li>
+<li>Soft-delete via a <code>deleted:true</code> line (recoverable by hand).</li>
+<li>Feed history (<code>feed.db</code>) auto-prunes after the retention window (default 7 days).</li>
+<li>Secrets never enter these files -- API keys and broker account IDs live only in git-ignored <code>~/.helm/credentials.json</code>.</li>
+</ul>
+</div>
+
+<!-- ===================== 9. REVIEW / METRICS ===================== -->
+<div class="section">
+<h2>9. Review &amp; Metrics</h2>
+<p>The dashboard surfaces the review metrics continuously rather than at a fixed meeting cadence. Review is the act of reading these against the trading-day boundary.</p>
+
+<h3>9.1 Pages</h3>
+<table>
+<thead><tr><th style="width:26%">Page</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><strong>Home</strong></td><td>Current CME-session snapshot, cumulative P&amp;L by bucket, action queue, drawdowns, economic calendar, auto-analysis status</td></tr>
+<tr><td><strong>Signal Analysis</strong></td><td>Filterable proposal table + signal detail (screenshot, reasoning, journal, outcome editor, arm/disarm)</td></tr>
+<tr><td><strong>Trade Performance</strong></td><td>Real round-trip trades, aggregate stats, equity curve, breakdowns by symbol / account / ATM template</td></tr>
+<tr><td><strong>Health</strong></td><td>API status, feed-latency percentiles, last 50 log lines</td></tr>
+<tr><td><strong>Settings</strong></td><td>AI backend, account bucketing, strategy thresholds, auto-trader controls, timezone, news filters, data-integrity auditor</td></tr>
+</tbody>
+</table>
+
+<h3>9.2 Metrics Tracked</h3>
+<ul>
+<li>Win rate and realized R per round-trip (from real fills).</li>
+<li>Realized P&amp;L aggregated to the CME trading-day boundary.</li>
+<li>Outcome distribution (target / stop / breakeven / partial / no_fill).</li>
+<li>Drawdown status vs. trailing / daily / profit-target limits (prop-firm tracking).</li>
+<li>Proposal volume vs. auto-dismissal rate (signal-quality proxy).</li>
+<li>Feed latency and service health.</li>
+</ul>
+
+<h3>9.3 Session Timing</h3>
+<ul>
+<li><strong>Trading-day roll:</strong> 5:00 PM CT (<code>ROLL_HOUR = 17</code>), converted to the operator timezone. All "today" filters use this, not calendar midnight.</li>
+<li><strong>Globex:</strong> 5:00 PM CT Sunday -&gt; 4:00 PM CT Friday, with a daily 4:15-5:00 PM CT maintenance halt that auto-analysis skips.</li>
+<li><strong>News context:</strong> high-impact USD events scoped to the current trading-day window, refreshed every 15 min (5-180 configurable).</li>
+</ul>
+</div>
+
+<!-- ===================== 10. UNIVERSE ===================== -->
+<div class="section">
+<h2>10. Trading Universe</h2>
+<p>The Helm trades micro futures via NinjaTrader. The instrument map in <code>instruments.json</code> is authoritative for tick size, point value, and commission.</p>
+
+<h3>10.1 Primary &amp; Secondary Instruments</h3>
+<table>
+<thead><tr><th>Contract</th><th>Name</th><th>Tick</th><th>Point Value</th><th>Comm/RT</th><th>Tier</th></tr></thead>
+<tbody>
+<tr><td><strong>MES</strong></td><td>Micro E-mini S&amp;P 500</td><td>0.25</td><td>$5.00</td><td>$1.10</td><td>Primary</td></tr>
+<tr><td><strong>MCL</strong></td><td>Micro Crude Oil</td><td>0.01</td><td>$100.00</td><td>$1.15</td><td>Primary</td></tr>
+<tr><td><strong>MNQ</strong></td><td>Micro E-mini Nasdaq-100</td><td>0.25</td><td>$2.00</td><td>$1.10</td><td>Primary</td></tr>
+<tr><td><strong>MGC</strong></td><td>Micro Gold</td><td>0.10</td><td>$10.00</td><td>$1.15</td><td>Secondary</td></tr>
+<tr><td>ES</td><td>E-mini S&amp;P 500</td><td>0.25</td><td>$50.00</td><td>$3.18</td><td>Supported</td></tr>
+<tr><td>CL</td><td>Crude Oil</td><td>0.01</td><td>$1,000.00</td><td>$6.00</td><td>Supported</td></tr>
+<tr><td>NQ</td><td>E-mini Nasdaq-100</td><td>0.25</td><td>$20.00</td><td>$3.18</td><td>Supported</td></tr>
+<tr><td>GC</td><td>Gold</td><td>0.10</td><td>$100.00</td><td>$5.00</td><td>Supported</td></tr>
+</tbody>
+</table>
+<p class="note">Additional supported symbols (YM, MYM, RTY, M2K, SI, HG, NG, ZB, ZN, 6E, 6B, 6J, 6A, BTC, MBT, ETH, etc.) carry full tick/point maps in <code>instruments.json</code>. Only micro contracts are intended at current account scale.</p>
+
+<h3>10.2 Timeframes</h3>
+<p>Auto-analysis slots target 5m and 15m execution timeframes; the context block always carries 5m / 15m / 30m / 1h / daily for higher-timeframe bias. Structure is read at three retrace-sensitivity lenses (50% / 100% / 200%).</p>
+</div>
+
+<!-- ===================== 11. ARCHITECTURE ===================== -->
+<div class="section">
+<h2>11. System Architecture</h2>
+
+<h3>11.1 Topology</h3>
+<ul>
+<li><strong>Trading host (GEEKOM):</strong> Windows 11; runs NinjaTrader 8, the FastAPI dashboard (uvicorn on 127.0.0.1:8000, loopback only), HelmFeed + HelmAutoTrader NinjaScript, and the recorder.</li>
+<li><strong>Inference backend (workstation, optional):</strong> Ubuntu 24.04, RTX 4060 Ti 16GB, Ollama on the LAN (UFW-restricted to the trading host). Default model <code>qwen2.5vl:7b</code> (Q4), fallback <code>minicpm-v</code>.</li>
+<li><strong>Service:</strong> uvicorn runs under an NSSM watchdog (<code>HelmDashboardWatchdog</code>) that auto-restarts on crash.</li>
+</ul>
+
+<h3>11.2 NinjaScript</h3>
+<ul>
+<li><strong>HelmFeed.cs</strong> -- single indicator on every analyzed chart. Publishes bars + ticks + screenshots, builds the context block, and serves the Ctrl+Shift+F hotkey path.</li>
+<li><strong>HelmAutoTrader.cs</strong> -- one strategy instance per instrument. Polls the exec queue, places account-locked ATM entries, reports live equity for the balance fail-safe.</li>
+</ul>
+
+<h3>11.3 Data Stores</h3>
+<table>
+<thead><tr><th style="width:24%">Store</th><th>Contents</th></tr></thead>
+<tbody>
+<tr><td><code>signals.jsonl</code></td><td>Append-only proposal log (proposal, context, journal, outcome, legs, exec)</td></tr>
+<tr><td><code>trades.db</code></td><td>Real NT8 fills mirror -- ground-truth P&amp;L</td></tr>
+<tr><td><code>feed.db</code></td><td>Live bars + ticks for context + staleness checks (auto-pruned)</td></tr>
+<tr><td><code>~/.helm/settings.json</code></td><td>Non-sensitive operator config (UI-writable)</td></tr>
+<tr><td><code>~/.helm/credentials.json</code></td><td>API keys + broker account IDs (git-ignored, never overwritten)</td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- ===================== 12. VERSIONING ===================== -->
+<div class="section">
+<h2>12. Versioning &amp; Change Control</h2>
+
+<h3>12.1 Semantic Versioning</h3>
+<ul>
+<li><strong>MAJOR</strong> -- breaking change to signal schema, settings shape, NS&hArr;bot API, or ATM template format.</li>
+<li><strong>MINOR</strong> -- backward-compatible feature (new router, new setting with default).</li>
+<li><strong>PATCH</strong> -- backward-compatible bug fix.</li>
+<li><strong>Pre-release</strong> -- <code>-beta.N</code>, never a production release.</li>
+</ul>
+
+<h3>12.2 Channels</h3>
+<table>
+<thead><tr><th>Channel</th><th>Branch</th><th>Tag</th><th>Auto-pull</th><th>Role</th></tr></thead>
+<tbody>
+<tr><td><strong>Production</strong></td><td><code>main</code></td><td><code>vX.Y.Z</code></td><td>Yes (version-check)</td><td>Running bot</td></tr>
+<tr><td><strong>Beta</strong></td><td><code>beta</code></td><td><code>vX.Y.Z-beta.N</code></td><td>No</td><td>Manual validation</td></tr>
+</tbody>
+</table>
+<p>Current production: <span class="kpi">1.1.4</span>. Never push unvalidated work to <code>main</code>; never run the in-app updater while on the beta branch.</p>
+
+<h3>12.3 In-App Updater</h3>
+<p>Support &gt; Update (or the update banner) runs a detached <code>update.ps1</code>: <code>git fetch &amp;&amp; git reset --hard origin/main</code>, conditional pip/npm reinstall, always rebuild the React bundle, then bounce uvicorn (the watchdog respawns it). NinjaScript changes still require a manual F5 compile in the NS editor.</p>
+
+<h3>12.4 Change Control</h3>
+<p>This document is the operating snapshot of an evolving system. Material changes to risk guardrails, the entry decision process, or the auto-execution standard should be reflected here and version-stamped. Tightening a guardrail is always safe; loosening one is a deliberate, logged decision.</p>
+
+<table>
+<thead><tr><th>Date</th><th>Area</th><th>Change</th><th>Version</th></tr></thead>
+<tbody>
+<tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+</tbody>
+</table>
+</div>
+
+</body>
+</html>

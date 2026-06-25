@@ -2,12 +2,13 @@ import React, { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   ACCOUNT_GROUPS, accountLabel, buildQuery, fetchJSON, EMPTY_FILTERS,
-  type DimensionsResp, type DrawdownResp, type DrawdownState,
+  type DimensionsResp,
   type Filters, type HealthResp, type SettingsResp, type StatsResp,
   type Trade, type TradesResp, type Fill, type FillsResp,
-  type TaxEstimateResp,
+  type TaxEstimateResp, type MicroscalpResp,
 } from './api'
 import { arrow, flip, sortBy, type Sort } from './lib/sorting'
+import { JournalEditor, useJournalKeys } from './Journal'
 
 // ---------- Formatting helpers ----------
 
@@ -216,6 +217,12 @@ export function TradesTable({ filters }: { filters: Filters }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const toggleExpanded = (k: string) =>
     setExpanded((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n })
+  // Trade keys whose journal editor row is open. Independent of the scale-out
+  // expand state so a trade can show legs and its journal at the same time.
+  const [journalOpen, setJournalOpen] = useState<Set<string>>(new Set())
+  const toggleJournal = (k: string) =>
+    setJournalOpen((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n })
+  const journalKeys = useJournalKeys()
   const q = useQuery<TradesResp>({
     queryKey: ['trades', filters],
     queryFn: () => fetchJSON<TradesResp>('/api/trades' + buildQuery(filters)),
@@ -264,6 +271,7 @@ export function TradesTable({ filters }: { filters: Filters }) {
                 <Th k="commission" num>Fees</Th>
                 <Th k="duration_seconds" num>Duration</Th>
                 <th>Strategies</th>
+                <th>Journal</th>
               </tr>
             </thead>
             <tbody>
@@ -299,12 +307,44 @@ export function TradesTable({ filters }: { filters: Filters }) {
                       <td className="num">{fmtMoney(t.commission + t.fee)}</td>
                       <td className="num">{fmtDuration(t.duration_seconds)}</td>
                       <td>{t.strategies.join(', ') || <span className="subtle">—</span>}</td>
+                      <td style={{ textAlign: 'center' }}>
+                        <button
+                          type="button"
+                          className={'journal-btn ' + (journalKeys.has(key) ? 'has-entry' : '')}
+                          onClick={() => toggleJournal(key)}
+                          title={journalKeys.has(key) ? 'Edit journal entry' : 'Add journal entry'}
+                        >
+                          {journalKeys.has(key) ? '📝' : '＋'}
+                        </button>
+                      </td>
                     </tr>
                     {isExpanded && t.is_scale_out && (
                       <tr className="scale-out-detail">
                         <td></td>
-                        <td colSpan={11}>
+                        <td colSpan={12}>
                           <ScaleOutDetail trade={t} />
+                        </td>
+                      </tr>
+                    )}
+                    {journalOpen.has(key) && (
+                      <tr className="journal-detail">
+                        <td></td>
+                        <td colSpan={12}>
+                          <JournalEditor
+                            tradeKey={key}
+                            snapshot={{
+                              symbol: t.contract || t.symbol,
+                              account: t.account,
+                              direction: t.direction,
+                              net_pnl: t.net_pnl,
+                              entry_time: t.entry_time,
+                              exit_time: t.exit_time,
+                              atm: t.strategies.join(', '),
+                              entry_price: t.entry_price,
+                              exit_price: t.exit_price,
+                            }}
+                            onClose={() => toggleJournal(key)}
+                          />
                         </td>
                       </tr>
                     )}
@@ -312,7 +352,7 @@ export function TradesTable({ filters }: { filters: Filters }) {
                 )
               })}
               {trades.length === 0 && (
-                <tr><td colSpan={12} className="subtle" style={{ textAlign: 'center', padding: '20px' }}>No trades match these filters.</td></tr>
+                <tr><td colSpan={13} className="subtle" style={{ textAlign: 'center', padding: '20px' }}>No trades match these filters.</td></tr>
               )}
             </tbody>
             {trades.length > 0 && (
@@ -327,6 +367,7 @@ export function TradesTable({ filters }: { filters: Filters }) {
                   <td className="num">{fmtMoney(totals.fees)}</td>
                   <td className="num">{fmtDuration(totals.duration)}</td>
                   <td></td>
+                  <td></td>
                 </tr>
               </tfoot>
             )}
@@ -340,57 +381,6 @@ export function TradesTable({ filters }: { filters: Filters }) {
 // ---------- Scale-out detail row ----------
 
 const pnlClass = (n: number) => (n > 0 ? 'pnl-pos' : n < 0 ? 'pnl-neg' : '')
-
-export function DrawdownsCard() {
-  const q = useQuery<DrawdownResp>({
-    queryKey: ['drawdowns'],
-    queryFn: () => fetchJSON<DrawdownResp>('/api/drawdown/accounts'),
-    refetchInterval: 10_000,
-  })
-  const settings = useQuery({
-    queryKey: ['settings'],
-    queryFn: () => fetchJSON<SettingsResp>('/api/settings'),
-    staleTime: 60_000,
-  })
-  const names = settings.data?.settings.accounts.names
-  if (q.isLoading || !q.data) return null
-  if (q.data.accounts.length === 0) return null
-  const worst = q.data.accounts[0]?.status
-  return (
-    <div className={'card drawdown-card status-' + worst}>
-      <h2>
-        Account drawdowns
-        {worst !== 'ok' && (
-          <span className={'drawdown-headline-tag status-' + worst}>
-            {worst === 'breach' ? 'BREACH' : 'WARNING'}
-          </span>
-        )}
-      </h2>
-      <div className="table-wrap">
-        <table className="drawdown-table">
-          <thead>
-            <tr>
-              <th>Account</th>
-              <th className="num">Balance</th>
-              <th className="num">Peak</th>
-              <th className="num">Session</th>
-              <th className="num">Trailing DD left</th>
-              <th className="num">Daily DD left</th>
-              <th className="num">Profit target</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {q.data.accounts.map((a) => <DrawdownRow key={a.account} a={a} names={names} />)}
-          </tbody>
-        </table>
-      </div>
-      <p className="subtle" style={{ marginTop: 8, marginBottom: 0 }}>
-        Realized P&amp;L only. Open positions not included. Daily window: midnight {q.data.tz}.
-      </p>
-    </div>
-  )
-}
 
 export function TaxEstimateCard() {
   const q = useQuery<TaxEstimateResp>({
@@ -454,33 +444,56 @@ export function TaxEstimateCard() {
   )
 }
 
-function DrawdownRow({ a, names }: { a: DrawdownState; names?: Record<string, string> }) {
-  const trailingPct = a.trailing_drawdown > 0 ? a.trailing_dd_left / a.trailing_drawdown : 1
-  const dailyPct    = a.daily_drawdown    > 0 ? a.daily_dd_left    / a.daily_drawdown    : 1
-  const tProgress   = a.profit_target > 0 ? (a.profit_target - a.profit_target_left) / a.profit_target : 0
+export function MicroscalpComplianceCard() {
+  const q = useQuery<MicroscalpResp>({
+    queryKey: ['microscalp-compliance'],
+    queryFn: () => fetchJSON<MicroscalpResp>('/api/microscalp-compliance'),
+    refetchInterval: 30_000,
+  })
+  const settings = useQuery({
+    queryKey: ['settings'],
+    queryFn: () => fetchJSON<SettingsResp>('/api/settings'),
+    staleTime: 60_000,
+  })
+  const names = settings.data?.settings.accounts.names
+  if (q.isLoading || !q.data) return null
+  const d = q.data
+  if (d.accounts.length === 0) return null
+
   return (
-    <tr>
-      <td><strong>{accountLabel(a.account, names)}</strong> {a.profit_target_hit && <span className="badge auto-res">target hit</span>}</td>
-      <td className="num">{fmtMoney(a.current_balance)}</td>
-      <td className="num">{fmtMoney(a.peak_balance)}</td>
-      <td className={'num ' + pnlClass(a.today_pnl)}>{fmtMoney(a.today_pnl)}</td>
-      <td className={'num status-' + a.trailing_status}>
-        {fmtMoney(a.trailing_dd_left)}
-        <span className="subtle"> ({(trailingPct * 100).toFixed(0)}%)</span>
-      </td>
-      <td className={'num status-' + a.daily_status}>
-        {fmtMoney(a.daily_dd_left)}
-        <span className="subtle"> ({(dailyPct * 100).toFixed(0)}%)</span>
-      </td>
-      <td className="num">
-        {fmtMoney(a.profit_target_left)}
-        <span className="subtle"> ({Math.min(100, Math.max(0, tProgress * 100)).toFixed(0)}% done)</span>
-      </td>
-      <td><span className={'badge status-' + a.status}>{a.status}</span></td>
-    </tr>
+    <div className="card">
+      <h2>Microscalping Compliance</h2>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Account</th>
+              <th className="num">Trades</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {d.accounts.map((a) => (
+              <tr key={a.account}>
+                <td>
+                  <strong>{accountLabel(a.account, names)}</strong>
+                  {a.is_eval && <span className="subtle"> (eval)</span>}
+                </td>
+                <td className="num">{a.trades}</td>
+                <td>
+                  <span className={'compliance-badge ' + (a.compliant ? 'ok' : 'bad')}>
+                    {a.compliant ? 'PASS' : 'BREACH'}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="subtle" style={{ marginTop: 8, marginBottom: 0 }}>{d.note}</p>
+    </div>
   )
 }
-
 
 function ScaleOutDetail({ trade }: { trade: Trade }) {
   // Entry usually a single fill (1 row), exits split across N legs. Render

@@ -30,5 +30,10 @@ trades.db
 trades.db-wal
 trades.db-shm
 
+# Per-trade journal store (operator-authored, local runtime -- never push)
+journal.db
+journal.db-wal
+journal.db-shm
+
 # Watchdog log
 data/watchdog.log

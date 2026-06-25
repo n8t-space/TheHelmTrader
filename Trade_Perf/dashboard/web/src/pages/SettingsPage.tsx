@@ -8,17 +8,17 @@ declare global {
   }
 }
 import {
-  fetchJSON, postJSON, putJSON,
-  type AtmXmlBracket, type AtmStrategiesResp, type AtmStrategy,
-  type DimensionsResp, type DrawdownConfig, type ModelsResp, type OllamaTestResp,
-  type SettingsAccounts, type SettingsAiBackend,
+  fetchJSON, postJSON, putJSON, accountLabel,
+  type AccountConfig, type AccountConfigLive,
+  type DimensionsResp, type ModelsResp, type OllamaTestResp,
+  type NewsSource, type SettingsAccounts, type SettingsAiBackend,
   type BlackoutWindow, type SettingsAutomation,
   type SettingsAppearance, type SettingsAutoTrader, type SettingsDoc, type SettingsNews,
   type SettingsResp, type SettingsStrategy,
 } from '../api'
 import { applyAppearance, cacheAppearance } from '../lib/theme'
 
-type Tab = 'appearance' | 'ai' | 'strategy' | 'accounts' | 'autotrader' | 'automation' | 'news' | 'integrity' | 'tax'
+type Tab = 'appearance' | 'ai' | 'strategy' | 'accounts' | 'execution' | 'news' | 'integrity' | 'tax'
 
 export function SettingsPage() {
   const qc = useQueryClient()
@@ -125,7 +125,7 @@ export function SettingsPage() {
       {save.error && <div className="card error">Save failed: {String(save.error)}</div>}
 
       <div className="card settings-tabs">
-        {(['appearance', 'ai', 'strategy', 'accounts', 'autotrader', 'automation', 'news', 'integrity', 'tax'] as Tab[]).map((t) => (
+        {(['appearance', 'ai', 'strategy', 'accounts', 'execution', 'news', 'integrity', 'tax'] as Tab[]).map((t) => (
           <button
             key={t}
             type="button"
@@ -154,27 +154,33 @@ export function SettingsPage() {
           <StrategyTab
             value={draft.strategy}
             onChange={(s) => setDraft({ ...draft, strategy: s })}
+            accounts={draft.accounts}
+            accountConfigs={draft.account_configs}
+            onConfigsChange={(c) => setDraft({ ...draft, account_configs: c })}
           />
         )}
         {tab === 'accounts' && (
           <AccountsTab
             value={draft.accounts}
             onChange={(a) => setDraft({ ...draft, accounts: a })}
+            commissions={draft.commissions}
+            onCommissionsChange={(c) => setDraft({ ...draft, commissions: c })}
           />
         )}
-        {tab === 'autotrader' && (
-          <AutoTraderTab
-            value={draft.auto_trader}
-            simAccounts={draft.accounts.simulation}
-            onChange={(a) => setDraft({ ...draft, auto_trader: a })}
-          />
-        )}
-        {tab === 'automation' && (
-          <AutomationTab
-            value={draft.automation}
-            tz={draft.appearance.timezone}
-            onChange={(a) => setDraft({ ...draft, automation: a })}
-          />
+        {tab === 'execution' && (
+          <>
+            <AutoTraderTab
+              value={draft.auto_trader}
+              simAccounts={draft.accounts.simulation}
+              onChange={(a) => setDraft({ ...draft, auto_trader: a })}
+            />
+            <hr style={{ margin: '28px 0', borderColor: 'var(--border)' }} />
+            <AutomationTab
+              value={draft.automation}
+              tz={draft.appearance.timezone}
+              onChange={(a) => setDraft({ ...draft, automation: a })}
+            />
+          </>
         )}
         {tab === 'news' && (
           <NewsTab
@@ -218,8 +224,7 @@ function tabLabel(t: Tab): string {
     : t === 'ai' ? 'AI Backend'
     : t === 'strategy' ? 'Strategy'
     : t === 'accounts' ? 'Accounts'
-    : t === 'autotrader' ? 'Auto-Trader'
-    : t === 'automation' ? 'Automation'
+    : t === 'execution' ? 'Auto-Trader & Automation'
     : t === 'news' ? 'News'
     : t === 'integrity' ? 'Data Integrity'
     : 'Tax'
@@ -469,6 +474,12 @@ function AutoTraderTab({ value, simAccounts, onChange }: {
         locked account — no manual arm needed. With it OFF you can still arm individual signals to
         stage them. An account must be set either way.
       </p>
+      <p className="subtle">
+        The contract / concurrency / loss / balance limits below are the <strong>global
+        defaults</strong>. A LIVE or EVAL account with a per-account config on the{' '}
+        <Link to="#" onClick={(e) => e.preventDefault()}>Strategy</Link> tab overrides these;
+        Sim accounts (the only ones tradable in v1) always use these defaults.
+      </p>
 
       <div className="settings-row">
         <label className="settings-checkbox">
@@ -558,6 +569,23 @@ function AutoTraderTab({ value, simAccounts, onChange }: {
             onChange={(e) => onChange({ ...value, entry_window_minutes: Number(e.target.value) })}
           />
           <span className="subtle">Unfilled LIMIT entries cancel after this. Default 240 (4 h) matches the entry resolver.</span>
+        </label>
+      </div>
+
+      <div className="settings-row">
+        <label className="settings-checkbox">
+          <input
+            type="checkbox"
+            checked={value.capture_entry_screenshot}
+            onChange={(e) => onChange({ ...value, capture_entry_screenshot: e.target.checked })}
+          />
+          <span>
+            Capture entry screenshot on auto-trades{' '}
+            <span className="subtle">
+              — when an auto-entered trade fills, save HelmFeed's latest chart for that instrument
+              and show it on the trade's Journal entry. Needs HelmFeed running on the chart. Off by default.
+            </span>
+          </span>
         </label>
       </div>
 
@@ -966,9 +994,12 @@ function ModelPicker({
 
 // ---------- Strategy ----------
 
-function StrategyTab({ value, onChange }: {
+function StrategyTab({ value, onChange, accounts, accountConfigs, onConfigsChange }: {
   value: SettingsStrategy
   onChange: (v: SettingsStrategy) => void
+  accounts: SettingsAccounts
+  accountConfigs: Record<string, AccountConfig>
+  onConfigsChange: (c: Record<string, AccountConfig>) => void
 }) {
   return (
     <>
@@ -1009,208 +1040,216 @@ function StrategyTab({ value, onChange }: {
         </label>
       </div>
 
-      <ExistingStrategiesBlock />
+      <PerAccountConfigBlock
+        accounts={accounts}
+        configs={accountConfigs}
+        onChange={onConfigsChange}
+      />
     </>
   )
 }
 
-// ---------- Existing ATM strategies (read from NT8) ----------
+// ---------- Per-account trading configs (Item 3) ----------
 
-interface ParsedStrategyName {
-  instrument?: string
-  style?:      string
-  contracts?:  number
-  stopTicks?:  number
-  targetTicks?: number
-  isStopOnly?: boolean
+// One card per LIVE + EVAL account (D6); Sim accounts have no card and fall back
+// to the global Auto-Trader defaults at runtime. Each card holds the friendly
+// name, the user-entered limits incl. the trailing-DD limit + risk-per-trade,
+// and a live cash + trailing-DD readout from /api/account-configs/live.
+const EMPTY_CFG: AccountConfig = {
+  name: '',
+  base_cash: 0,
+  cash_basis_ts: '',
+  risk_per_trade_value: 0,
+  risk_per_trade_mode: 'percent',
+  max_daily_loss: 0,
+  max_concurrent_per_instrument: 1,
+  max_contracts_per_instrument: 1,
+  stop_if_balance_below: 0,
+  trailing_dd_limit: 0,
 }
 
-// Convention from the 2026-05-22 ATM family:
-//   {INSTR}_{STYLE}_{N}c_{stop}-{target}      e.g. MES_SCALP_2c_6-15
-//   {INSTR}_{STYLE}_1c_brk                    e.g. MCL_INTRA_1c_brk  (stop-only sibling)
-// Legacy hand-named templates fall through the regex and only carry name+XML data.
-function parseStrategyName(name: string): ParsedStrategyName {
-  const m = name.match(/^([A-Z]+)_([A-Z]+)_(\d+)c(?:_(\d+)-(\d+)|_brk)$/i)
-  if (!m) return {}
-  const [, instrument, style, qty, stop, target] = m
-  return {
-    instrument,
-    style:       style.toUpperCase(),
-    contracts:   Number(qty),
-    stopTicks:   stop  ? Number(stop)  : undefined,
-    targetTicks: target ? Number(target) : undefined,
-    isStopOnly:  !target,
-  }
+const fmtMoneyOrDash = (n: number | null | undefined) =>
+  n === null || n === undefined ? '--' : `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+const fmtSignedMoney = (n: number | null | undefined) => {
+  if (n === null || n === undefined) return '--'
+  const sign = n < 0 ? '-' : '+'
+  return `${sign}$${Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
-const STYLE_BLURBS: Record<string, string> = {
-  SCALP: 'Fast in/out -- intraday move catcher, tight stop',
-  INTRA: 'Intraday swing -- multi-hour hold inside the session',
-  SWING: 'Multi-session hold -- wider stop, larger target',
-  RUN:   'Runner -- minimal stop, ride the trend with trail',
+const fmtBasisDate = (iso: string | null | undefined) => {
+  if (!iso) return '--'
+  const d = new Date(iso)
+  return isNaN(d.getTime()) ? iso : d.toLocaleString()
 }
 
-function describeStrategy(s: AtmStrategy): string {
-  const p = parseStrategyName(s.name)
-  const parts: string[] = []
+function PerAccountConfigBlock({ accounts, configs, onChange }: {
+  accounts: SettingsAccounts
+  configs: Record<string, AccountConfig>
+  onChange: (c: Record<string, AccountConfig>) => void
+}) {
+  // LIVE + EVAL only (D6). De-dupe + drop blanks; Sim is intentionally excluded.
+  const ids = Array.from(new Set([...accounts.live, ...accounts.evals]))
+    .map((a) => a.trim())
+    .filter(Boolean)
+    .sort()
 
-  if (p.instrument && p.style && p.contracts) {
-    const scaleNote = p.contracts > 1 ? `${p.contracts}-contract scale-out` : '1-contract single bracket'
-    const styleBlurb = STYLE_BLURBS[p.style] || p.style.toLowerCase()
-    parts.push(`${p.instrument} ${scaleNote} ${styleBlurb.toLowerCase()}.`)
-  } else if (s.total_qty && s.bracket_count) {
-    parts.push(`${s.total_qty}-contract template, ${s.bracket_count} bracket${s.bracket_count > 1 ? 's' : ''}.`)
+  const update = (id: string, patch: Partial<AccountConfig>) => {
+    const cur = configs[id] ?? EMPTY_CFG
+    onChange({ ...configs, [id]: { ...EMPTY_CFG, ...cur, ...patch } })
   }
-
-  const stop   = p.stopTicks   ?? s.stop_ticks_min
-  const target = p.targetTicks ?? s.target_ticks_max
-  if (stop && target) {
-    const rr = (target / stop).toFixed(target / stop >= 10 ? 0 : 1)
-    parts.push(`${stop}t stop / ${target}t target (1:${rr}).`)
-  } else if (stop) {
-    parts.push(`${stop}t stop -- stop-only sibling, runner trails to a stop.`)
-  }
-
-  // Aggregate stop-strategy behavior across brackets. For 1c (single
-  // bracket) templates we just quote the bracket's BE+trail inline; for
-  // multi-bracket scale-outs we let the per-bracket detail block below the
-  // card carry the specifics and just say what kind of management is on.
-  if (s.brackets && s.brackets.length === 1) {
-    const b = s.brackets[0]
-    const inline = describeBracketBehavior(b)
-    if (inline) parts.push(inline + '.')
-  } else if (s.brackets && s.brackets.length > 1) {
-    const activeRunners = s.brackets.filter(b => bracketHasManagement(b))
-    if (activeRunners.length > 0) {
-      parts.push(`Scale-out: ${s.brackets.length - activeRunners.length} passive TP bracket(s) + ${activeRunners.length} runner with BE+trail.`)
-    }
-  }
-
-  return parts.join(' ') || 'Legacy template -- no derived description.'
-}
-
-function bracketHasManagement(b: AtmXmlBracket): boolean {
-  return (b.break_even_offset_ticks ?? 0) > 0 || b.trail_steps.length > 0
-}
-
-function describeBracketBehavior(b: AtmXmlBracket): string {
-  const out: string[] = []
-  if (b.break_even_offset_ticks && b.break_even_trigger_ticks) {
-    out.push(`BE+${b.break_even_offset_ticks}t arms at +${b.break_even_trigger_ticks}t profit`)
-  } else if (b.break_even_offset_ticks) {
-    out.push(`BE+${b.break_even_offset_ticks}t arms`)
-  }
-  if (b.trail_steps.length > 0) {
-    const s = b.trail_steps[0]
-    if (s.profit_trigger_ticks && s.frequency_ticks && s.stop_loss_ticks) {
-      out.push(`trails @+${s.profit_trigger_ticks}t (freq ${s.frequency_ticks}t, stop ${s.stop_loss_ticks}t)`)
-    }
-    if (b.trail_steps.length > 1) out.push(`+${b.trail_steps.length - 1} more trail step(s)`)
-  }
-  if (b.stop_strategy_template && out.length === 0) {
-    out.push(`stop strategy "${b.stop_strategy_template}" (no inline BE/trail)`)
-  }
-  return out.join(', ')
-}
-
-function ExistingStrategiesBlock() {
-  const q = useQuery<AtmStrategiesResp>({
-    queryKey: ['atm-strategies'],
-    queryFn:  () => fetchJSON<AtmStrategiesResp>('/api/atm-strategies'),
-    staleTime: 30_000,
-  })
-
-  if (q.isLoading) return (
-    <>
-      <h4 style={{ marginTop: 24 }}>Existing ATM strategies (NT8)</h4>
-      <p className="subtle">Loading templates from NT8...</p>
-    </>
-  )
-
-  if (q.error || !q.data) return (
-    <>
-      <h4 style={{ marginTop: 24 }}>Existing ATM strategies (NT8)</h4>
-      <p className="subtle">Could not read NT8 templates: {String(q.error)}</p>
-    </>
-  )
-
-  const data = q.data
-  if (!data.exists) return (
-    <>
-      <h4 style={{ marginTop: 24 }}>Existing ATM strategies (NT8)</h4>
-      <p className="subtle">{data.warning || 'NT8 templates folder not found.'}</p>
-    </>
-  )
-
-  // Group by instrument prefix when the convention applies; ungrouped fall in 'Other'.
-  const groups: Record<string, AtmStrategy[]> = {}
-  for (const s of data.strategies) {
-    const p = parseStrategyName(s.name)
-    const key = p.instrument ?? 'Other'
-    groups[key] = groups[key] ?? []
-    groups[key].push(s)
-  }
-  const groupKeys = Object.keys(groups).sort((a, b) => a === 'Other' ? 1 : b === 'Other' ? -1 : a.localeCompare(b))
 
   return (
     <>
-      <h4 style={{ marginTop: 24 }}>Existing ATM strategies (NT8)</h4>
+      <h4 style={{ marginTop: 24 }}>Per-account trading config <span className="subtle">(Live + Eval)</span></h4>
       <p className="subtle">
-        Templates parsed from <code>{data.templates_dir}</code>. {data.count ?? data.strategies.length} found.
-        These are what the bot's proposals are pinned to and what the Signal Analysis table's <code>ATM Strategy</code> column references. NT8 is the source of truth -- edit / add templates in the NT8 ATM editor and refresh this page.
+        One config per Live / Eval account. These override the global Auto-Trader defaults
+        for that account (risk sizing, contract / concurrency caps, daily-loss + balance-floor
+        kill-switches). Simulation accounts have no card and use the global defaults. The
+        trailing max-drawdown limit is user-entered and enforced server-side against an equity
+        high-water mark computed from each account's current cash (base cash + realized P&L
+        from Trade Performance), so it works even when no strategy is running on the account.
       </p>
-
-      {data.strategies.length === 0 ? (
-        <p className="subtle"><em>No ATM templates found in that folder.</em></p>
+      {ids.length === 0 ? (
+        <p className="subtle"><em>No Live or Eval accounts yet. Add accounts under the Accounts tab (Live / Eval) to configure them here.</em></p>
       ) : (
-        <div className="atm-strategy-groups">
-          {groupKeys.map((g) => (
-            <div key={g} className="atm-strategy-group">
-              <h5 className="atm-strategy-group-head">{g}</h5>
-              <div className="atm-strategy-list">
-                {groups[g].map((s) => (
-                  <div key={s.name} className="atm-strategy-card">
-                    <div className="atm-strategy-name">
-                      {s.name}
-                      {s.has_stop_strategy && (
-                        <span className="atm-stop-badge" title="At least one bracket has a stop strategy (BE arm and/or trail steps)">stop-strat</span>
-                      )}
-                    </div>
-                    <div className="atm-strategy-desc">{describeStrategy(s)}</div>
-                    <div className="atm-strategy-meta subtle">
-                      {s.bracket_count !== undefined && <span>{s.bracket_count} bracket{s.bracket_count === 1 ? '' : 's'}</span>}
-                      {s.total_qty !== undefined && <span>{s.total_qty}c qty</span>}
-                      {s.stop_ticks_min !== undefined && <span>stop {s.stop_ticks_min}t</span>}
-                      {s.target_ticks_max !== undefined && <span>target {s.target_ticks_max}t</span>}
-                    </div>
-                    {s.brackets && s.brackets.length > 1 && (
-                      <div className="atm-bracket-detail">
-                        {s.brackets.map((b, i) => (
-                          <div key={i} className="atm-bracket-row">
-                            <span className="atm-bracket-tag">
-                              {bracketHasManagement(b) ? 'Runner' : `TP${i + 1}`}
-                            </span>
-                            <span className="atm-bracket-body">
-                              {b.quantity ?? '?'}c, stop {b.stop_loss_ticks ?? '?'}t / target {b.target_ticks ?? '?'}t
-                              {b.stop_strategy_template && (
-                                <> &middot; <code>{b.stop_strategy_template}</code></>
-                              )}
-                              {describeBracketBehavior(b) && (
-                                <> &middot; {describeBracketBehavior(b)}</>
-                              )}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
+        ids.map((id) => (
+          <AccountConfigCard
+            key={id}
+            id={id}
+            label={accountLabel(id, accounts.names)}
+            cfg={configs[id] ?? EMPTY_CFG}
+            onChange={(patch) => update(id, patch)}
+          />
+        ))
       )}
     </>
+  )
+}
+
+function AccountConfigCard({ id, label, cfg, onChange }: {
+  id: string
+  label: string
+  cfg: AccountConfig
+  onChange: (patch: Partial<AccountConfig>) => void
+}) {
+  const live = useQuery<AccountConfigLive>({
+    queryKey: ['account-config-live', id],
+    queryFn: () => fetchJSON<AccountConfigLive>(`/api/account-configs/live?account=${encodeURIComponent(id)}`),
+    refetchInterval: 5_000,
+  })
+  const d = live.data
+  return (
+    <div className="account-config-card" style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 14, marginBottom: 14 }}>
+      <div className="settings-row">
+        <label>
+          <span>Config name</span>
+          <input
+            type="text"
+            placeholder={label}
+            value={cfg.name}
+            onChange={(e) => onChange({ name: e.target.value })}
+          />
+          <span className="subtle">Account <code>{id}</code> (defaults to <strong>{label}</strong>).</span>
+        </label>
+        <label>
+          <span>Base cash ($)</span>
+          <input
+            type="number" min={0} step="any"
+            value={cfg.base_cash}
+            onChange={(e) => onChange({ base_cash: Number(e.target.value) })}
+          />
+          <span className="subtle">Account cash "as of now". On save, the moment is stamped as the basis; trades that close after it adjust the current cash below.</span>
+        </label>
+        <label>
+          <span>Current cash (computed)</span>
+          <input type="text" disabled value={d ? fmtMoneyOrDash(d.cash) : '...'} />
+          <span className="subtle">
+            {d && d.cash === null
+              ? 'Enter a base cash above and save to set the basis.'
+              : `= base ${fmtMoneyOrDash(d?.base_cash)} ${fmtSignedMoney(d?.realized_since)} realized since ${fmtBasisDate(d?.cash_basis_ts)}`}
+          </span>
+        </label>
+      </div>
+
+      <div className="settings-row">
+        <label>
+          <span>Risk per trade</span>
+          <input
+            type="number" min={0} step="any"
+            value={cfg.risk_per_trade_value}
+            onChange={(e) => onChange({ risk_per_trade_value: Number(e.target.value) })}
+          />
+        </label>
+        <label>
+          <span>Risk mode</span>
+          <select
+            value={cfg.risk_per_trade_mode}
+            onChange={(e) => onChange({ risk_per_trade_mode: e.target.value as AccountConfig['risk_per_trade_mode'] })}
+          >
+            <option value="percent">% of account</option>
+            <option value="price">price ($)</option>
+          </select>
+          <span className="subtle">% of current cash (base + realized), or a fixed $ risk per trade. Sizes the ATM-less order from the stop distance.</span>
+        </label>
+        <label>
+          <span>Max daily loss ($)</span>
+          <input
+            type="number" min={0} step="any"
+            value={cfg.max_daily_loss}
+            onChange={(e) => onChange({ max_daily_loss: Number(e.target.value) })}
+          />
+          <span className="subtle">0 = use global default.</span>
+        </label>
+        <label>
+          <span>Max concurrent / instrument</span>
+          <input
+            type="number" min={1} max={20}
+            value={cfg.max_concurrent_per_instrument}
+            onChange={(e) => onChange({ max_concurrent_per_instrument: Number(e.target.value) })}
+          />
+          <span className="subtle">1 = one open trade per instrument (today's lock).</span>
+        </label>
+        <label>
+          <span>Max contracts / instrument</span>
+          <input
+            type="number" min={1} max={50}
+            value={cfg.max_contracts_per_instrument}
+            onChange={(e) => onChange({ max_contracts_per_instrument: Number(e.target.value) })}
+          />
+          <span className="subtle">Hard ceiling on risk-sized qty.</span>
+        </label>
+        <label>
+          <span>Stop if balance &le; ($)</span>
+          <input
+            type="number" min={0} step="any"
+            value={cfg.stop_if_balance_below}
+            onChange={(e) => onChange({ stop_if_balance_below: Number(e.target.value) })}
+          />
+          <span className="subtle">0 = use global default.</span>
+        </label>
+        <label>
+          <span>Trailing max-DD limit ($)</span>
+          <input
+            type="number" min={0} step="any"
+            value={cfg.trailing_dd_limit}
+            onChange={(e) => onChange({ trailing_dd_limit: Number(e.target.value) })}
+          />
+          <span className="subtle">0 = off. Enforced vs the server-computed high-water mark.</span>
+        </label>
+      </div>
+
+      <div className="settings-row" style={{ alignItems: 'center', gap: 16 }}>
+        <span className="subtle">
+          High-water mark: <strong>{fmtMoneyOrDash(d?.high_water_mark)}</strong>
+          {' · '}Trailing DD used: <strong>{fmtMoneyOrDash(d?.trailing_dd_used)}</strong>
+          {' / '}limit <strong>{fmtMoneyOrDash(cfg.trailing_dd_limit || null)}</strong>
+        </span>
+        {d?.dd_breached && (
+          <span className="badge status-breach" style={{ color: 'var(--neg)' }}>TRAILING DD BREACHED — auto-trading forced OFF</span>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -1218,9 +1257,11 @@ function ExistingStrategiesBlock() {
 
 type Visibility = 'hidden' | 'live' | 'evals' | 'simulation'
 
-function AccountsTab({ value, onChange }: {
+function AccountsTab({ value, onChange, commissions, onCommissionsChange }: {
   value: SettingsAccounts
   onChange: (v: SettingsAccounts) => void
+  commissions: Record<string, number>
+  onCommissionsChange: (v: Record<string, number>) => void
 }) {
   // include_hidden=true so the candidate list includes accounts the user
   // hasn't opted into yet -- that's the whole point of this tab.
@@ -1230,6 +1271,7 @@ function AccountsTab({ value, onChange }: {
     staleTime: 30_000,
   })
   const discovered: string[] = dims.data?.accounts ?? []
+  const discoveredSymbols: string[] = dims.data?.symbols ?? []
 
   const where = (acct: string): Visibility => {
     if (value.live.includes(acct))       return 'live'
@@ -1336,130 +1378,96 @@ function AccountsTab({ value, onChange }: {
         </table>
       )}
 
-      <DrawdownTrackingBlock
-        accounts={value}
-        onChange={(d) => onChange({ ...value, drawdowns: d })}
+      <CommissionsSection
+        symbols={discoveredSymbols}
+        commissions={commissions}
+        onChange={onCommissionsChange}
       />
     </>
   )
 }
 
-function DrawdownTrackingBlock({
-  accounts, onChange,
-}: {
-  accounts: SettingsAccounts
-  onChange: (d: Record<string, DrawdownConfig>) => void
+function CommissionsSection({ symbols, commissions, onChange }: {
+  symbols: string[]
+  commissions: Record<string, number>
+  onChange: (v: Record<string, number>) => void
 }) {
-  const drawdowns = accounts.drawdowns || {}
-  const tracked = Object.keys(drawdowns).sort()
-  // Eligible candidates = live + evals (sim accounts don't have DD limits).
-  const candidates = [...accounts.live, ...accounts.evals]
-    .map((a) => a.trim())
-    .filter((a) => a !== '' && !(a in drawdowns))
+  // Union of instruments NT8 has reported fills for + any already configured
+  // (so a rate stays editable even after its instrument rolls to a new
+  // contract month and stops appearing in recent fills).
+  const known = Array.from(new Set([...symbols, ...Object.keys(commissions)]))
+    .filter((s) => s !== '')
     .sort()
 
-  const update = (acct: string, patch: Partial<DrawdownConfig>) => {
-    onChange({ ...drawdowns, [acct]: { ...drawdowns[acct], ...patch } })
-  }
-  const remove = (acct: string) => {
-    const next = { ...drawdowns }
-    delete next[acct]
+  const setRate = (sym: string, raw: string) => {
+    const next = { ...commissions }
+    const n = parseFloat(raw)
+    // Blank/zero/invalid clears the override -> P&L falls back to NT8's fills.
+    if (raw.trim() === '' || !isFinite(n) || n <= 0) delete next[sym]
+    else next[sym] = n
     onChange(next)
   }
-  const add = (acct: string) => {
-    if (!acct || acct in drawdowns) return
-    onChange({
-      ...drawdowns,
-      [acct]: {
-        starting_balance: 50000,
-        trailing_drawdown: 2500,
-        daily_drawdown: 1500,
-        profit_target: 3000,
-      },
-    })
+
+  const [newSym, setNewSym] = useState('')
+  const addSym = () => {
+    const s = newSym.trim().toUpperCase()
+    if (s && !known.includes(s)) setRate(s, '0.01')
+    setNewSym('')
   }
 
   return (
-    <>
-      <h4 style={{ marginTop: 24 }}>Drawdown tracking</h4>
+    <div style={{ marginTop: 32 }}>
+      <h3>Commissions</h3>
       <p className="subtle">
-        Track prop-firm drawdown limits per account. Only accounts listed here appear in the Home page Drawdown card.
-        Defaults match a typical $50K Eval (trailing $2,500 / daily $1,500 / profit target $3,000) — edit as needed.
+        Per-instrument commission, mirroring NT8's commission templates: a rate in dollars <strong>per contract, per side</strong> (charged on each execution, so a one-contract round trip pays it twice). When set above 0 it overrides whatever commission NT8 booked on that instrument's fills in net-P&amp;L and stats. Leave blank to use NT8's reported commission — useful for Sim/Eval fills, where NT8 records $0. Keyed by master symbol (<code>MES</code>, <code>MCL</code>, …), so every contract month shares one rate.
       </p>
-      {tracked.length === 0 && (
-        <p className="subtle"><em>No accounts tracked yet. Add one from the dropdown below.</em></p>
-      )}
-      {tracked.map((acct) => {
-        const c = drawdowns[acct]
-        return (
-          <div key={acct} className="drawdown-row">
-            <div className="drawdown-row-head">
-              <strong>{acct}</strong>
-              <button
-                type="button"
-                className="account-row-remove"
-                onClick={() => remove(acct)}
-                title={`Stop tracking ${acct}`}
-                aria-label={`stop tracking ${acct}`}
-              >
-                {'×'}
-              </button>
-            </div>
-            <div className="settings-row drawdown-row-fields">
-              <label>
-                <span>Starting balance ($)</span>
-                <input
-                  type="number" min={0} step="any"
-                  value={c.starting_balance}
-                  onChange={(e) => update(acct, { starting_balance: Number(e.target.value) })}
-                />
-              </label>
-              <label>
-                <span>Trailing DD ($)</span>
-                <input
-                  type="number" min={0} step="any"
-                  value={c.trailing_drawdown}
-                  onChange={(e) => update(acct, { trailing_drawdown: Number(e.target.value) })}
-                />
-                <span className="subtle">Distance from peak balance.</span>
-              </label>
-              <label>
-                <span>Daily DD ($)</span>
-                <input
-                  type="number" min={0} step="any"
-                  value={c.daily_drawdown}
-                  onChange={(e) => update(acct, { daily_drawdown: Number(e.target.value) })}
-                />
-                <span className="subtle">Loss-per-day limit.</span>
-              </label>
-              <label>
-                <span>Profit target ($)</span>
-                <input
-                  type="number" min={0} step="any"
-                  value={c.profit_target}
-                  onChange={(e) => update(acct, { profit_target: Number(e.target.value) })}
-                />
-                <span className="subtle">Eval pass threshold.</span>
-              </label>
-            </div>
-          </div>
-        )
-      })}
-      {candidates.length > 0 ? (
-        <div className="drawdown-add-row">
-          <span className="subtle">Track new account:</span>
-          <select
-            defaultValue=""
-            onChange={(e) => { if (e.target.value) { add(e.target.value); e.currentTarget.value = '' } }}
-          >
-            <option value="">— pick an account —</option>
-            {candidates.map((a) => <option key={a} value={a}>{a}</option>)}
-          </select>
-        </div>
+
+      {known.length === 0 ? (
+        <p className="subtle"><em>No instruments known yet. They populate once the recorder captures a fill, or add one manually below.</em></p>
       ) : (
-        <p className="subtle"><em>All Live + Eval accounts are already tracked. Add more under Live / Evals above to track them here.</em></p>
+        <table className="accounts-visibility-table">
+          <thead>
+            <tr>
+              <th>Instrument</th>
+              <th>Commission ($/contract, per side)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {known.map((sym) => (
+              <tr key={sym}>
+                <td><span className="account-id-mono">{sym}</span></td>
+                <td>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    placeholder="e.g. 0.62"
+                    value={commissions[sym] ?? ''}
+                    onChange={(e) => setRate(sym, e.target.value)}
+                    aria-label={`Commission per contract per side for ${sym}`}
+                    style={{ width: 160 }}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
-    </>
+
+      <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
+        <input
+          type="text"
+          placeholder="Add instrument (e.g. NQ)"
+          value={newSym}
+          onChange={(e) => setNewSym(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addSym() } }}
+          aria-label="Add instrument symbol"
+          style={{ width: 200 }}
+        />
+        <button type="button" onClick={addSym} disabled={newSym.trim() === ''}>Add</button>
+      </div>
+    </div>
   )
 }
 
@@ -1475,11 +1483,24 @@ function NewsTab({ value, onChange }: {
   const toggleListMember = (list: string[], item: string): string[] =>
     list.includes(item) ? list.filter((x) => x !== item) : [...list, item]
 
+  const sources = value.sources ?? []
+  const updateSource = (i: number, patch: Partial<NewsSource>) =>
+    onChange({ ...value, sources: sources.map((s, j) => (j === i ? { ...s, ...patch } : s)) })
+  const removeSource = (i: number) =>
+    onChange({ ...value, sources: sources.filter((_, j) => j !== i) })
+  const addSource = () =>
+    onChange({ ...value, sources: [...sources, { name: '', url: '', type: 'xml', enabled: true }] })
+
   return (
     <>
       <h3 style={{ marginTop: 0 }}>News</h3>
       <p className="subtle">
-        Economic-calendar widget on the Home page. ForexFactory pulls from the public XML feed and works offline-ish (one HTTP call). Econoday scrapes the rendered page and requires the configured AI backend to be reachable -- the chart shows a precheck hint if it isn't.
+        Economic-calendar widget on the Home page. Each source has a parsing adapter:{' '}
+        <strong>xml</strong> fetches + XML-parses a ForexFactory-schema feed (no AI);{' '}
+        <strong>scrape</strong> / <strong>ai-extract</strong> fetch HTML and extract events with
+        the configured AI backend (needs AI reachable). A non-ForexFactory XML feed needs its own
+        adapter to parse (v1 supports the FF schema only). Each scrape/ai-extract source is one AI
+        call per refresh -- adding many raises cost.
       </p>
 
       <div className="settings-row">
@@ -1494,24 +1515,38 @@ function NewsTab({ value, onChange }: {
       </div>
 
       <h4>Sources</h4>
-      <div className="settings-row">
-        <label className="settings-checkbox">
-          <input
-            type="checkbox"
-            checked={value.forexfactory_enabled}
-            onChange={(e) => onChange({ ...value, forexfactory_enabled: e.target.checked })}
-          />
-          <span>ForexFactory <span className="subtle">(XML feed, no AI required)</span></span>
-        </label>
-        <label className="settings-checkbox">
-          <input
-            type="checkbox"
-            checked={value.econoday_enabled}
-            onChange={(e) => onChange({ ...value, econoday_enabled: e.target.checked })}
-          />
-          <span>Econoday <span className="subtle">(scraped + AI-extracted; needs working AI backend)</span></span>
-        </label>
-      </div>
+      {sources.length === 0 ? (
+        <p className="subtle"><em>No sources configured. Add one below.</em></p>
+      ) : (
+        <table className="data-table" style={{ maxWidth: 760 }}>
+          <thead>
+            <tr><th>Name</th><th>URL</th><th>Type</th><th>On</th><th></th></tr>
+          </thead>
+          <tbody>
+            {sources.map((s, i) => (
+              <tr key={i}>
+                <td><input type="text" placeholder="ForexFactory" value={s.name}
+                           onChange={(e) => updateSource(i, { name: e.target.value })} /></td>
+                <td><input type="text" placeholder="https://..." value={s.url}
+                           onChange={(e) => updateSource(i, { url: e.target.value })} style={{ width: '100%' }} /></td>
+                <td>
+                  <select value={s.type} onChange={(e) => updateSource(i, { type: e.target.value as NewsSource['type'] })}>
+                    <option value="xml">xml</option>
+                    <option value="scrape">scrape</option>
+                    <option value="ai-extract">ai-extract</option>
+                  </select>
+                </td>
+                <td style={{ textAlign: 'center' }}>
+                  <input type="checkbox" checked={s.enabled}
+                         onChange={(e) => updateSource(i, { enabled: e.target.checked })} />
+                </td>
+                <td><button type="button" className="danger" onClick={() => removeSource(i)}>Remove</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <button type="button" style={{ marginTop: 10 }} onClick={addSource}>+ Add source</button>
 
       <h4>Impact filter</h4>
       <p className="subtle">Events at or above the selected levels appear on the Home card. Unchecking all hides every event.</p>

@@ -120,18 +120,23 @@ def _parse_ff_datetime(date_str: str, time_str: str) -> str | None:
         return None
 
 
-def _fetch_forexfactory() -> tuple[list[dict[str, Any]], str | None]:
-    """Returns (events, error). On any failure events == []."""
+def _fetch_xml(url: str, source_name: str = "forexfactory") -> tuple[list[dict[str, Any]], str | None]:
+    """Fetch + XML-parse a ForexFactory-schema feed (Item 7 'xml' adapter).
+    Generalizes the original _fetch_forexfactory to take a URL. A non-FF XML
+    feed needs its own field mapping; v1 parses the FF schema only. Returns
+    (events, error). On any failure events == []. Each event tags source_name."""
+    if not url:
+        return [], "xml source has no URL"
     try:
-        r = requests.get(FF_FEED_URL, headers={"User-Agent": USER_AGENT}, timeout=FETCH_TIMEOUT_S)
+        r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=FETCH_TIMEOUT_S)
         r.raise_for_status()
     except requests.RequestException as e:
-        return [], f"forexfactory fetch failed: {e}"
+        return [], f"{source_name} fetch failed: {e}"
 
     try:
         root = ET.fromstring(r.text)
     except ET.ParseError as e:
-        return [], f"forexfactory XML parse failed: {e}"
+        return [], f"{source_name} XML parse failed: {e}"
 
     out: list[dict[str, Any]] = []
     for ev in root.findall("event"):
@@ -155,7 +160,7 @@ def _fetch_forexfactory() -> tuple[list[dict[str, Any]], str | None]:
             "currency":  currency,
             "impact":    impact,
             "title":     title,
-            "source":    "forexfactory",
+            "source":    source_name,
             "forecast":  forecast,
             "previous":  previous,
             "actual":    actual,
@@ -167,7 +172,7 @@ def _fetch_forexfactory() -> tuple[list[dict[str, Any]], str | None]:
 # Source 2: Econoday via AI extraction
 # ---------------------------------------------------------------------------
 
-ECONODAY_PROMPT = """You are extracting today's US economic calendar events from this HTML.
+CALENDAR_PROMPT = """You are extracting today's US economic calendar events from the HTML of {source}.
 
 Return a JSON object with this exact shape:
 {
@@ -199,26 +204,29 @@ HTML (truncated):
 """
 
 
-def _ai_extract_econoday(html: str) -> tuple[list[dict[str, Any]], str | None]:
-    """Ship the Econoday HTML to whichever AI provider is configured and parse
-    its JSON output. Returns ([], error_msg) on any failure."""
+def _ai_extract_calendar(html: str, source_name: str = "Econoday") -> tuple[list[dict[str, Any]], str | None]:
+    """Ship a calendar page's HTML to whichever AI provider is configured and
+    parse its JSON output (Item 7 'scrape'/'ai-extract' adapter, generalized
+    from the Econoday extractor). Returns ([], error_msg) on any failure. Each
+    event tags source = source_name."""
     ai = settings_mod.get_settings().ai_backend
     # Per-component override: News can run on a different provider than signals
-    # (e.g. Claude here for the large Econoday HTML, Ollama for signals).
+    # (e.g. Claude here for the large calendar HTML, Ollama for signals).
     provider = (ai.news_provider or "").strip() or ai.provider
 
     today_iso = datetime.now(timezone.utc).date().isoformat()
     # Trim HTML aggressively -- the calendar grid is the only useful chunk,
     # but precise selectors would need a parser. Capping at 60k chars keeps
-    # cloud-API costs reasonable; FF feed covers the must-have High events
-    # so trimming Econoday is acceptable degradation.
+    # cloud-API costs reasonable; an XML feed (e.g. FF) covers the must-have
+    # High events so trimming a scraped source is acceptable degradation.
     #
-    # str.replace, not str.format -- Econoday's HTML contains stray `{` / `}`
-    # in inline CSS + JS, which str.format treats as positional placeholders
-    # and explodes on. Bit us on 2026-05-29 with a KeyError crash every 15 min
-    # in the background refresh loop.
+    # str.replace, not str.format -- scraped HTML contains stray `{` / `}` in
+    # inline CSS + JS, which str.format treats as positional placeholders and
+    # explodes on. Bit us on 2026-05-29 with a KeyError crash every 15 min in
+    # the background refresh loop. KEEP this as .replace.
     prompt = (
-        ECONODAY_PROMPT
+        CALENDAR_PROMPT
+        .replace("{source}", source_name)
         .replace("{today}", today_iso)
         .replace("{html}", html[:60000])
     )
@@ -334,7 +342,7 @@ def _ai_extract_econoday(html: str) -> tuple[list[dict[str, Any]], str | None]:
             "currency":  currency or "USD",
             "impact":    impact,
             "title":     title,
-            "source":    "econoday",
+            "source":    source_name,
             "forecast":  ev.get("forecast"),
             "previous":  ev.get("previous"),
             "actual":    ev.get("actual"),
@@ -342,13 +350,18 @@ def _ai_extract_econoday(html: str) -> tuple[list[dict[str, Any]], str | None]:
     return out, None
 
 
-def _fetch_econoday() -> tuple[list[dict[str, Any]], str | None]:
+def _fetch_scrape_ai(url: str, source_name: str = "Econoday") -> tuple[list[dict[str, Any]], str | None]:
+    """Fetch a calendar page's HTML and AI-extract its events (Item 7 'scrape'
+    and 'ai-extract' adapter). Generalizes _fetch_econoday to take a URL +
+    source name."""
+    if not url:
+        return [], f"{source_name} source has no URL"
     try:
-        r = requests.get(ECONODAY_URL, headers={"User-Agent": USER_AGENT}, timeout=FETCH_TIMEOUT_S)
+        r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=FETCH_TIMEOUT_S)
         r.raise_for_status()
     except requests.RequestException as e:
-        return [], f"econoday fetch failed: {e}"
-    return _ai_extract_econoday(r.text)
+        return [], f"{source_name} fetch failed: {e}"
+    return _ai_extract_calendar(r.text, source_name)
 
 
 # ---------------------------------------------------------------------------
@@ -447,43 +460,67 @@ def _ai_reachable() -> tuple[bool, str | None]:
 # Refresh logic + background loop
 # ---------------------------------------------------------------------------
 
-def _refresh_once() -> dict[str, Any]:
-    """Synchronous refresh -- pulls both sources, merges, writes the cache.
-    Returns the fresh cache payload (not the filtered view -- /today does
-    the filtering at read time so the user can flip filters without a
-    refresh)."""
+def fetch_source(src) -> tuple[list[dict[str, Any]], str | None]:
+    """Per-source parsing-adapter dispatch (Item 7). Branches on src.type:
+      xml                    -> _fetch_xml (FF-schema feed, no AI)
+      scrape | ai-extract    -> _fetch_scrape_ai (fetch HTML + AI-extract)
+    Returns (events, error). Each event is tagged source = src.name."""
+    if src.type == "xml":
+        return _fetch_xml(src.url, src.name)
+    # scrape / ai-extract share one code path (fetch HTML then AI-extract).
+    return _fetch_scrape_ai(src.url, src.name)
+
+
+def _configured_sources():
+    """The enabled-or-not source list. Falls back to the two built-in defaults
+    when news.sources is empty (a fresh Settings() before the migration seed
+    runs, or a reset doc)."""
     cfg = settings_mod.get_settings().news
+    if cfg.sources:
+        return cfg.sources
+    # Build transient defaults mirroring _migrate_news_sources so a fresh
+    # install with no settings.json still pulls both built-ins.
+    return [
+        settings_mod.NewsSource(name="ForexFactory", url=FF_FEED_URL,
+                                type="xml", enabled=cfg.forexfactory_enabled),
+        settings_mod.NewsSource(name="Econoday", url=ECONODAY_URL,
+                                type="scrape", enabled=cfg.econoday_enabled),
+    ]
+
+
+def _refresh_once() -> dict[str, Any]:
+    """Synchronous refresh -- pulls every enabled configured source via its
+    type adapter, merges, writes the cache. Returns the fresh cache payload
+    (not the filtered view -- /today filters at read time so the user can flip
+    filters without a refresh). One bad source records an error in the status
+    map; the others still load."""
     all_events: list[dict[str, Any]] = []
     sources: dict[str, dict[str, Any]] = {}
-
     now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    if cfg.forexfactory_enabled:
-        ff_events, ff_err = _fetch_forexfactory()
-        sources["forexfactory"] = {
-            "ok": ff_err is None, "error": ff_err,
-            "last_refresh": now_iso, "count": len(ff_events),
+    ai_ok, ai_err = _ai_reachable()
+    for src in _configured_sources():
+        if not src.enabled:
+            sources[src.name] = {"ok": False, "error": "disabled in Settings",
+                                 "last_refresh": None, "count": 0}
+            continue
+        # scrape / ai-extract need a reachable AI backend; gate them up front.
+        if src.type in ("scrape", "ai-extract") and not ai_ok:
+            sources[src.name] = {"ok": False, "error": f"AI precheck: {ai_err}",
+                                 "last_refresh": None, "count": 0}
+            continue
+        # Never let one bad source crash the whole refresh loop.
+        try:
+            events, err = fetch_source(src)
+        except Exception as e:  # noqa: BLE001 -- isolate per-source failures
+            sources[src.name] = {"ok": False, "error": f"{type(e).__name__}: {e}",
+                                 "last_refresh": None, "count": 0}
+            continue
+        sources[src.name] = {
+            "ok": err is None, "error": err,
+            "last_refresh": now_iso, "count": len(events),
         }
-        all_events.extend(ff_events)
-    else:
-        sources["forexfactory"] = {"ok": False, "error": "disabled in Settings",
-                                    "last_refresh": None, "count": 0}
-
-    if cfg.econoday_enabled:
-        ai_ok, ai_err = _ai_reachable()
-        if not ai_ok:
-            sources["econoday"] = {"ok": False, "error": f"AI precheck: {ai_err}",
-                                    "last_refresh": None, "count": 0}
-        else:
-            ed_events, ed_err = _fetch_econoday()
-            sources["econoday"] = {
-                "ok": ed_err is None, "error": ed_err,
-                "last_refresh": now_iso, "count": len(ed_events),
-            }
-            all_events.extend(ed_events)
-    else:
-        sources["econoday"] = {"ok": False, "error": "disabled in Settings",
-                                "last_refresh": None, "count": 0}
+        all_events.extend(events)
 
     merged = _dedupe(all_events)
     payload = {
@@ -493,14 +530,8 @@ def _refresh_once() -> dict[str, Any]:
         "schema_version":  1,
     }
     _write_cache(payload)
-    logger.info(
-        "[news] refreshed: ff=%s/%s econoday=%s/%s merged=%d",
-        sources["forexfactory"].get("count", 0),
-        sources["forexfactory"].get("ok"),
-        sources["econoday"].get("count", 0),
-        sources["econoday"].get("ok"),
-        len(merged),
-    )
+    logger.info("[news] refreshed: %s merged=%d",
+                {n: s.get("count", 0) for n, s in sources.items()}, len(merged))
     return payload
 
 
@@ -545,6 +576,11 @@ def news_today() -> dict[str, Any]:
     )
 
     ai_ok, ai_err = _ai_reachable()
+    # AI is required when any enabled source uses a fetch-then-AI adapter.
+    ai_required = any(
+        s.enabled and s.type in ("scrape", "ai-extract")
+        for s in _configured_sources()
+    )
     return {
         "enabled":          cfg.news.enabled,
         "trading_day":      today,
@@ -553,7 +589,7 @@ def news_today() -> dict[str, Any]:
         "filtered_count":   len(filtered),
         "sources":          cache.get("sources", {}),
         "fetched_at":       cache.get("fetched_at"),
-        "ai_required":      cfg.news.econoday_enabled,
+        "ai_required":      ai_required,
         "ai_ok":            ai_ok,
         "ai_error":         ai_err,
         "filters": {

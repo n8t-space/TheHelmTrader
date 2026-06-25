@@ -1,0 +1,31 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+@page{size:1000px 1400px;margin:0}
+*{box-sizing:border-box;font-family:"Segoe UI",Arial,sans-serif;margin:0}
+body{background:#fff;padding:30px}
+h1{font-size:22px;margin-bottom:4px}.sub{color:#6b6b6b;font-size:13px;margin-bottom:18px}
+.grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+.cell{border:1px solid #e2e2e2;border-radius:8px;padding:14px;text-align:center}
+.cell.dark{background:#1c1d20;border-color:#1c1d20}
+.cell img{height:120px}.cell.wide{grid-column:span 3}.cell.wide img{height:120px}
+.lbl{font-size:11px;color:#888;margin-top:8px;letter-spacing:.5px}
+.cell.dark .lbl{color:#aaa}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+.small{display:flex;gap:16px;align-items:center;justify-content:center}
+.small img{height:28px}.small .m{height:48px}
+</style></head><body>
+<h1>The Helm — Logo Concepts</h1>
+<div class="sub">Lodestone &amp; Purser · #C8102E / #111 / #FFF</div>
+<div class="grid">
+  <div class="cell"><img src="helm-mark-primary.svg"><div class="lbl">1 · WHEEL MARK (primary)</div></div>
+  <div class="cell dark"><img src="helm-mark-reversed.svg"><div class="lbl">2 · REVERSED (dark bg)</div></div>
+  <div class="cell"><img src="helm-mark-candlestick.svg"><div class="lbl">3 · KING-SPOKE CANDLESTICK</div></div>
+  <div class="cell"><img src="helm-compass-mark.svg"><div class="lbl">4 · COMPASS / LODESTONE</div></div>
+  <div class="cell dark"><img src="helm-app-icon.svg"><div class="lbl">5 · APP ICON</div></div>
+  <div class="cell"><img src="helm-lockup-stacked.svg"><div class="lbl">6 · STACKED LOCKUP</div></div>
+  <div class="cell wide"><img src="helm-lockup-horizontal.svg"><div class="lbl">7 · HORIZONTAL LOCKUP</div></div>
+</div>
+<div class="row2">
+  <div class="cell"><div class="small"><img class="m" src="helm-mark-primary.svg"><img src="helm-mark-primary.svg"><img src="helm-app-icon.svg" style="height:22px"></div><div class="lbl">SCALE TEST — reads at favicon size</div></div>
+  <div class="cell dark"><div class="small"><img class="m" src="helm-mark-reversed.svg"><img src="helm-compass-mark.svg" style="filter:invert(1)"></div><div class="lbl">ON DARK</div></div>
+</div>
+</body></html>

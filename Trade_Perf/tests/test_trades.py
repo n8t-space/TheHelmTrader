@@ -31,7 +31,7 @@ def test_short_direction_from_signed_position():
         _fill(2, "2026-06-04T23:04:05Z", "Sell", 1, 7584.0, -1, 0, 1),
         _fill(3, "2026-06-04T23:07:25Z", "Sell", 1, 7584.0, 0, 0, 1),
     ]
-    trades = derive_trades(fills)
+    trades = derive_trades(fills, {})
     assert len(trades) == 1
     t = trades[0]
     assert t["direction"] == "Short"
@@ -48,11 +48,28 @@ def test_long_loss_scale_out_pnl():
         _fill(2, "2026-06-05T02:19:44Z", "SellShort", 1, 7561.25, 1, 0, 1, comm=0.95),
         _fill(3, "2026-06-05T02:19:44Z", "SellShort", 1, 7561.25, 0, 0, 1, comm=0.95),
     ]
-    t = derive_trades(fills)[0]
+    t = derive_trades(fills, {})[0]
     assert t["direction"] == "Long"
     assert math.isclose(t["gross_pnl"], -22.5)      # (7561.25-7563.5)*2*5
     assert math.isclose(t["net_pnl"], -26.3)        # minus $3.80 commissions
     assert all(f["pnl"] < 0 for f in t["exit_fills"])
+
+
+def test_instrument_commission_override():
+    # NT8 booked $0 commission (Sim). A configured $1.50/contract per side on MES
+    # overrides it the NT8 way: charged on every execution. 2 contracts in + 2
+    # out = 4 contract-sides -> $6.00, regardless of what the fills carried.
+    fills = [
+        _fill(1, "2026-06-05T02:19:09Z", "Buy", 2, 7563.5, 2, 1, 0, comm=0.0),
+        _fill(2, "2026-06-05T02:19:44Z", "SellShort", 2, 7561.25, 0, 0, 1, comm=0.0),
+    ]
+    t = derive_trades(fills, {"MES": 1.5})[0]
+    assert math.isclose(t["gross_pnl"], -22.5)
+    assert math.isclose(t["commission"], 6.0)        # 1.5 x (2 entry + 2 exit)
+    assert math.isclose(t["net_pnl"], -28.5)         # gross - 6.00
+    # A different (or absent) instrument is unaffected -> falls back to fills.
+    t2 = derive_trades(fills, {"MCL": 1.5})[0]
+    assert math.isclose(t2["commission"], 0.0)
 
 
 def test_reversal_splits_into_two_trades():
@@ -64,7 +81,7 @@ def test_reversal_splits_into_two_trades():
         _fill(2, "2026-06-05T05:01:00Z", "SellShort",  2, 5802.0, -1, 1, 1),  # reversal
         _fill(3, "2026-06-05T05:02:00Z", "BuyToCover", 1, 5801.0,  0, 0, 1),
     ]
-    trades = derive_trades(fills)
+    trades = derive_trades(fills, {})
     assert len(trades) == 2
     bydir = {t["direction"]: t for t in trades}
     assert bydir["Long"]["qty"] == 1 and bydir["Short"]["qty"] == 1
@@ -81,7 +98,7 @@ def test_compute_stats_aggregate():
         _fill(3, "2026-06-05T02:19:09Z", "Buy", 2, 7563.5, 2, 1, 0, comm=1.9),
         _fill(4, "2026-06-05T02:19:44Z", "SellShort", 2, 7561.25, 0, 0, 1, comm=1.9),
     ]
-    stats = compute_stats(derive_trades(fills))
+    stats = compute_stats(derive_trades(fills, {}))
     assert stats["trade_count"] == 2
     assert stats["win_count"] == 1 and stats["loss_count"] == 1
     assert stats["win_rate"] == 0.5

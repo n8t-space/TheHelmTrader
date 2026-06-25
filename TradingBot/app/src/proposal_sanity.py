@@ -22,7 +22,7 @@ import logging
 import sqlite3
 from pathlib import Path
 
-from . import instruments
+from . import instruments, runtime_config
 
 logger = logging.getLogger(__name__)
 
@@ -34,20 +34,30 @@ DATA_DIR     = Path(__file__).resolve().parent.parent / "data"
 FEED_DB_PATH = DATA_DIR / "feed.db"
 
 
-def sanity_check(proposal: dict) -> tuple[bool, str | None]:
+def sanity_check(proposal: dict,
+                 require_atm: bool | None = None) -> tuple[bool, str | None]:
     """Return ``(is_valid, reason)``. ``flat`` proposals are always valid.
 
     A proposal fails when entry/stop/target differ from the latest reference
     price by more than ``MAX_PRICE_DRIFT``. Missing feed data = no opinion
     (returns valid).
+
+    ``require_atm`` (Item 1A): when True a directional proposal with a blank
+    ``atm_strategy`` is rejected (legacy behavior). When None the live
+    ``runtime_config.require_atm_for_directional()`` flag is read (default
+    False -> ATM optional). The price-drift validation runs regardless of ATM.
     """
     if proposal.get("direction") == "flat":
         return True, None
 
-    # A directional trade must name an ATM template -- the auto-trader has
-    # nothing to place without one, and an entered trade with a blank strategy
-    # is meaningless. Reject so the record is auto-dismissed, never "entered".
-    if not str(proposal.get("atm_strategy") or "").strip():
+    if require_atm is None:
+        require_atm = runtime_config.require_atm_for_directional()
+
+    # ATM is OPTIONAL by default (Item 1A / D1): only reject a blank-ATM
+    # directional proposal when the kill-switch is on. With it off the trade is
+    # executed via the bare-LIMIT OCO path using the LLM's own stop/target, so a
+    # blank strategy is no longer meaningless.
+    if require_atm and not str(proposal.get("atm_strategy") or "").strip():
         return False, "directional proposal has no ATM strategy"
 
     instrument = proposal.get("instrument")

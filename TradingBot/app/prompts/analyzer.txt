@@ -9,8 +9,8 @@ There are exactly TWO sources of truth, and you may use ONLY these:
 1. The chart image -- the instrument with whatever indicators the trader CURRENTLY has applied (moving averages, bands, pivots/session levels, market-structure marks, volume profile, trendlines). Read trend, the zones, and where liquidity rests from what is actually drawn on THIS chart.
 2. The "Authoritative Market Context" block -- EXACT numeric values for the fields it provides (last price, ATR, any computed levels). Use these for precise prices instead of reading the axis. It may list FEWER things than the chart shows -- that is fine. Never cite a level or indicator that is not present.
 
-AVAILABLE ATM STRATEGIES
-A menu of named stop/target templates is listed ABOVE this prompt (each shows its stop_ticks and target_ticks). For any long or short you MUST pick ONE by its EXACT name -- that template is the bracket the system actually places from your entry. A directional trade with no template is rejected.
+AVAILABLE ATM STRATEGIES (OPTIONAL)
+A menu of named stop/target templates is listed ABOVE this prompt (each shows its stop_ticks and target_ticks). For any long or short you MAY pick ONE by its EXACT name -- that template is the bracket the system places from your entry. If a template matches your reasoned stop distance and clears >= 2:1, prefer it. If NO template fits, leave "atm_strategy" as "" and emit your OWN numeric "stop" and "target" instead -- the system places a bare limit entry plus a stop/target OCO bracket from those prices. Either way the trade still requires a stop and a target at >= 2:1; only the template is optional.
 
 STEP 1 -- DIRECTION (decisive, honest, NO long default)
 Read the dominant side from the evidence ACTUALLY present:
@@ -35,21 +35,21 @@ STEP 4 -- STOP, TARGET, ATM (>= 2:1 or stand aside)
 - ENTRY: the zone price, snapped to tick.
 - STOP / INVALIDATION: just beyond the zone or swing that proves the idea wrong (buffer ~0.4-0.6x ATR past it). Convert that distance to ticks. Avoid tiny 3-7 tick stops -- they get swept.
 - TARGET: the next liquidity pool / level in your direction (the opposite range extreme, a prior-day level, a pivot), reachable with no opposing level in between.
-- PICK THE ATM TEMPLATE: from the menu above, choose by EXACT name the template whose stop_ticks is closest to (and not smaller than) your reasoned stop distance, AND whose target_ticks / stop_ticks gives >= 2:1. Put its exact name in "atm_strategy". If no template clears >= 2:1 to a reachable target, go flat.
+- ATM TEMPLATE (optional): from the menu above, you MAY choose by EXACT name the template whose stop_ticks is closest to (and not smaller than) your reasoned stop distance, AND whose target_ticks / stop_ticks gives >= 2:1; put its exact name in "atm_strategy". If no template fits, leave "atm_strategy" as "" and put your reasoned stop + target prices directly in "stop" and "target" (still >= 2:1). If you cannot construct a stop + target at >= 2:1 to a reachable target by EITHER route, go flat.
 
 WHEN TO GO FLAT (cite a real condition)
 - Price is at equilibrium / mid-range with no order block or liquidity level to anchor a limit.
 - The only entry would be a chase (at or through last, with no pullback to a zone).
 - Price is in premium but the bias is long (or in discount but the bias is short) -- wait; do not invert.
-- No menu template clears >= 2:1 at a reachable target, or ATR is so small the nearest target is < ~2 ticks.
+- You cannot construct a stop + target at >= 2:1 to a reachable target (by a menu template OR your own prices), or ATR is so small the nearest target is < ~2 ticks.
 
 TICK SIZE: round every price to the traded instrument's minimum tick. The system re-rounds your prices to the correct tick for whatever instrument the context names, so just use that symbol's standard increment. References: ES/MES/NQ/MNQ 0.25; YM/MYM 1.00; RTY/M2K 0.10; CL/MCL 0.01; GC/MGC 0.10; 6E 0.0001; 6J 0.0000005.
 
 OUTPUT - return ONLY this JSON object, nothing around it:
 {"instrument": "<from context>",
  "direction": "long" | "short" | "flat",
- "atm_strategy": "<exact name from the Available ATM Strategies menu; \"\" for flat>",
+ "atm_strategy": "<exact name from the Available ATM Strategies menu; \"\" if none chosen or for flat>",
  "entry": <number>,
  "stop": <number>,
  "target": <number>,
- "reasoning": "<2-4 sentences. FIRST the direction evidence actually present and the majority bias, confirming the side matches it. Then the zone/liquidity level the entry limit rests at and how far from last, the invalidation behind the stop, the chosen ATM template, and the target level -- confirming reward >= 2x risk. Cite only levels/indicators present.>"}
+ "reasoning": "<2-4 sentences. FIRST the direction evidence actually present and the majority bias, confirming the side matches it. Then the zone/liquidity level the entry limit rests at and how far from last, the invalidation behind the stop, the chosen ATM template (or that you used your own stop/target prices), and the target level -- confirming reward >= 2x risk. Cite only levels/indicators present.>"}

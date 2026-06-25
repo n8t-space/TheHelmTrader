@@ -2,10 +2,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { BrowserRouter, Navigate, NavLink, Route, Routes } from 'react-router-dom'
 import './App.css'
+import { HelmMark } from './HelmMark'
 import { fetchJSON, type SettingsResp } from './api'
 import { applyAppearance, cacheAppearance, loadCachedAppearance } from './lib/theme'
 import { HealthPage } from './pages/HealthPage'
 import { HomePage } from './pages/HomePage'
+import { JournalPage } from './Journal'
 import { SettingsPage } from './pages/SettingsPage'
 import { SignalAnalysisPage } from './pages/SignalAnalysisPage'
 import { SignalDetailPage } from './pages/SignalDetailPage'
@@ -78,10 +80,14 @@ export default function App() {
         <UpdateBanner />
         <div className="app">
           <header>
-            <h1>The Helm</h1>
+            <span className="brand-lockup">
+              <HelmMark className="brand-mark" />
+              <h1>The Helm</h1>
+            </span>
             <nav className="topnav">
               <NavLink to="/" end>Home</NavLink>
               <NavLink to="/performance">Trade Performance</NavLink>
+              <NavLink to="/journal">Journal</NavLink>
               <NavLink to="/signals">Signal Analysis</NavLink>
               <NavLink to="/health">Health</NavLink>
               <NavLink to="/settings">Settings</NavLink>
@@ -93,6 +99,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/performance" element={<TradePerformancePage />} />
+            <Route path="/journal" element={<JournalPage />} />
             <Route path="/signals" element={<SignalAnalysisPage />} />
             <Route path="/signals/:timestamp" element={<SignalDetailPage />} />
             <Route path="/health" element={<HealthPage />} />
@@ -105,3 +112,4 @@ export default function App() {
     </QueryClientProvider>
   )
 }
+         

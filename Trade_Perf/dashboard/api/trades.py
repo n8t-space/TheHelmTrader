@@ -23,7 +23,7 @@ def _parse_iso(ts: str) -> datetime:
     return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
 
-def _build_trade(group: list[dict]) -> dict | None:
+def _build_trade(group: list[dict], commission_rate: float = 0.0) -> dict | None:
     if not group:
         return None
     entries = [f for f in group if f["is_entry"] == 1]
@@ -56,7 +56,15 @@ def _build_trade(group: list[dict]) -> dict | None:
     else:
         gross = (avg_entry - avg_exit) * qty * pv
 
-    commission = sum((f["commission"] or 0.0) for f in group)
+    # User-entered per-instrument commission ($/contract PER SIDE, mirroring NT8
+    # commission templates) overrides the NT8-reported commission when set: each
+    # execution is charged rate x its contracts, so a round trip pays for the
+    # entry side plus every exit leg. 0 (unset) falls back to whatever NT8 booked
+    # on the fills, so instruments without a configured rate are unchanged.
+    if commission_rate > 0:
+        commission = commission_rate * (entry_qty + exit_qty)
+    else:
+        commission = sum((f["commission"] or 0.0) for f in group)
     fee = sum((f["fee"] or 0.0) for f in group)
     net = gross - commission - fee
 
@@ -146,7 +154,8 @@ def _split_reversal_fill(f: dict, qty: float, *, is_entry: int, is_exit: int,
     return g
 
 
-def derive_trades(fills: list[dict]) -> list[dict]:
+def derive_trades(fills: list[dict],
+                  commissions: dict[str, float] | None = None) -> list[dict]:
     """Group fills by (account, master_symbol) and partition into round-trips.
 
     Boundary signal: the running 'position' column from NT8. A round-trip ends
@@ -155,7 +164,19 @@ def derive_trades(fills: list[dict]) -> list[dict]:
     split, the close of one trade and the open of the next get merged into one
     inflated-qty trade (e.g. a +1 long reversed to -1 by a 2-lot order, bundled
     with neighbours, shows qty 3 instead of two qty-1 trades).
+
+    ``commissions`` maps master instrument symbol -> user-entered commission
+    ($/contract per side, NT8 commission-template style); a positive rate
+    overrides the NT8-reported commission for that instrument's trades. Defaults
+    to the live Settings map when None (pass {} to force pure fills-sourced
+    commission, e.g. in tests).
     """
+    if commissions is None:
+        # Lazy import keeps trades.py free of a settings dependency at module
+        # load (and import-cycle safe); the live map is cheap/cached.
+        from .settings import instrument_commissions
+        commissions = instrument_commissions()
+
     groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for f in fills:
         if not f.get("master_symbol") or not f.get("account_name"):
@@ -163,7 +184,8 @@ def derive_trades(fills: list[dict]) -> list[dict]:
         groups[(f["account_name"], f["master_symbol"])].append(f)
 
     trades: list[dict] = []
-    for group in groups.values():
+    for (_account_name, symbol), group in groups.items():
+        rate = commissions.get(symbol, 0.0)
         group.sort(key=lambda f: (f["time_utc"], f["id"]))
         active: list[dict] = []
         prev_pos = 0.0
@@ -180,7 +202,7 @@ def derive_trades(fills: list[dict]) -> list[dict]:
                 active.append(_split_reversal_fill(
                     f, close_qty, is_entry=0, is_exit=1, end_pos=0,
                     frac=close_qty / total))
-                trade = _build_trade(active)
+                trade = _build_trade(active, rate)
                 if trade is not None:
                     trades.append(trade)
                 active = [_split_reversal_fill(
@@ -188,7 +210,7 @@ def derive_trades(fills: list[dict]) -> list[dict]:
                     frac=open_qty / total)]
             elif curr_pos == 0:
                 active.append(f)
-                trade = _build_trade(active)
+                trade = _build_trade(active, rate)
                 if trade is not None:
                     trades.append(trade)
                 active = []

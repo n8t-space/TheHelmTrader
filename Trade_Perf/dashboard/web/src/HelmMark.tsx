@@ -1,0 +1,38 @@
+import type { SVGProps } from 'react'
+
+/** The Helm ship's-wheel mark. Ink uses currentColor so it adapts to the
+ *  active theme; the rim + hub core stay brand red (#C8102E). */
+export function HelmMark(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 240 240" role="img" aria-label="The Helm" {...props}>
+      <line x1="120.0" y1="50.0" x2="120.0" y2="8.0" stroke="currentColor" strokeWidth="12.0" strokeLinecap="round"/>
+      <circle cx="120.0" cy="8.0" r="8.0" fill="currentColor"/>
+      <line x1="169.5" y1="70.5" x2="199.2" y2="40.8" stroke="currentColor" strokeWidth="12.0" strokeLinecap="round"/>
+      <circle cx="199.2" cy="40.8" r="8.0" fill="currentColor"/>
+      <line x1="190.0" y1="120.0" x2="232.0" y2="120.0" stroke="currentColor" strokeWidth="12.0" strokeLinecap="round"/>
+      <circle cx="232.0" cy="120.0" r="8.0" fill="currentColor"/>
+      <line x1="169.5" y1="169.5" x2="199.2" y2="199.2" stroke="currentColor" strokeWidth="12.0" strokeLinecap="round"/>
+      <circle cx="199.2" cy="199.2" r="8.0" fill="currentColor"/>
+      <line x1="120.0" y1="190.0" x2="120.0" y2="232.0" stroke="currentColor" strokeWidth="12.0" strokeLinecap="round"/>
+      <circle cx="120.0" cy="232.0" r="8.0" fill="currentColor"/>
+      <line x1="70.5" y1="169.5" x2="40.8" y2="199.2" stroke="currentColor" strokeWidth="12.0" strokeLinecap="round"/>
+      <circle cx="40.8" cy="199.2" r="8.0" fill="currentColor"/>
+      <line x1="50.0" y1="120.0" x2="8.0" y2="120.0" stroke="currentColor" strokeWidth="12.0" strokeLinecap="round"/>
+      <circle cx="8.0" cy="120.0" r="8.0" fill="currentColor"/>
+      <line x1="70.5" y1="70.5" x2="40.8" y2="40.8" stroke="currentColor" strokeWidth="12.0" strokeLinecap="round"/>
+      <circle cx="40.8" cy="40.8" r="8.0" fill="currentColor"/>
+      <circle cx="120" cy="120" r="84.0" fill="none" stroke="#C8102E" strokeWidth="13.0"/>
+      <line x1="120.0" y1="98.0" x2="120.0" y2="43.0" stroke="currentColor" strokeWidth="9.0" strokeLinecap="round"/>
+      <line x1="135.6" y1="104.4" x2="174.4" y2="65.6" stroke="currentColor" strokeWidth="9.0" strokeLinecap="round"/>
+      <line x1="142.0" y1="120.0" x2="197.0" y2="120.0" stroke="currentColor" strokeWidth="9.0" strokeLinecap="round"/>
+      <line x1="135.6" y1="135.6" x2="174.4" y2="174.4" stroke="currentColor" strokeWidth="9.0" strokeLinecap="round"/>
+      <line x1="120.0" y1="142.0" x2="120.0" y2="197.0" stroke="currentColor" strokeWidth="9.0" strokeLinecap="round"/>
+      <line x1="104.4" y1="135.6" x2="65.6" y2="174.4" stroke="currentColor" strokeWidth="9.0" strokeLinecap="round"/>
+      <line x1="98.0" y1="120.0" x2="43.0" y2="120.0" stroke="currentColor" strokeWidth="9.0" strokeLinecap="round"/>
+      <line x1="104.4" y1="104.4" x2="65.6" y2="65.6" stroke="currentColor" strokeWidth="9.0" strokeLinecap="round"/>
+      <circle cx="120" cy="120" r="30.0" fill="currentColor"/>
+      <circle cx="120" cy="120" r="13.0" fill="#C8102E"/>
+      <circle cx="120" cy="120" r="4.0" fill="#FFFFFF"/>
+    </svg>
+  )
+}
