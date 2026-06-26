@@ -244,7 +244,8 @@ class NewsSource(BaseModel):
     Secret-free: URLs only -- AI keys stay in credentials.json ai_backend."""
     name: str = Field(min_length=1)             # unique key + display label
     url: str = Field(default="")
-    type: str = Field(pattern="^(xml|scrape|ai-extract)$")
+    # factbase = Roll Call / Factba.se presidential-schedule CSV (speaking events).
+    type: str = Field(pattern="^(xml|scrape|ai-extract|factbase)$")
     enabled: bool = True
 
 

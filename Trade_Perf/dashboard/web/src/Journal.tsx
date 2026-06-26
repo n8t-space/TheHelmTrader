@@ -5,6 +5,7 @@ import {
   JOURNAL_MOODS,
   type JournalEntry, type JournalListResp, type JournalSnapshot, type SettingsResp,
 } from './api'
+import { sortBy } from './lib/sorting'
 
 const fmtMoney = (n: number) =>
   `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -135,11 +136,11 @@ export function JournalEditor({ tradeKey, snapshot, onClose }: EditorProps) {
         <span className="subtle">{fmtTime(snapshot.entry_time)} CT</span>
       </div>
 
-      {shot && (
-        <a href={`/api/screenshots/${shot}`} target="_blank" rel="noreferrer" className="journal-shot-link">
-          <img className="journal-shot" src={`/api/screenshots/${shot}`} alt="Chart at auto-entry" />
-        </a>
-      )}
+      <div className="journal-shot-row">
+        {shot
+          ? <a href={`/api/screenshots/${shot}`} target="_blank" rel="noreferrer">📎 Chart at entry &mdash; {shot} &#8599;</a>
+          : <span className="subtle">No entry screenshot for this trade.</span>}
+      </div>
 
       <textarea
         className="journal-notes"
@@ -205,19 +206,76 @@ export function JournalEditor({ tradeKey, snapshot, onClose }: EditorProps) {
   )
 }
 
+type JournalKey =
+  'date' | 'account' | 'instrument' | 'direction' | 'pnl' | 'discipline' | 'mood' | 'tags' | 'updated'
+
+// Sort accessor over a journal entry. Friendly account label so the Account
+// sort matches what the row shows.
+function journalValue(e: JournalEntry, k: JournalKey, names?: Record<string, string>): unknown {
+  switch (k) {
+    case 'date':       return e.snapshot.entry_time
+    case 'account':    return accountLabel(e.snapshot.account, names)
+    case 'instrument': return e.snapshot.symbol
+    case 'direction':  return e.snapshot.direction
+    case 'pnl':        return e.snapshot.net_pnl
+    case 'discipline': return e.discipline
+    case 'mood':       return e.mood
+    case 'tags':       return e.tags.join(', ')
+    case 'updated':    return e.updated_at
+  }
+}
+
+const SORT_OPTIONS: { k: JournalKey; label: string }[] = [
+  { k: 'date',       label: 'Entry date' },
+  { k: 'account',    label: 'Account' },
+  { k: 'instrument', label: 'Instrument' },
+  { k: 'pnl',        label: 'Net P&L' },
+  { k: 'discipline', label: 'Discipline' },
+  { k: 'mood',       label: 'Mood' },
+  { k: 'tags',       label: 'Tags' },
+  { k: 'updated',    label: 'Last updated' },
+]
+
 export function JournalPage() {
   const q = useQuery<JournalListResp>({
     queryKey: ['journal'],
     queryFn: () => fetchJSON<JournalListResp>('/api/journal'),
   })
+  const settings = useQuery({
+    queryKey: ['settings'],
+    queryFn: () => fetchJSON<SettingsResp>('/api/settings'),
+    staleTime: 60_000,
+  })
+  const names = settings.data?.settings.accounts.names
+
+  const [sortKey, setSortKey] = useState<JournalKey>('date')
+  const [dir, setDir] = useState<'asc' | 'desc'>('desc')
+  const [open, setOpen] = useState<Set<string>>(new Set())
+  const toggle = (k: string) =>
+    setOpen((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n })
+
+  const entries = useMemo(
+    () => sortBy(q.data?.entries ?? [], { key: sortKey, dir }, (e, k) => journalValue(e, k, names)),
+    [q.data, sortKey, dir, names],
+  )
 
   if (q.isLoading) return <div className="card">Loading...</div>
   if (q.error) return <div className="card error">{String(q.error)}</div>
-  const entries = q.data?.entries ?? []
 
   return (
     <div className="card">
       <h2>Trade Journal {entries.length > 0 && `(${entries.length})`}</h2>
+
+      <div className="journal-sortbar">
+        <span className="subtle">Sort by</span>
+        <select value={sortKey} onChange={(e) => setSortKey(e.target.value as JournalKey)}>
+          {SORT_OPTIONS.map((o) => <option key={o.k} value={o.k}>{o.label}</option>)}
+        </select>
+        <button type="button" onClick={() => setDir((d) => (d === 'asc' ? 'desc' : 'asc'))}>
+          {dir === 'asc' ? '↑ Asc' : '↓ Desc'}
+        </button>
+      </div>
+
       {entries.length === 0 ? (
         <p className="subtle">
           No journal entries yet. Open a trade's journal from the Round-trip Trades
@@ -225,12 +283,31 @@ export function JournalPage() {
         </p>
       ) : (
         <div className="journal-list">
-          {entries.map((e) => (
-            <div key={e.trade_key} className="journal-card">
-              <JournalEditor tradeKey={e.trade_key} snapshot={e.snapshot} />
-              <div className="journal-meta subtle">Updated {fmtTime(e.updated_at)} CT</div>
-            </div>
-          ))}
+          {entries.map((e) => {
+            const isOpen = open.has(e.trade_key)
+            return (
+              <div className="journal-card" key={e.trade_key}>
+                <button type="button" className="journal-card-head" onClick={() => toggle(e.trade_key)}>
+                  <div className="journal-card-top">
+                    <span>{isOpen ? '▼' : '▶'} {fmtTime(e.snapshot.entry_time)}</span>
+                    <span className={pnlClass(e.snapshot.net_pnl)}>{fmtMoney(e.snapshot.net_pnl)}</span>
+                  </div>
+                  <div className="journal-card-sub">
+                    <strong>{accountLabel(e.snapshot.account, names)}</strong>
+                    <span>{[e.snapshot.symbol, e.snapshot.direction].filter(Boolean).join(' ') || '--'}</span>
+                    {e.discipline != null && <span>Disc {e.discipline}/5</span>}
+                    {e.mood && <span>{e.mood}</span>}
+                    {e.tags.map((t) => <span key={t} className="journal-tag-pill">{t}</span>)}
+                  </div>
+                </button>
+                {isOpen && (
+                  <div className="journal-card-body">
+                    <JournalEditor tradeKey={e.trade_key} snapshot={e.snapshot} onClose={() => toggle(e.trade_key)} />
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>

@@ -25,12 +25,14 @@ Times:           Source-supplied UTC ISO; the frontend renders in the
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import json
 import logging
 import re
 import time
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -165,6 +167,96 @@ def _fetch_xml(url: str, source_name: str = "forexfactory") -> tuple[list[dict[s
             "previous":  previous,
             "actual":    actual,
         })
+    return out, None
+
+
+# ---------------------------------------------------------------------------
+# Source: Roll Call / Factba.se presidential schedule (speaking events)
+# ---------------------------------------------------------------------------
+
+# Default CSV feed (US source: Roll Call, Washington DC; .se is a domain pun).
+FACTBASE_CSV_URL = "https://media-cdn.factba.se/rss/csv/trump/calendar.csv"
+
+# Details text that means the president is SPEAKING (vs travel/logistics).
+_SPEAKING_RE = re.compile(
+    r"\b(remarks?|press conference|news conference|press gaggle|gaggle|press briefing|"
+    r"address(es|ing)?|speaks?|delivers?|statement|announce\w*|town hall|interview|"
+    r"joint session|signing|fireside|q&a)\b", re.IGNORECASE)
+# Pure logistics to drop even when a keyword trips (e.g. "lid", arrivals/departures).
+_FACTBASE_SKIP_RE = re.compile(
+    r"\b(lid|departs?|arrives?|en route|refuel\w*|motorcade|wheels up|wheels down)\b",
+    re.IGNORECASE)
+
+
+def _parse_factbase_dt(date_s: str, time_s: str) -> str | None:
+    """Factba.se CSV gives ET date 'YYYY-MM-DD' + time 'HH:MM:SS' -> UTC ISO Z."""
+    if not date_s or not time_s:
+        return None
+    try:
+        from zoneinfo import ZoneInfo
+        naive = datetime.strptime(f"{date_s.strip()} {time_s.strip()}", "%Y-%m-%d %H:%M:%S")
+        et    = naive.replace(tzinfo=ZoneInfo(_FF_TZ))
+        return et.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    except (ValueError, ImportError):
+        return None
+
+
+def _fetch_factbase(url: str, source_name: str = "POTUS Schedule") -> tuple[list[dict[str, Any]], str | None]:
+    """Parser-style adapter (no AI) for the presidential public-schedule CSV.
+
+    Keeps only SPEAKING-type events (remarks / press conf / address / ...) within
+    a small window around today -- the /today read-filter then narrows to the
+    trading day -- and maps each to a High-impact USD news item so it surfaces
+    alongside the economic calendar. CSV columns:
+    Date,Time,Day,Category,Details,Location,Press Pool,Daily Summary,URL (ET times)."""
+    if not url:
+        return [], "factbase source has no URL"
+    try:
+        r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=FETCH_TIMEOUT_S)
+        r.raise_for_status()
+    except requests.RequestException as e:
+        return [], f"{source_name} fetch failed: {e}"
+
+    # Parse only rows near today so we don't load the full multi-year history.
+    from zoneinfo import ZoneInfo
+    today_et = datetime.now(ZoneInfo(_FF_TZ)).date()
+    lo, hi = today_et - timedelta(days=1), today_et + timedelta(days=3)
+
+    out: list[dict[str, Any]] = []
+    try:
+        rows = csv.reader(io.StringIO(r.text))
+        next(rows, None)  # header
+        for row in rows:
+            if len(row) < 5:
+                continue
+            date_s, time_s, details = row[0].strip(), row[1].strip(), row[4]
+            try:
+                d = datetime.strptime(date_s, "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            if not (lo <= d <= hi):
+                continue
+            if not _SPEAKING_RE.search(details) or _FACTBASE_SKIP_RE.search(details):
+                continue
+            time_utc = _parse_factbase_dt(date_s, time_s)
+            if not time_utc:
+                continue
+            # Subject = the schedule detail; drop the trailing "[Local: ...]" and
+            # the boilerplate "The President " lead-in.
+            subject = re.sub(r"\s*\[Local:[^\]]*\]\s*$", "", details).strip()
+            subject = re.sub(r"^The President\s+", "", subject)
+            out.append({
+                "time_utc":  time_utc,
+                "currency":  "USD",
+                "impact":    "High",
+                "title":     f"POTUS: {subject}"[:140],
+                "source":    source_name,
+                "forecast":  None,
+                "previous":  None,
+                "actual":    None,
+            })
+    except csv.Error as e:
+        return [], f"{source_name} CSV parse failed: {e}"
     return out, None
 
 
@@ -467,6 +559,8 @@ def fetch_source(src) -> tuple[list[dict[str, Any]], str | None]:
     Returns (events, error). Each event is tagged source = src.name."""
     if src.type == "xml":
         return _fetch_xml(src.url, src.name)
+    if src.type == "factbase":
+        return _fetch_factbase(src.url, src.name)
     # scrape / ai-extract share one code path (fetch HTML then AI-extract).
     return _fetch_scrape_ai(src.url, src.name)
 

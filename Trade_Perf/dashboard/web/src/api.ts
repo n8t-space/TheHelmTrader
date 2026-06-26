@@ -682,7 +682,7 @@ export interface ModelsResp {
 export interface NewsSource {
   name: string
   url: string
-  type: 'xml' | 'scrape' | 'ai-extract'
+  type: 'xml' | 'scrape' | 'ai-extract' | 'factbase'
   enabled: boolean
 }
 

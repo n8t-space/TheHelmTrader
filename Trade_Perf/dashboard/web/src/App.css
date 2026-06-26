@@ -324,6 +324,7 @@ tr.pending-suggestion td {
 tr.journal-detail > td {
   background: rgba(88, 166, 255, 0.04);
   border-top: 1px solid var(--border);
+  white-space: normal;   /* override the table's nowrap so the editor wraps */
 }
 
 .journal-editor {
@@ -451,6 +452,14 @@ tr.journal-detail > td {
   color: var(--muted);
 }
 
+.journal-sortbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
 .journal-list {
   display: flex;
   flex-direction: column;
@@ -460,22 +469,61 @@ tr.journal-detail > td {
 .journal-card {
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 4px 14px 10px;
+  overflow: hidden;
 }
 
-.journal-meta { font-size: 11px; }
-
-.journal-shot-link { display: block; line-height: 0; }
-
-.journal-shot {
-  max-width: 100%;
-  max-height: 320px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  object-fit: contain;
+.journal-card-head {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 10px 14px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
 }
 
-.journal-shot-link:hover .journal-shot { border-color: var(--accent); }
+.journal-card-head:hover { background: rgba(88, 166, 255, 0.06); }
+
+.journal-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.journal-card-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.journal-card-body {
+  border-top: 1px solid var(--border);
+  background: rgba(88, 166, 255, 0.04);
+  padding: 4px 14px 12px;
+}
+
+.journal-tag-pill {
+  display: inline-block;
+  background: rgba(88, 166, 255, 0.12);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 0 7px;
+  font-size: 11px;
+  color: var(--text);
+}
+
+.journal-shot-row { font-size: 13px; }
+.journal-shot-row a { word-break: break-all; }
 
 /* ---------- Expenses ---------- */
 

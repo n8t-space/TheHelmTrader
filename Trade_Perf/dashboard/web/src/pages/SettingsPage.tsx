@@ -1581,7 +1581,11 @@ function NewsTab({ value, onChange }: {
         <strong>scrape</strong> / <strong>ai-extract</strong> fetch HTML and extract events with
         the configured AI backend (needs AI reachable). A non-ForexFactory XML feed needs its own
         adapter to parse (v1 supports the FF schema only). Each scrape/ai-extract source is one AI
-        call per refresh -- adding many raises cost.
+        call per refresh -- adding many raises cost.{' '}
+        <strong>factbase</strong> parses the Roll Call / Factba.se presidential-schedule CSV (no AI)
+        and surfaces only the president's <em>speaking</em> events (remarks, press conferences,
+        signings) as High-impact USD items -- time + subject. URL:{' '}
+        <code>https://media-cdn.factba.se/rss/csv/trump/calendar.csv</code>
       </p>
 
       <div className="settings-row">
@@ -1615,6 +1619,7 @@ function NewsTab({ value, onChange }: {
                     <option value="xml">xml</option>
                     <option value="scrape">scrape</option>
                     <option value="ai-extract">ai-extract</option>
+                    <option value="factbase">factbase (POTUS)</option>
                   </select>
                 </td>
                 <td style={{ textAlign: 'center' }}>

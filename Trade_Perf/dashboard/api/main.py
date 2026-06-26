@@ -492,6 +492,14 @@ def spa_or_static(full_path: str):
         target.resolve().relative_to(_WEB_DIST.resolve())
     except ValueError:
         raise HTTPException(403, "invalid path") from None
+    # index.html must NEVER be cached: it references the hash-named JS/CSS
+    # bundle, so a stale cached copy keeps loading an old build (manifests as a
+    # broken/old UI after an update). The hashed assets are immutable and may
+    # cache forever. Without this, browsers heuristic-cache the HTML off its
+    # Last-Modified and serve yesterday's app.
+    _NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
     if target.is_file():
+        if target.suffix == ".html":
+            return FileResponse(target, headers=_NO_CACHE)
         return FileResponse(target)
-    return FileResponse(_WEB_DIST / "index.html")
+    return FileResponse(_WEB_DIST / "index.html", headers=_NO_CACHE)
