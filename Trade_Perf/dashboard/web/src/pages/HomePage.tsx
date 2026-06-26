@@ -25,6 +25,7 @@ interface HomeData {
   cumulative_earnings: {
     live: number
     evals: number
+    paid: number
     simulation: number
     signals: number
   }
@@ -166,7 +167,7 @@ function TodayCard({ t }: { t: HomeData['today'] }) {
 }
 
 function CumulativeEarningsCard({ e }: { e: HomeData['cumulative_earnings'] }) {
-  const total = e.live + e.evals + e.simulation + e.signals
+  const total = e.live + e.evals + e.paid + e.simulation + e.signals
   return (
     <div className="card">
       <h2>Cumulative Earnings</h2>
@@ -181,6 +182,10 @@ function CumulativeEarningsCard({ e }: { e: HomeData['cumulative_earnings'] }) {
       <div className="kv">
         <span>Evals</span>
         <span className={pnlClass(e.evals)}>{fmtMoney(e.evals)}</span>
+      </div>
+      <div className="kv">
+        <span>Paid (PA)</span>
+        <span className={pnlClass(e.paid)}>{fmtMoney(e.paid)}</span>
       </div>
       <div className="kv">
         <span>Simulation</span>

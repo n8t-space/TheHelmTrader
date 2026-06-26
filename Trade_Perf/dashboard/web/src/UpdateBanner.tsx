@@ -5,8 +5,10 @@ import { fetchJSON, postJSON } from './api'
 interface VersionResp {
   current_sha: string | null
   current_short: string | null
+  current_version: string | null
   latest_sha: string | null
   latest_short: string | null
+  latest_version: string | null
   commits_behind: number
   update_available: boolean
   last_checked: number | null
@@ -41,6 +43,20 @@ function fmtChecked(ts: number | null): string {
 }
 
 const ACTIVE_STAGES: UpdateStatus['stage'][] = ['queued', 'fetching', 'pip', 'npm', 'build']
+
+// Persistent build-version readout for the header. Shares the ['version']
+// query with UpdateBanner so it's a single cached fetch.
+export function VersionBadge() {
+  const v = useQuery<VersionResp>({
+    queryKey: ['version'],
+    queryFn:  () => fetchJSON<VersionResp>('/api/version'),
+    staleTime: 60 * 1000,
+    retry: 0,
+  })
+  const ver = v.data?.current_version
+  if (!ver) return null
+  return <span className="version-badge" title="Build version (VERSION file)">v{ver}</span>
+}
 
 export function UpdateBanner() {
   const qc = useQueryClient()
@@ -171,7 +187,12 @@ export function UpdateBanner() {
   }
 
   const behind = d.commits_behind
-  const label  = behind === 1 ? '1 commit behind' : `${behind} commits behind`
+  const commitLabel = behind === 1 ? '1 commit behind' : `${behind} commits behind`
+  // Lead with the build version. Fall back to commit shorts only when the
+  // VERSION file didn't change between releases (so we never show "2.0.0 -> 2.0.0").
+  const from = d.current_version
+  const to   = d.latest_version
+  const showVersions = from && to && from !== to
 
   return (
     <div className="update-banner" role="status" aria-live="polite">
@@ -180,10 +201,19 @@ export function UpdateBanner() {
         <span className="update-banner-text">
           <strong>Update available</strong>
           {' '}&middot;{' '}
-          <code>{d.current_short ?? '?'}</code>
-          {' '}&rarr;{' '}
-          <code>{d.latest_short ?? '?'}</code>
-          {' '}({label})
+          {showVersions ? (
+            <>
+              <code>v{from}</code>{' '}&rarr;{' '}<code>v{to}</code>
+              {' '}({commitLabel})
+            </>
+          ) : (
+            <>
+              <code>{d.current_short ?? '?'}</code>
+              {' '}&rarr;{' '}
+              <code>{d.latest_short ?? '?'}</code>
+              {' '}({commitLabel})
+            </>
+          )}
         </span>
         <span className="update-banner-meta">
           last checked {fmtChecked(d.last_checked)}
@@ -193,7 +223,7 @@ export function UpdateBanner() {
           className="update-banner-btn update-banner-primary"
           onClick={() => {
             if (window.confirm(
-              `Update The Helm from ${d.current_short} to ${d.latest_short}?\n\n` +
+              `Update The Helm from ${showVersions ? `v${from}` : d.current_short} to ${showVersions ? `v${to}` : d.latest_short}?\n\n` +
               `This will pull the latest code, rebuild the dashboard, and restart the service. ` +
               `The page will reload automatically when finished (~30-60s).`
             )) {

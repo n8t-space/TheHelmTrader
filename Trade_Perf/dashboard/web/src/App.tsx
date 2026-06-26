@@ -8,13 +8,14 @@ import { applyAppearance, cacheAppearance, loadCachedAppearance } from './lib/th
 import { HealthPage } from './pages/HealthPage'
 import { HomePage } from './pages/HomePage'
 import { JournalPage } from './Journal'
+import { ExpensesPage } from './pages/ExpensesPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { SignalAnalysisPage } from './pages/SignalAnalysisPage'
 import { SignalDetailPage } from './pages/SignalDetailPage'
 import { SupportPage } from './pages/SupportPage'
 import { TradePerformancePage } from './pages/TradePerformancePage'
 import { ServiceAlert } from './ServiceAlert'
-import { UpdateBanner } from './UpdateBanner'
+import { UpdateBanner, VersionBadge } from './UpdateBanner'
 
 // Pre-paint hint: if we cached an appearance from a prior load, apply it before
 // React mounts so the SPA never flashes the default palette.
@@ -83,11 +84,13 @@ export default function App() {
             <span className="brand-lockup">
               <HelmMark className="brand-mark" />
               <h1>The Helm</h1>
+              <VersionBadge />
             </span>
             <nav className="topnav">
               <NavLink to="/" end>Home</NavLink>
               <NavLink to="/performance">Trade Performance</NavLink>
               <NavLink to="/journal">Journal</NavLink>
+              <NavLink to="/expenses">Expenses</NavLink>
               <NavLink to="/signals">Signal Analysis</NavLink>
               <NavLink to="/health">Health</NavLink>
               <NavLink to="/settings">Settings</NavLink>
@@ -100,6 +103,7 @@ export default function App() {
             <Route path="/" element={<HomePage />} />
             <Route path="/performance" element={<TradePerformancePage />} />
             <Route path="/journal" element={<JournalPage />} />
+            <Route path="/expenses" element={<ExpensesPage />} />
             <Route path="/signals" element={<SignalAnalysisPage />} />
             <Route path="/signals/:timestamp" element={<SignalDetailPage />} />
             <Route path="/health" element={<HealthPage />} />

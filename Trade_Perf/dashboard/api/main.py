@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from . import _tradebot_bridge as bridge, atm_strategies as atm_routes, auditor as auditor_routes, auto_analysis as auto_analysis_routes, auto_trader as auto_trader_routes, compliance as compliance_mod, control as control_routes, db, feed as feed_routes, health as health_routes, home as home_routes, journal as journal_routes, news as news_routes, settings as settings_routes, signals as signals_routes, tax as tax_mod, trades as tradelib, version as version_routes
+from . import _tradebot_bridge as bridge, atm_strategies as atm_routes, auditor as auditor_routes, auto_analysis as auto_analysis_routes, auto_trader as auto_trader_routes, compliance as compliance_mod, control as control_routes, db, expenses as expenses_routes, feed as feed_routes, health as health_routes, home as home_routes, journal as journal_routes, news as news_routes, settings as settings_routes, signals as signals_routes, tax as tax_mod, trades as tradelib, version as version_routes
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +147,7 @@ app.include_router(auto_trader_routes.router)
 app.include_router(auditor_routes.router)
 app.include_router(journal_routes.router)
 app.include_router(control_routes.router)
+app.include_router(expenses_routes.router)
 
 
 @app.get("/api/health")
@@ -297,6 +298,52 @@ def microscalp_compliance():
     trades_rows = tradelib.derive_trades(fills_rows)
     return compliance_mod.microscalp_by_account(
         trades_rows, eval_accounts=s.accounts.evals)
+
+
+@app.get("/api/eval-progress")
+def eval_progress():
+    """Per-eval-account progress toward the user-entered profit target. Net P&L
+    is realized since the account's cash_basis_ts when set, else all-time for
+    that account (prop evals measure from account start). Independent of page
+    filters; derives over all fills."""
+    s = settings_routes.get_settings()
+    evals = [a for a in s.accounts.evals if a]
+    if not evals:
+        return {"accounts": []}
+    try:
+        fills_rows = db.fetch_fills_for_derivation()
+    except FileNotFoundError as e:
+        raise HTTPException(503, str(e))
+    trades_rows = tradelib.derive_trades(fills_rows)
+
+    out = []
+    for acct in evals:
+        cfg = s.account_configs.get(acct)
+        target = float(cfg.profit_target) if cfg else 0.0
+        basis = (cfg.cash_basis_ts if cfg else "") or ""
+        net = 0.0
+        for t in trades_rows:
+            if t.get("account") != acct:
+                continue
+            # Lexical compare is correct for UTC ISO-Z exit_time stamps.
+            if basis and (t.get("exit_time") or "") < basis:
+                continue
+            net += float(t.get("net_pnl") or 0.0)
+        net = round(net, 2)
+        has_target = target > 0
+        out.append({
+            "account":       acct,
+            "profit_target": round(target, 2),
+            "net_pnl":       net,
+            "remaining":     round(target - net, 2) if has_target else None,
+            "passed":        has_target and net >= target,
+            "has_target":    has_target,
+            "since_basis":   bool(basis),
+        })
+    # Closest-to-passing first; passed accounts sink to the bottom.
+    out.sort(key=lambda x: (x["passed"],
+                            x["remaining"] if x["remaining"] is not None else 1e18))
+    return {"accounts": out}
 
 
 def _capture_with_context_async(ctx: dict, image_path: Path | None) -> None:

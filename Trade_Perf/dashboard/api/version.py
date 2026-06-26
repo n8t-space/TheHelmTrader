@@ -43,8 +43,10 @@ _lock = threading.Lock()
 _state: dict[str, Any] = {
     "current_sha":      None,
     "current_short":    None,
+    "current_version":  None,   # semver from the VERSION file at HEAD
     "latest_sha":       None,
     "latest_short":     None,
+    "latest_version":   None,   # semver from the VERSION file at origin/main
     "commits_behind":   0,
     "update_available": False,
     "last_checked":     None,   # unix seconds; None == never run
@@ -83,6 +85,20 @@ def _is_git_checkout() -> bool:
     return rc == 0
 
 
+def _version_at(ref: str | None) -> str | None:
+    """Read the semver string from the VERSION file. ``ref`` None -> the
+    working-tree file (release-zip installs with no .git); otherwise the file
+    as committed at that git ref (e.g. HEAD or origin/main). Returns None if
+    unreadable -- the UI falls back to the commit short."""
+    if ref is None:
+        try:
+            return (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip() or None
+        except OSError:
+            return None
+    rc, out, _ = _run_git(["show", f"{ref}:VERSION"])
+    return out.strip() if (rc == 0 and out.strip()) else None
+
+
 def _compute_once() -> dict[str, Any]:
     """One-shot: fetch + compare. Mutates module state under the lock and
     returns a snapshot of the new state."""
@@ -107,8 +123,9 @@ def _compute_once() -> dict[str, Any]:
                 "last_error":       err or "could not read HEAD",
             })
             return dict(_state)
-        _state["current_sha"]   = head
-        _state["current_short"] = head[:7]
+        _state["current_sha"]     = head
+        _state["current_short"]   = head[:7]
+        _state["current_version"] = _version_at("HEAD") or _version_at(None)
 
         # Refresh remote refs. Quiet mode; surface stderr only if it failed.
         rc, _, err = _run_git(["fetch", "--quiet", DEFAULT_REMOTE, DEFAULT_BRANCH])
@@ -130,8 +147,9 @@ def _compute_once() -> dict[str, Any]:
                 "last_error":   err or "could not resolve remote ref",
             })
             return dict(_state)
-        _state["latest_sha"]   = latest
-        _state["latest_short"] = latest[:7]
+        _state["latest_sha"]     = latest
+        _state["latest_short"]   = latest[:7]
+        _state["latest_version"] = _version_at(f"{DEFAULT_REMOTE}/{DEFAULT_BRANCH}")
 
         if latest == head:
             _state.update({

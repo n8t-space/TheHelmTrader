@@ -152,6 +152,10 @@ class AccountConfig(BaseModel):
     # (e.g. 2500.0). Tracked against a server-computed equity high-water mark
     # (auto_trader.report_balance). 0 => off.
     trailing_dd_limit: float = Field(default=0.0, ge=0.0)
+    # USER-ENTERED profit target to PASS an evaluation, in account-currency
+    # dollars (e.g. 3000.0). Eval-account concept only; ignored for other
+    # buckets. 0 => unset. Surfaced as a column on the Accounts tab.
+    profit_target: float = Field(default=0.0, ge=0.0)
 
 
 class Accounts(BaseModel):
@@ -162,6 +166,9 @@ class Accounts(BaseModel):
     # other buckets start empty.
     live: list[str] = Field(default_factory=list)
     evals: list[str] = Field(default_factory=list)
+    # PA = Paid Account (a passed eval -> funded). Real-money bucket, sibling to
+    # live. An eval graduates here once it passes.
+    paid: list[str] = Field(default_factory=list)
     simulation: list[str] = Field(default_factory=lambda: [
         "Sim101", "Playback101", "Backtest", "SimBetaSIM",
     ])
@@ -169,6 +176,9 @@ class Accounts(BaseModel):
     # shows the name (falling back to the raw ID) wherever an account appears.
     # Empty/whitespace names are dropped client-side.
     names: dict[str, str] = Field(default_factory=dict)
+    # Entity ownership keyed by NT account ID: "personal" | "llc". Drives the
+    # business vs personal split for expense/P&L attribution. Unset -> personal.
+    entities: dict[str, str] = Field(default_factory=dict)
 
 
 class AutoTrader(BaseModel):
@@ -336,6 +346,9 @@ class Settings(BaseModel):
     auditor: Auditor = Field(default_factory=Auditor)
     automation: Automation = Field(default_factory=Automation)
     tax: Tax = Field(default_factory=Tax)
+    # Display name for the business entity, used wherever an account/expense is
+    # tagged "llc". Blank -> the UI just shows "LLC".
+    llc_name: str = Field(default="")
 
 
 # ---------------------------------------------------------------------------
@@ -460,13 +473,13 @@ def in_blackout(now: datetime | None = None) -> tuple[bool, str]:
 
 def visible_accounts() -> set[str]:
     """Source-of-truth set for which NT account IDs are visible to the rest of
-    the site. Union of the three Settings buckets (live + evals + simulation).
+    the site. Union of the Settings buckets (live + evals + paid + simulation).
     Any account not in this set is hidden from /api/dimensions, FilterBar,
     Home cumulative-earnings, and default unfiltered fill queries -- the
     recorder keeps writing fills for hidden accounts, but the UI ignores them.
     Re-select an account on the Settings Accounts tab to restore visibility."""
     a = get_settings().accounts
-    return {x for x in (*a.live, *a.evals, *a.simulation) if x}
+    return {x for x in (*a.live, *a.evals, *a.paid, *a.simulation) if x}
 
 
 def instrument_commissions() -> dict[str, float]:

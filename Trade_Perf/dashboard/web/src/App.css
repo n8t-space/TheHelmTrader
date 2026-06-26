@@ -69,6 +69,17 @@ header {
   flex: none;
 }
 
+.version-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1px 8px;
+  font-variant-numeric: tabular-nums;
+  align-self: center;
+}
+
 header h1 {
   margin: 0;
   font-size: 22px;
@@ -465,6 +476,99 @@ tr.journal-detail > td {
 }
 
 .journal-shot-link:hover .journal-shot { border-color: var(--accent); }
+
+/* ---------- Expenses ---------- */
+
+.expense-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.expense-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.expense-form label > span {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+}
+
+.expense-form input,
+.expense-form select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 8px;
+  font: inherit;
+}
+
+.expense-form .expense-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  align-self: end;
+  text-transform: none;
+}
+
+.expense-form .expense-check span {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.expense-form .expense-note { grid-column: 1 / -1; }
+
+.expense-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.expense-ledger-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.expense-filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.expense-total { font-variant-numeric: tabular-nums; }
+
+/* ---------- Eval progress ---------- */
+
+.eval-progress-track {
+  width: 100%;
+  min-width: 80px;
+  height: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.eval-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px 0 0 3px;
+  transition: width 200ms ease;
+}
+
+.eval-progress-fill.passed { background: var(--pos); }
 
 /* ---------- Compliance badge ---------- */
 

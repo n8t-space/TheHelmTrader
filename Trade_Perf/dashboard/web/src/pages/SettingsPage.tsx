@@ -165,6 +165,10 @@ export function SettingsPage() {
             onChange={(a) => setDraft({ ...draft, accounts: a })}
             commissions={draft.commissions}
             onCommissionsChange={(c) => setDraft({ ...draft, commissions: c })}
+            accountConfigs={draft.account_configs}
+            onConfigsChange={(c) => setDraft({ ...draft, account_configs: c })}
+            llcName={draft.llc_name}
+            onLlcNameChange={(n) => setDraft({ ...draft, llc_name: n })}
           />
         )}
         {tab === 'execution' && (
@@ -1066,6 +1070,7 @@ const EMPTY_CFG: AccountConfig = {
   max_contracts_per_instrument: 1,
   stop_if_balance_below: 0,
   trailing_dd_limit: 0,
+  profit_target: 0,
 }
 
 const fmtMoneyOrDash = (n: number | null | undefined) =>
@@ -1088,8 +1093,8 @@ function PerAccountConfigBlock({ accounts, configs, onChange }: {
   configs: Record<string, AccountConfig>
   onChange: (c: Record<string, AccountConfig>) => void
 }) {
-  // LIVE + EVAL only (D6). De-dupe + drop blanks; Sim is intentionally excluded.
-  const ids = Array.from(new Set([...accounts.live, ...accounts.evals]))
+  // LIVE + EVAL + PA. De-dupe + drop blanks; Sim is intentionally excluded.
+  const ids = Array.from(new Set([...accounts.live, ...accounts.evals, ...accounts.paid]))
     .map((a) => a.trim())
     .filter(Boolean)
     .sort()
@@ -1101,7 +1106,7 @@ function PerAccountConfigBlock({ accounts, configs, onChange }: {
 
   return (
     <>
-      <h4 style={{ marginTop: 24 }}>Per-account trading config <span className="subtle">(Live + Eval)</span></h4>
+      <h4 style={{ marginTop: 24 }}>Per-account trading config <span className="subtle">(Live + Eval + PA)</span></h4>
       <p className="subtle">
         One config per Live / Eval account. These override the global Auto-Trader defaults
         for that account (risk sizing, contract / concurrency caps, daily-loss + balance-floor
@@ -1255,13 +1260,17 @@ function AccountConfigCard({ id, label, cfg, onChange }: {
 
 // ---------- Accounts ----------
 
-type Visibility = 'hidden' | 'live' | 'evals' | 'simulation'
+type Visibility = 'hidden' | 'live' | 'evals' | 'paid' | 'simulation'
 
-function AccountsTab({ value, onChange, commissions, onCommissionsChange }: {
+function AccountsTab({ value, onChange, commissions, onCommissionsChange, accountConfigs, onConfigsChange, llcName, onLlcNameChange }: {
   value: SettingsAccounts
   onChange: (v: SettingsAccounts) => void
   commissions: Record<string, number>
   onCommissionsChange: (v: Record<string, number>) => void
+  accountConfigs: Record<string, AccountConfig>
+  onConfigsChange: (v: Record<string, AccountConfig>) => void
+  llcName: string
+  onLlcNameChange: (v: string) => void
 }) {
   // include_hidden=true so the candidate list includes accounts the user
   // hasn't opted into yet -- that's the whole point of this tab.
@@ -1276,6 +1285,7 @@ function AccountsTab({ value, onChange, commissions, onCommissionsChange }: {
   const where = (acct: string): Visibility => {
     if (value.live.includes(acct))       return 'live'
     if (value.evals.includes(acct))      return 'evals'
+    if (value.paid.includes(acct))       return 'paid'
     if (value.simulation.includes(acct)) return 'simulation'
     return 'hidden'
   }
@@ -1284,6 +1294,7 @@ function AccountsTab({ value, onChange, commissions, onCommissionsChange }: {
       ...value,
       live:       value.live.filter((a) => a !== acct),
       evals:      value.evals.filter((a) => a !== acct),
+      paid:       value.paid.filter((a) => a !== acct),
       simulation: value.simulation.filter((a) => a !== acct),
     }
     if (v === 'hidden') {
@@ -1296,7 +1307,7 @@ function AccountsTab({ value, onChange, commissions, onCommissionsChange }: {
   // Union: every discovered account + every account already in a bucket
   // (even if it has no fills yet, e.g. the NT-default Sim101/Playback101/
   // Backtest/SimBetaSIM that ship pre-listed under Simulation on first run).
-  const bucketed = [...value.live, ...value.evals, ...value.simulation]
+  const bucketed = [...value.live, ...value.evals, ...value.paid, ...value.simulation]
   const allKnown = Array.from(new Set([...discovered, ...bucketed]))
     .filter((a) => a !== '')
     .sort()
@@ -1309,6 +1320,25 @@ function AccountsTab({ value, onChange, commissions, onCommissionsChange }: {
     onChange({ ...value, names: next })
   }
 
+  // Entity ownership (personal | llc) keyed by account id; unset -> personal.
+  const entities = value.entities || {}
+  const entityOf = (acct: string) => entities[acct] || 'personal'
+  const setEntity = (acct: string, ent: string) => {
+    onChange({ ...value, entities: { ...entities, [acct]: ent } })
+  }
+  const llcLabel = llcName.trim() || 'LLC'
+
+  // Profit Target + Trailing DD live in account_configs[id]; edit them inline.
+  // A blank/0 entry persists 0 (= unset/off). Profit Target is Eval-only;
+  // Trailing DD applies to the funded/risk buckets (Live, Eval, PA).
+  const cfgNum = (acct: string, field: 'profit_target' | 'trailing_dd_limit'): number =>
+    accountConfigs[acct]?.[field] ?? 0
+  const setCfgNum = (acct: string, field: 'profit_target' | 'trailing_dd_limit', raw: string) => {
+    const n = parseFloat(raw)
+    const cur = accountConfigs[acct] ?? EMPTY_CFG
+    onConfigsChange({ ...accountConfigs, [acct]: { ...EMPTY_CFG, ...cur, [field]: isFinite(n) && n > 0 ? n : 0 } })
+  }
+
   const visibleCount = allKnown.filter((a) => where(a) !== 'hidden').length
   const hiddenCount  = allKnown.length - visibleCount
 
@@ -1316,11 +1346,24 @@ function AccountsTab({ value, onChange, commissions, onCommissionsChange }: {
     <>
       <h3 style={{ marginTop: 0 }}>Accounts</h3>
       <p className="subtle">
-        Source of truth for which NT accounts are visible to the rest of the dashboard. The recorder keeps capturing fills for every account NT8 reports — these toggles only control what shows up in FilterBar, the Home cumulative-earnings card, and the Drawdown tracker. Account IDs match exactly what NT8 displays in Control Center → Accounts.
+        Source of truth for which NT accounts are visible to the rest of the dashboard. The recorder keeps capturing fills for every account NT8 reports — these toggles only control what shows up in FilterBar and the Home cumulative-earnings card. <strong>PA</strong> = Paid Account (a passed eval, now funded); move an eval here once it passes. <strong>Profit target</strong> (Eval only) is the amount needed to pass; <strong>Trailing DD</strong> (Live / Eval / PA) is the trailing max-drawdown limit — both also editable on the Strategy tab. Account IDs match exactly what NT8 displays in Control Center → Accounts.
       </p>
       <p className="subtle">
         <strong>{visibleCount}</strong> visible · <strong>{hiddenCount}</strong> hidden · <strong>{allKnown.length}</strong> known
       </p>
+
+      <div className="settings-row">
+        <label>
+          <span>Business entity name</span>
+          <input
+            type="text"
+            placeholder="e.g. VQR Ventures LLC"
+            value={llcName}
+            onChange={(e) => onLlcNameChange(e.target.value)}
+          />
+          <span className="subtle">Shown wherever an account or expense is tagged "LLC" (Entity column below, Expenses page).</span>
+        </label>
+      </div>
 
       {allKnown.length === 0 ? (
         <p className="subtle"><em>No accounts known yet. The list populates once the recorder captures a fill, or once NT8 connects to an account it has previously traded on.</em></p>
@@ -1330,10 +1373,14 @@ function AccountsTab({ value, onChange, commissions, onCommissionsChange }: {
             <tr>
               <th>Account ID</th>
               <th>Friendly name</th>
+              <th>Entity</th>
               <th>Hidden</th>
               <th>Live</th>
               <th>Eval</th>
+              <th>PA</th>
               <th>Sim</th>
+              <th className="num">Profit target ($)</th>
+              <th className="num">Trailing DD ($)</th>
             </tr>
           </thead>
           <tbody>
@@ -1360,7 +1407,17 @@ function AccountsTab({ value, onChange, commissions, onCommissionsChange }: {
                       style={{ width: '100%' }}
                     />
                   </td>
-                  {(['hidden', 'live', 'evals', 'simulation'] as Visibility[]).map((opt) => (
+                  <td>
+                    <select
+                      value={entityOf(acct)}
+                      onChange={(e) => setEntity(acct, e.target.value)}
+                      aria-label={`Entity for ${acct}`}
+                    >
+                      <option value="personal">Personal</option>
+                      <option value="llc">{llcLabel}</option>
+                    </select>
+                  </td>
+                  {(['hidden', 'live', 'evals', 'paid', 'simulation'] as Visibility[]).map((opt) => (
                     <td key={opt} style={{ textAlign: 'center' }}>
                       <input
                         type="radio"
@@ -1371,6 +1428,30 @@ function AccountsTab({ value, onChange, commissions, onCommissionsChange }: {
                       />
                     </td>
                   ))}
+                  <td className="num">
+                    {v === 'evals' ? (
+                      <input
+                        type="number" min={0} step="any"
+                        value={cfgNum(acct, 'profit_target') || ''}
+                        onChange={(e) => setCfgNum(acct, 'profit_target', e.target.value)}
+                        placeholder="0"
+                        aria-label={`Profit target for ${acct}`}
+                        style={{ width: 100, textAlign: 'right' }}
+                      />
+                    ) : <span className="subtle">--</span>}
+                  </td>
+                  <td className="num">
+                    {(v === 'live' || v === 'evals' || v === 'paid') ? (
+                      <input
+                        type="number" min={0} step="any"
+                        value={cfgNum(acct, 'trailing_dd_limit') || ''}
+                        onChange={(e) => setCfgNum(acct, 'trailing_dd_limit', e.target.value)}
+                        placeholder="0"
+                        aria-label={`Trailing drawdown for ${acct}`}
+                        style={{ width: 100, textAlign: 'right' }}
+                      />
+                    ) : <span className="subtle">--</span>}
+                  </td>
                 </tr>
               )
             })}

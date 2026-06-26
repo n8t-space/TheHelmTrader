@@ -17,6 +17,7 @@ export const EMPTY_FILTERS: Filters = {
 export const ACCOUNT_GROUPS: Record<string, string[]> = {
   Live:       [],
   Eval:       [],
+  PA:         [],
   'Sim-Demo': ['Sim101', 'Playback101', 'Backtest', 'SimBetaSIM'],
 }
 
@@ -183,6 +184,63 @@ export interface MicroscalpResp {
   max_pct: number
   accounts: MicroscalpAccount[]
   note: string
+}
+
+export interface EvalProgressAccount {
+  account: string
+  profit_target: number
+  net_pnl: number
+  remaining: number | null
+  passed: boolean
+  has_target: boolean
+  since_basis: boolean
+}
+
+export interface EvalProgressResp {
+  accounts: EvalProgressAccount[]
+}
+
+// Business expense ledger. Categories mirror expenses.py CATEGORIES.
+export const EXPENSE_CATEGORY_LABELS: Record<string, string> = {
+  eval_fee:              'Eval fee',
+  reset_fee:             'Reset fee',
+  funded_activation:     'Funded activation',
+  platform_data:         'Platform / data',
+  software_subscription: 'Software / subscription',
+  hardware:              'Hardware',
+  education:             'Education',
+  broker_fees:           'Broker fees',
+  professional_services: 'Professional services',
+  payout_fee:            'Payout fee',
+  office:                'Office',
+  other:                 'Other',
+}
+
+export interface Expense {
+  id: number | null
+  date: string
+  category: string
+  amount: number
+  entity: string          // 'personal' | 'llc'
+  vendor: string
+  account: string
+  recurring: boolean
+  deductible: boolean
+  note: string
+  created_at: string
+}
+
+export interface ExpensesResp {
+  expenses: Expense[]
+  categories: string[]
+  summary: {
+    total: number
+    count: number
+    by_category: Record<string, number>
+    by_entity: Record<string, number>
+    by_account: Record<string, number>
+    by_year: Record<string, number>
+  }
 }
 
 // Per-trade journal. Closed set mirrors journal.py MOODS (minus the "" unset).
@@ -562,9 +620,13 @@ export interface SettingsStrategy {
 export interface SettingsAccounts {
   live: string[]
   evals: string[]
+  // PA = Paid Account (a passed eval, now funded). Real-money sibling to live.
+  paid: string[]
   simulation: string[]
   // Friendly display names keyed by NT account ID (display-only).
   names: Record<string, string>
+  // Entity ownership keyed by NT account ID: 'personal' | 'llc'. Unset -> personal.
+  entities: Record<string, string>
 }
 
 // Per-account trading config (Item 3), keyed by NT account id in
@@ -585,6 +647,8 @@ export interface AccountConfig {
   stop_if_balance_below: number
   // User-entered trailing max-drawdown limit ($); tracked vs a server-computed HWM.
   trailing_dd_limit: number
+  // User-entered profit target to pass an eval ($). Eval-only concept; 0 = unset.
+  profit_target: number
 }
 
 // Live readout for an account-config card (GET /api/account-configs/live).
@@ -694,6 +758,8 @@ export interface SettingsDoc {
   auditor: SettingsAuditor
   automation: SettingsAutomation
   tax: SettingsTax
+  // Display name for the business entity (used wherever "llc" is shown). Blank -> "LLC".
+  llc_name: string
 }
 
 export interface AuditorLogEntry {

@@ -35,5 +35,10 @@ journal.db
 journal.db-wal
 journal.db-shm
 
+# Business expense ledger (operator-authored, local runtime -- never push)
+expenses.db
+expenses.db-wal
+expenses.db-shm
+
 # Watchdog log
 data/watchdog.log

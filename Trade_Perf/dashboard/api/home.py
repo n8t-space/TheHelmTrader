@@ -27,12 +27,13 @@ logger = logging.getLogger(__name__)
 
 
 def _account_category(account_name: str) -> str | None:
-    """Return the bucket (live/evals/simulation) for an NT account, or None
+    """Return the bucket (live/evals/paid/simulation) for an NT account, or None
     if uncategorized. Buckets are user-managed via the Settings page; this
     just reads from the live settings doc on each call (it's cached)."""
     accts = settings_mod.get_settings().accounts
     if account_name in accts.live:        return "live"
     if account_name in accts.evals:       return "evals"
+    if account_name in accts.paid:        return "paid"
     if account_name in accts.simulation:  return "simulation"
     return None
 
@@ -98,10 +99,11 @@ def home() -> dict[str, Any]:
     # All-time totals across four buckets:
     #   live        - real brokerage account(s)
     #   evals       - prop firm eval accounts (Tradify, Topstep, etc.)
+    #   paid        - passed evals -> funded / paid accounts (real payouts)
     #   simulation  - sim/demo/playback/backtest accounts
     #   signals     - realized P/L from the LLM-proposed trades in signals.jsonl
     # Bucket membership is user-configured via the Settings page.
-    cumulative_earnings = {"live": 0.0, "evals": 0.0, "simulation": 0.0, "signals": 0.0}
+    cumulative_earnings = {"live": 0.0, "evals": 0.0, "paid": 0.0, "simulation": 0.0, "signals": 0.0}
     # Per-trading-day rollup for the Home calendar. Keyed by trading day
     # (CME 5 PM CT roll), value = {net_pnl, trade_count}.
     by_day: dict[str, dict[str, float]] = {}

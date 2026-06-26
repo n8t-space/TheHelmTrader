@@ -5,7 +5,7 @@ import {
   type DimensionsResp,
   type Filters, type HealthResp, type SettingsResp, type StatsResp,
   type Trade, type TradesResp, type Fill, type FillsResp,
-  type TaxEstimateResp, type MicroscalpResp,
+  type TaxEstimateResp, type MicroscalpResp, type EvalProgressResp,
 } from './api'
 import { arrow, flip, sortBy, type Sort } from './lib/sorting'
 import { JournalEditor, useJournalKeys } from './Journal'
@@ -102,6 +102,7 @@ export function FilterBar({ filters, setFilters }: { filters: Filters; setFilter
     ? {
         Live:       settings.data.settings.accounts.live,
         Eval:       settings.data.settings.accounts.evals,
+        PA:         settings.data.settings.accounts.paid,
         Simulation: settings.data.settings.accounts.simulation,
       }
     : ACCOUNT_GROUPS
@@ -439,6 +440,79 @@ export function TaxEstimateCard() {
       <p className="subtle" style={{ marginTop: 8, marginBottom: 0 }}>
         Total nets all accounts (a losing account offsets a winning one on one Form 6781),
         so it can be less than the per-account taxes summed. {d.note}
+      </p>
+    </div>
+  )
+}
+
+export function EvalProgressCard() {
+  const q = useQuery<EvalProgressResp>({
+    queryKey: ['eval-progress'],
+    queryFn: () => fetchJSON<EvalProgressResp>('/api/eval-progress'),
+    refetchInterval: 30_000,
+  })
+  const settings = useQuery({
+    queryKey: ['settings'],
+    queryFn: () => fetchJSON<SettingsResp>('/api/settings'),
+    staleTime: 60_000,
+  })
+  const names = settings.data?.settings.accounts.names
+  if (q.isLoading || !q.data) return null
+  const accounts = q.data.accounts
+  if (accounts.length === 0) return null
+
+  return (
+    <div className="card">
+      <h2>Eval Progress</h2>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Account</th>
+              <th className="num">Target</th>
+              <th className="num">Net P&amp;L</th>
+              <th className="num">Remaining</th>
+              <th>Progress</th>
+            </tr>
+          </thead>
+          <tbody>
+            {accounts.map((a) => {
+              if (!a.has_target) {
+                return (
+                  <tr key={a.account}>
+                    <td><strong>{accountLabel(a.account, names)}</strong></td>
+                    <td className="num"><span className="subtle">--</span></td>
+                    <td className={'num ' + pnlClass(a.net_pnl)}>{fmtMoney(a.net_pnl)}</td>
+                    <td colSpan={2} className="subtle">no target set (Accounts tab)</td>
+                  </tr>
+                )
+              }
+              const pct = Math.max(0, Math.min(100, (a.net_pnl / a.profit_target) * 100))
+              return (
+                <tr key={a.account}>
+                  <td><strong>{accountLabel(a.account, names)}</strong></td>
+                  <td className="num">{fmtMoney(a.profit_target)}</td>
+                  <td className={'num ' + pnlClass(a.net_pnl)}>{fmtMoney(a.net_pnl)}</td>
+                  <td className="num">
+                    {a.passed
+                      ? <span className="compliance-badge ok">PASSED</span>
+                      : <strong>{fmtMoney(a.remaining ?? 0)}</strong>}
+                  </td>
+                  <td>
+                    <div className="eval-progress-track" title={`${pct.toFixed(0)}%`}>
+                      <div className={'eval-progress-fill' + (a.passed ? ' passed' : '')}
+                           style={{ width: `${pct}%` }} />
+                    </div>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="subtle" style={{ marginTop: 8, marginBottom: 0 }}>
+        Realized net P&amp;L vs the per-eval profit target (set on the Accounts tab).
+        Counted since each account's cash basis when set, else all-time.
       </p>
     </div>
   )
