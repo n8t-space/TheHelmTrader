@@ -55,7 +55,7 @@ NT fills are mirrored independently into `Trade_Perf/trades.db` via `recorder.py
 Semantic versioning, two channels — see [`VERSIONING.md`](../VERSIONING.md).
 - **`main` = production.** The bot's version-check + in-place updater track `origin/main` (`version.py`, SHA compare). Only **validated** work lands here, tagged `vX.Y.Z`.
 - **`beta` branch = staging.** Unvalidated work, tagged `vX.Y.Z-beta.N`; the production updater does NOT pull it. Validate (Sim/Playback/live) → merge `beta`→`main` → tag stable.
-- Bump `VERSION` + `CHANGELOG.md` at each cut. Conventional commits. Don't push unvalidated work to `main`. Don't click the in-app updater while the local checkout is on `beta` (it resets to `origin/main`).
+- **Bump `VERSION` on EVERY push** (+ a `CHANGELOG.md` line). Operator's product-centric semver: **MAJOR** = major system overhaul / breaking contract; **MINOR** = a new page/feature/tool introduced; **PATCH** = an update to an existing page/tool. Bump by the highest-order change in the push. Conventional commits. Don't push unvalidated work to `main`. Don't click the in-app updater while the local checkout is on `beta` (it resets to `origin/main`).
 
 ## Chart conventions (instrument-invariant)
 

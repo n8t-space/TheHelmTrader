@@ -4,6 +4,26 @@ All notable changes are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses
 [Semantic Versioning](VERSIONING.md).
 
+## [2.1.0] - 2026-06-26
+
+> On `beta`. Versioning policy change: **`VERSION` now bumps on every push**, with
+> product-centric semver -- MAJOR = system overhaul, MINOR = new page/feature/tool,
+> PATCH = update to an existing page/tool. See [VERSIONING.md](VERSIONING.md).
+
+### Added
+- **POTUS speaking-schedule news source** (`factbase` adapter, no AI): parses the
+  Roll Call / Factba.se presidential-schedule CSV and surfaces only the
+  president's *speaking* events (remarks, press/news conferences, addresses,
+  signings) as High-impact USD items -- time + subject. New `factbase (POTUS)`
+  source type on Settings -> News.
+
+### Changed
+- **Journal page** rebuilt as a responsive sortable list (sort dropdown +
+  asc/desc) that reads cleanly at any width; the entry screenshot is now a file
+  **link**, not an embedded image (with an explicit "no screenshot" note).
+- `index.html` is served with `Cache-Control: no-cache` so a new build's hashed
+  bundle always loads (fixes stale UI after an update); hashed assets still cache.
+
 ## [2.0.1] - 2026-06-25
 
 > Shipped to `main` (production) the same day. Additive settings-schema growth

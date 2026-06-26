@@ -17,15 +17,21 @@ updater offers to pull -- so only **validated** releases land on `main`.
 
 ## Semantic versioning
 
-`MAJOR.MINOR.PATCH`
+`MAJOR.MINOR.PATCH` -- operator's product-centric definitions:
 
-- **MAJOR** -- breaking change to a runtime contract (signal schema, settings
-  shape, NS<->bot API, a NinjaScript that must be re-applied/re-deployed).
-- **MINOR** -- new feature, backward compatible.
-- **PATCH** -- bug fix, backward compatible.
+- **MAJOR** -- a **major overhaul** of the system (broad rework; or a breaking
+  change to a runtime contract -- signal schema, settings shape, NS<->bot API,
+  a NinjaScript that must be re-applied/re-deployed).
+- **MINOR** -- a **new page / feature / tool** introduced (backward compatible).
+- **PATCH** -- an **update to an existing page / tool** (tweak, fix, refinement).
 
-Pre-releases use `-beta.N` (e.g. `v1.1.0-beta.2`). A `-beta` tag is never a
-production release; it is a candidate for the next `vX.Y.Z`.
+Pick the bump by the *highest-order* change in the push (a new feature alongside
+small fixes is a MINOR bump). A MINOR bump resets PATCH to 0; a MAJOR resets both.
+
+**Bump `VERSION` on EVERY push** -- every push gets a version. Beta pushes carry
+the in-progress number toward the next release; the same number promotes to
+`main`. Pre-releases may use `-beta.N` (e.g. `v1.1.0-beta.2`) when staging
+multiple iterations before a stable cut.
 
 ## Flow
 
