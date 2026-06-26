@@ -4,6 +4,17 @@ All notable changes are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses
 [Semantic Versioning](VERSIONING.md).
 
+## [2.1.1] - 2026-06-26
+
+### Changed
+- Docs refreshed (CLAUDE.md routers/conventions, MIGRATION session log) for the
+  POTUS news source, journal redesign, no-cache serving, and versioning policy.
+
+### Removed
+- Repo-root `Documentation/` (branding + business-plan PDFs/HTML/logos) untracked
+  from git and git-ignored -- kept out of the public mirror. NOTE: it remains in
+  git *history* (pushed in 6ca7a02); scrubbing that needs a history rewrite.
+
 ## [2.1.0] - 2026-06-26
 
 > On `beta`. Versioning policy change: **`VERSION` now bumps on every push**, with

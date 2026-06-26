@@ -44,3 +44,6 @@ backups/
 *.zip
 *.tar
 *.tar.gz
+
+# Branding / business docs -- keep out of the (public) repo
+Documentation/

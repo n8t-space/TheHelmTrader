@@ -126,6 +126,24 @@ In order, after each phase:
 
 ## 9. Session Log
 
+### 2026-06-26 — Journal fixes, POTUS news source, versioning policy, hygiene (beta)
+
+Continuation day on `beta` (nothing promoted to `main`; `main` stays at v2.0.1 / `23dca28`). All dashboard (Trade_Perf). Now at **v2.1.0** on beta.
+
+- **Auto-entry screenshots diagnosed** (was: "pictures don't appear"): two blockers, not a code bug. (1) `auto_trader.capture_entry_screenshot` was OFF -> now ON. (2) the auto-trader account `DEMO7359034` is hidden, so the fill-linker resolved 0 trades; surfacing it -> 251 links, verified a synthetic shot maps + serves, then re-hidden. Existing 374 fills can't be backfilled (source `auto_*.png` overwritten each bar). Capture happens regardless of visibility; the Journal only *displays* a shot when that account is visible.
+- **Journal page** rebuilt as a **responsive sortable list** (sort dropdown + asc/desc) after the wide table rendered single-column in the operator's narrow window. Entry screenshot is now a **file link**, not an embedded image.
+- **`index.html` served `no-cache`** so new builds' bundles always load (the stale-bundle was why UI fixes "didn't show"). Hashed assets still cache. Needs a restart to activate (backend change).
+- **POTUS speaking-schedule news source** (`factbase` adapter, no AI): parses the Roll Call / Factba.se presidential-schedule CSV, keeps only SPEAKING events, maps to High-impact USD "POTUS: <subject>". US source (Roll Call DC; `.se` is a domain pun). New `factbase (POTUS)` source type in Settings -> News; seeded into `settings.json` as "POTUS Schedule". Verified end-to-end (2 events pulled, intel briefing excluded).
+- **Versioning policy (operator rule):** bump `VERSION` on EVERY push; product-centric semver -- MAJOR = system overhaul, MINOR = new page/feature/tool, PATCH = update to existing. Documented in VERSIONING.md + CLAUDE.md + memory.
+- **Hygiene:** confirmed `expenses.db`/`journal.db` are git-ignored + untracked AND excluded from the support bundle (allowlist of logs only). Removed the repo-root `Documentation/` folder from git (`git rm --cached` + .gitignore) -- branding/business docs out of the **public** mirror.
+- NSSM watchdog stop/throttle tuning was applied earlier (registry-only, elevated) for ~2-3s restarts.
+
+**Outstanding (next session pickup, priority order):**
+1. **Restart the dashboard** (`POST /api/version/restart`, NOT the updater) to activate the POTUS news source + the journal `no-cache` fix. Then confirm the Home news card shows today's POTUS speaking events.
+2. **Validate the v2.1.0 beta batch live**, then decide promotion to `main` (still unvalidated; `main` is 3 commits behind beta).
+3. **`Documentation/` remains in git HISTORY** on the public mirror (it was pushed in `6ca7a02`). `git rm --cached` only stops FUTURE tracking. If the business-plan content must be scrubbed from the public repo, rewrite history (git filter-repo / BFG) + force-push -- destructive, deferred to a deliberate call.
+4. Per-eval ROI from expense `account` links; consider microscalp compliance for PA accounts.
+
 ### 2026-06-25 — v2.0.1 release: dashboard feature batch (Trade_Perf), shipped to main
 
 Dashboard-only day (Trade_Perf). Shipped **v2.0.1** to `main` (production) in three pushes across the session; the in-app updater auto-deploys the Python/React. Settings schema grew (additive only — old `settings.json` loads on Pydantic defaults; no migration). One NinjaScript fix went out (HelmAutoTrader `OnExecution` -> `OnExecutionUpdate`, NT8 API) — needs a user recompile. Highlights:
