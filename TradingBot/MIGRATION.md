@@ -126,6 +126,30 @@ In order, after each phase:
 
 ## 9. Session Log
 
+### 2026-06-25 — v2.0.1 release: dashboard feature batch (Trade_Perf), shipped to main
+
+Dashboard-only day (Trade_Perf). Shipped **v2.0.1** to `main` (production) in three pushes across the session; the in-app updater auto-deploys the Python/React. Settings schema grew (additive only — old `settings.json` loads on Pydantic defaults; no migration). One NinjaScript fix went out (HelmAutoTrader `OnExecution` -> `OnExecutionUpdate`, NT8 API) — needs a user recompile. Highlights:
+
+- **Home session calendar** (`session_calendar` on `/api/home`): per-trading-day net realized P&L, green/red month grid.
+- **Per-trade Journal** (`journal.py`, own `journal.db`, new page+nav): notes/discipline/mood/tags + auto snapshot (incl. ATM + entry/exit price); inline editor in the trades table. **Auto-entry screenshots** (opt-in `auto_trader.capture_entry_screenshot`) reuse HelmFeed's latest chart, linked to the trade via the fill-linker.
+- **Microscalping compliance tile** (`/api/microscalp-compliance`, replaced Recorder Status): sub-10s trade% + gross-profit% vs 50% cap.
+- **Eval Progress card** (`/api/eval-progress`, left of Estimated Tax): profit-target progress; new `account_configs.profit_target` (Eval-only).
+- **PA (Paid Account) bucket** — first-class `accounts.paid` across visibility/Home/FilterBar/Strategy cards. **Personal vs LLC** entity tagging (`accounts.entities` + `llc_name`). Accounts-tab columns: Profit target, Trailing DD (reuses `trailing_dd_limit`), Entity.
+- **Business Expenses page** (`expenses.py`, own `expenses.db`, new page+nav): categorized ledger, Personal/LLC split, optional account link, recurring flag, deductible, roll-ups. Not fed into Home totals.
+- **Kill switch** (`control.py` + `watchdog.ps1`): stop the dashboard until NT/service restart.
+- **Semver version display**: `/api/version` reads the `VERSION` file (current/latest); banner + header badge show `vX.Y.Z`. Bumped to 2.0.1.
+- **Eval P&L reconciliation insight**: Eval/Sim fills book $0 commission in NT8, so the Helm shows GROSS unless a per-instrument commission rate is set — that's why Tradeify (net) read lower (EVAL 35 $710 Helm vs $589.04 Tradeify, reconciled at $2.88/side). Documented in Trade_Perf CLAUDE.md.
+- **Ops**: NSSM watchdog stop-method timeouts zeroed + `AppThrottle` 60000->1500 (registry-only, applied elevated on the box) for ~2-3s restarts.
+
+**Outstanding (next session pickup, priority order):**
+1. **Validate v2.0.1 live** — it went to `main` UNVALIDATED (against the rule). After the updater restarts uvicorn: smoke-test the Expenses page (add/edit/delete), the new Accounts columns + Entity selector, Eval Progress, and the Journal. Arm an auto-trade on Sim to exercise the screenshot capture.
+2. **Restart `HelmDashboardWatchdog` (elevated)** to load the new `watchdog.ps1` (kill-switch logic) + apply the NSSM stop/throttle tuning; recompile `HelmAutoTrader.cs` in NT8 for the `OnExecutionUpdate` fix.
+3. **Set per-instrument commission rates** in Settings -> Accounts -> Commissions so eval P&L matches the prop firms (else the Helm overstates by the firm's fees).
+4. **Per-eval ROI** — wire expense `account` links into the Eval Progress card (cost vs payout) now that the data is linkable.
+5. Consider whether microscalping compliance should extend to **PA** accounts (currently eval-only).
+
+**Carried forward:** v2.0.1 settings additions are backward-compatible; no migration. `journal.db` + `expenses.db` are git-ignored runtime stores at the project root (like `trades.db`).
+
 ### 2026-06-04 — Credentials split, per-component AI, per-instrument auto-trading, dev env, queue rework
 
 Heavy feature day. 15 commits, all pushed (main 0/0 with origin); working tree clean. Everything went live via the in-app restart + a user NinjaScript recompile. Headline changes:

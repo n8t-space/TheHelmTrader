@@ -4,6 +4,53 @@ All notable changes are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses
 [Semantic Versioning](VERSIONING.md).
 
+## [2.0.1] - 2026-06-25
+
+> Shipped to `main` (production) the same day. Additive settings-schema growth
+> only -- existing `~/.helm/settings.json` loads unchanged (Pydantic defaults
+> fill the new fields). No NinjaScript/watchdog code changes in this release.
+
+### Added
+- **Home session-results calendar.** Month grid at the bottom of Home; each
+  trading day (CME 5 PM CT roll) is a green/red box with net realized P&L.
+  `GET /api/home` gains `session_calendar`.
+- **Per-trade Journal** (new page + nav). Own `journal.db` keyed on the trade
+  `{first_fill_id}-{last_fill_id}`. Captures notes, discipline rating, mood,
+  tags, and an auto snapshot (symbol/account/direction/net P&L/ATM/entry-exit
+  price). Inline editor in the Round-trip Trades table + a Journal page.
+- **Auto-entry screenshots (opt-in).** `auto_trader.capture_entry_screenshot`:
+  on an auto-fill, copies HelmFeed's latest chart to `entry_{exec_tag}.png`;
+  `GET /api/journal/entry-screenshots` links it to the trade via the fill-linker
+  and the Journal shows the chart at entry.
+- **Microscalping compliance tile** (Trade Performance, replaced Recorder
+  Status). `GET /api/microscalp-compliance`: per-account sub-10s trade% and
+  gross-profit% vs the 50% eval cap, PASS/BREACH.
+- **Eval Progress card** (Trade Performance, left of Estimated Tax).
+  `GET /api/eval-progress`: per-eval profit-target progress (remaining-to-pass +
+  bar). New `account_configs.profit_target` (Eval-only).
+- **PA (Paid Account) bucket.** First-class `accounts.paid`, sibling to Live
+  across visibility, Home cumulative earnings, FilterBar, and Strategy cards.
+- **Personal vs LLC entity tagging.** Per-account `accounts.entities`
+  (personal|llc) + configurable `llc_name`. Entity selector on the Accounts tab.
+- **Business Expenses page** (new page + nav). Own `expenses.db`; categories,
+  Personal/LLC split, optional account link, recurring flag (manual), deductible
+  flag, year/entity filters + summary roll-ups. `GET/POST/PUT/DELETE
+  /api/expenses`.
+- **Accounts tab columns:** Profit target (Eval), Trailing DD (Live/Eval/PA,
+  reuses `account_configs.trailing_dd_limit`), Entity selector.
+- **Kill switch.** Health-page "Service Control" arms `~/.helm/kill-switch.json`
+  (`POST /api/control/kill`); the watchdog stops the dashboard within ~5s and
+  keeps it down while the NT instance live at kill time persists, lifting on NT
+  restart OR on watchdog/service startup.
+- **Semver version display.** `/api/version` surfaces `current_version` /
+  `latest_version` from the `VERSION` file; the update banner shows `vX.Y.Z` and
+  a `VersionBadge` sits in the header.
+
+### Changed
+- NSSM `HelmDashboardWatchdog` stop tuned for fast restarts: stop-method
+  console/window/threads timeouts -> 0 and `AppThrottle` 60000 -> 1500 (applied
+  out-of-band on the box, elevated; not in the repo).
+
 ## [2.0.0] - 2026-06-18
 
 > 2nd major version. BREAKING on several settings-shape axes -- see
