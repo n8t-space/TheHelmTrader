@@ -32,10 +32,13 @@ interface HomeData {
   session_calendar: SessionDay[]
 }
 
+type CalCat = 'live' | 'evals' | 'paid' | 'simulation'
+
+interface CalCell { net_pnl: number; trade_count: number }
+
 interface SessionDay {
   date: string  // YYYY-MM-DD (trading day, CME 5 PM CT roll)
-  net_pnl: number
-  trade_count: number
+  by_category: Partial<Record<CalCat, CalCell>>
 }
 
 const fmtMoney = (n: number) =>
@@ -79,8 +82,32 @@ const fmtCompactMoney = (n: number) => {
   return `${sign}$${abs.toFixed(0)}`
 }
 
+const CAL_FILTERS: { k: CalCat; label: string }[] = [
+  { k: 'live', label: 'Live' },
+  { k: 'evals', label: 'Eval' },
+  { k: 'paid', label: 'PA' },
+  { k: 'simulation', label: 'Sim' },
+]
+
+// Sum a day's P&L + trade count across the selected account-type buckets.
+function sumDay(sd: SessionDay | undefined, sel: Set<CalCat>): { net: number; count: number; has: boolean } {
+  let net = 0, count = 0, has = false
+  if (sd) {
+    for (const k of sel) {
+      const cell = sd.by_category[k]
+      if (cell) { net += cell.net_pnl; count += cell.trade_count; has = true }
+    }
+  }
+  return { net, count, has }
+}
+
 function SessionCalendarCard({ days }: { days: SessionDay[] }) {
   const byDate = new Map(days.map(d => [d.date, d]))
+
+  // Account-type filter. Default = real money: Live + PA.
+  const [selected, setSelected] = useState<Set<CalCat>>(() => new Set<CalCat>(['live', 'paid']))
+  const toggleCat = (k: CalCat) =>
+    setSelected(s => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n })
 
   // Default the view to the most recent month that has a session; fall back
   // to the current calendar month when there's no history yet.
@@ -96,12 +123,8 @@ function SessionCalendarCard({ days }: { days: SessionDay[] }) {
   const firstDow = new Date(year, month - 1, 1).getDay()
   const daysInMonth = new Date(year, month, 0).getDate()
 
-  const cells: (SessionDay | null)[] = []
-  for (let i = 0; i < firstDow; i++) cells.push(null)
-  for (let day = 1; day <= daysInMonth; day++) {
-    const iso = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-    cells.push(byDate.get(iso) ?? { date: iso, net_pnl: NaN, trade_count: 0 })
-  }
+  const isoOf = (day: number) =>
+    `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
 
   const shiftMonth = (delta: number) => {
     const dt = new Date(year, month - 1 + delta, 1)
@@ -110,12 +133,23 @@ function SessionCalendarCard({ days }: { days: SessionDay[] }) {
 
   const monthTotal = days
     .filter(d => d.date.startsWith(ym))
-    .reduce((acc, d) => acc + d.net_pnl, 0)
+    .reduce((acc, d) => acc + sumDay(d, selected).net, 0)
 
   return (
     <div className="card calendar-card">
       <div className="calendar-head">
         <h2>Session Results</h2>
+        <div className="calendar-filter">
+          {CAL_FILTERS.map(f => (
+            <button
+              key={f.k}
+              type="button"
+              className={'calendar-filter-btn' + (selected.has(f.k) ? ' on' : '')}
+              onClick={() => toggleCat(f.k)}
+              aria-pressed={selected.has(f.k)}
+            >{f.label}</button>
+          ))}
+        </div>
         <div className="calendar-nav">
           <button type="button" onClick={() => shiftMonth(-1)} aria-label="Previous month">&lsaquo;</button>
           <span className="calendar-title">{MONTH_NAMES[month - 1]} {year}</span>
@@ -127,21 +161,22 @@ function SessionCalendarCard({ days }: { days: SessionDay[] }) {
         {WEEKDAY_LABELS.map(w => (
           <div key={w} className="calendar-weekday">{w}</div>
         ))}
-        {cells.map((c, i) => {
-          if (!c) return <div key={`pad-${i}`} className="calendar-cell calendar-empty" />
-          const dayNum = Number(c.date.slice(8, 10))
-          const hasSession = !Number.isNaN(c.net_pnl)
-          const tone = !hasSession ? '' : c.net_pnl > 0 ? 'win' : c.net_pnl < 0 ? 'loss' : 'flat'
+        {Array.from({ length: firstDow }).map((_, i) => (
+          <div key={`pad-${i}`} className="calendar-cell calendar-empty" />
+        ))}
+        {Array.from({ length: daysInMonth }).map((_, idx) => {
+          const day = idx + 1
+          const iso = isoOf(day)
+          const { net, count, has } = sumDay(byDate.get(iso), selected)
+          const tone = !has ? '' : net > 0 ? 'win' : net < 0 ? 'loss' : 'flat'
           return (
             <div
-              key={c.date}
+              key={iso}
               className={`calendar-cell ${tone}`}
-              title={hasSession ? `${c.date} · ${c.trade_count} trade${c.trade_count === 1 ? '' : 's'} · ${fmtMoney(c.net_pnl)}` : c.date}
+              title={has ? `${iso} · ${count} trade${count === 1 ? '' : 's'} · ${fmtMoney(net)}` : iso}
             >
-              <span className="calendar-daynum">{dayNum}</span>
-              {hasSession && (
-                <span className="calendar-amount">{fmtCompactMoney(c.net_pnl)}</span>
-              )}
+              <span className="calendar-daynum">{day}</span>
+              {has && <span className="calendar-amount">{fmtCompactMoney(net)}</span>}
             </div>
           )
         })}

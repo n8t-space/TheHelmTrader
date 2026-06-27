@@ -4,6 +4,14 @@ All notable changes are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses
 [Semantic Versioning](VERSIONING.md).
 
+## [2.1.2] - 2026-06-26
+
+### Changed
+- **Home session calendar** gained an account-type filter (Live / Eval / PA /
+  Sim), **default Live + PA**. `/api/home` `session_calendar` now returns per-day
+  P&L broken out `by_category`, so toggling sums the selected buckets
+  client-side (no refetch). Uncategorized/hidden-bucket trades are excluded.
+
 ## [2.1.1] - 2026-06-26
 
 ### Changed

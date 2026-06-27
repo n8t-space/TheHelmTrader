@@ -655,6 +655,28 @@ tr.journal-detail > td {
   margin: 0;
 }
 
+.calendar-filter {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.calendar-filter-btn {
+  padding: 2px 9px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.calendar-filter-btn.on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(88, 166, 255, 0.10);
+}
+
 .calendar-nav {
   display: flex;
   align-items: center;
