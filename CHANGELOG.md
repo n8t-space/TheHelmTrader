@@ -4,6 +4,16 @@ All notable changes are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses
 [Semantic Versioning](VERSIONING.md).
 
+## [2.1.3] - 2026-06-26
+
+### Removed
+- **Econoday dropped from the seeded news defaults** (`_migrate_news_sources` +
+  `news._configured_sources`). The AI-scraped Econoday source was fragile and
+  cost a Claude call per refresh (and was 400-ing); ForexFactory already covers
+  the US economic calendar via the no-AI `xml` adapter. Fresh installs / a
+  Settings reset now seed ForexFactory only. Re-add Econoday via Settings ->
+  News if wanted. (Already removed from the live box's runtime config.)
+
 ## [2.1.2] - 2026-06-26
 
 ### Changed

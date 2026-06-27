@@ -566,19 +566,17 @@ def fetch_source(src) -> tuple[list[dict[str, Any]], str | None]:
 
 
 def _configured_sources():
-    """The enabled-or-not source list. Falls back to the two built-in defaults
-    when news.sources is empty (a fresh Settings() before the migration seed
-    runs, or a reset doc)."""
+    """The enabled-or-not source list. Falls back to the built-in default when
+    news.sources is empty (a fresh Settings() before the migration seed runs, or
+    a reset doc). As of v2.1.3 the only seeded default is the structured (no-AI)
+    ForexFactory feed; the AI-scraped Econoday default was dropped."""
     cfg = settings_mod.get_settings().news
     if cfg.sources:
         return cfg.sources
-    # Build transient defaults mirroring _migrate_news_sources so a fresh
-    # install with no settings.json still pulls both built-ins.
+    # Transient default mirroring _migrate_news_sources.
     return [
         settings_mod.NewsSource(name="ForexFactory", url=FF_FEED_URL,
                                 type="xml", enabled=cfg.forexfactory_enabled),
-        settings_mod.NewsSource(name="Econoday", url=ECONODAY_URL,
-                                type="scrape", enabled=cfg.econoday_enabled),
     ]
 
 

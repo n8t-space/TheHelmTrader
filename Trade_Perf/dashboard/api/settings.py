@@ -386,26 +386,23 @@ def _migrate_credentials(raw: dict) -> dict:
 
 
 def _migrate_news_sources(raw: dict) -> dict:
-    """Seed news.sources from the legacy forexfactory_enabled / econoday_enabled
-    booleans when the list is empty/absent (Item 7). Mirrors the
+    """Seed news.sources when the list is empty/absent (Item 7). Mirrors the
     _migrate_credentials pattern: runs on every load, no-op once `sources` has
-    entries. The two booleans STAY readable for the 2.0.x line (rollback); the
-    UI writes only `sources` going forward."""
+    entries. Seeds only the structured (no-AI) ForexFactory feed as of v2.1.3 --
+    the AI-scraped Econoday default was dropped (fragile + costs an AI call per
+    refresh; FF already covers the US economic calendar). Add Econoday back via
+    Settings -> News only if you want it."""
     news = raw.get("news")
     if not isinstance(news, dict):
         return raw
     if news.get("sources"):
         return raw
     ff_on = news.get("forexfactory_enabled", True)
-    ed_on = news.get("econoday_enabled", True)
     news["sources"] = [
         {"name": "ForexFactory", "url": _FF_DEFAULT_URL,
          "type": "xml", "enabled": bool(ff_on)},
-        {"name": "Econoday", "url": _ECONODAY_DEFAULT_URL,
-         "type": "scrape", "enabled": bool(ed_on)},
     ]
-    logger.info("[settings] seeded news.sources from legacy booleans "
-                "(ff=%s econoday=%s)", ff_on, ed_on)
+    logger.info("[settings] seeded news.sources (ForexFactory only; ff=%s)", ff_on)
     return raw
 
 
