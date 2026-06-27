@@ -4,6 +4,22 @@ All notable changes are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses
 [Semantic Versioning](VERSIONING.md).
 
+## [2.2.0] - 2026-06-26
+
+### Added
+- **Mute control for the "Service unreachable" alert** (Settings -> Appearance ->
+  Notifications): mute for 1h / 4h / 6h / until manually turned back on. Stored
+  client-side (localStorage) so it works even while the backend is down; applies
+  instantly (the modal hides/reappears without waiting for the next poll).
+
+### Removed
+- **Per-account trading config block removed from the Strategy tab.** The
+  `account_configs` data + auto-trader guardrails are unchanged; profit target
+  and trailing DD remain editable on the Accounts tab. NOTE: base cash, risk
+  sizing, and the other per-account guardrails no longer have a dedicated editor
+  UI -- accounts fall back to the global Auto-Trader defaults unless those
+  fields were already set.
+
 ## [2.1.3] - 2026-06-26
 
 ### Removed

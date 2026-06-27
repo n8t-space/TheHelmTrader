@@ -8,8 +8,8 @@ declare global {
   }
 }
 import {
-  fetchJSON, postJSON, putJSON, accountLabel,
-  type AccountConfig, type AccountConfigLive,
+  fetchJSON, postJSON, putJSON,
+  type AccountConfig,
   type DimensionsResp, type ModelsResp, type OllamaTestResp,
   type NewsSource, type SettingsAccounts, type SettingsAiBackend,
   type BlackoutWindow, type SettingsAutomation,
@@ -17,6 +17,7 @@ import {
   type SettingsResp, type SettingsStrategy,
 } from '../api'
 import { applyAppearance, cacheAppearance } from '../lib/theme'
+import { ServiceAlertMute } from '../ServiceAlert'
 
 type Tab = 'appearance' | 'ai' | 'strategy' | 'accounts' | 'execution' | 'news' | 'integrity' | 'tax'
 
@@ -154,9 +155,6 @@ export function SettingsPage() {
           <StrategyTab
             value={draft.strategy}
             onChange={(s) => setDraft({ ...draft, strategy: s })}
-            accounts={draft.accounts}
-            accountConfigs={draft.account_configs}
-            onConfigsChange={(c) => setDraft({ ...draft, account_configs: c })}
           />
         )}
         {tab === 'accounts' && (
@@ -679,6 +677,9 @@ function AppearanceTab({ value, onChange }: {
           </label>
         ))}
       </div>
+
+      <h4>Notifications</h4>
+      <ServiceAlertMute />
     </>
   )
 }
@@ -998,12 +999,9 @@ function ModelPicker({
 
 // ---------- Strategy ----------
 
-function StrategyTab({ value, onChange, accounts, accountConfigs, onConfigsChange }: {
+function StrategyTab({ value, onChange }: {
   value: SettingsStrategy
   onChange: (v: SettingsStrategy) => void
-  accounts: SettingsAccounts
-  accountConfigs: Record<string, AccountConfig>
-  onConfigsChange: (c: Record<string, AccountConfig>) => void
 }) {
   return (
     <>
@@ -1043,12 +1041,6 @@ function StrategyTab({ value, onChange, accounts, accountConfigs, onConfigsChang
           <span className="subtle">Bars older than this skip auto-analysis (backfill safety).</span>
         </label>
       </div>
-
-      <PerAccountConfigBlock
-        accounts={accounts}
-        configs={accountConfigs}
-        onChange={onConfigsChange}
-      />
     </>
   )
 }
@@ -1071,191 +1063,6 @@ const EMPTY_CFG: AccountConfig = {
   stop_if_balance_below: 0,
   trailing_dd_limit: 0,
   profit_target: 0,
-}
-
-const fmtMoneyOrDash = (n: number | null | undefined) =>
-  n === null || n === undefined ? '--' : `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-
-const fmtSignedMoney = (n: number | null | undefined) => {
-  if (n === null || n === undefined) return '--'
-  const sign = n < 0 ? '-' : '+'
-  return `${sign}$${Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-}
-
-const fmtBasisDate = (iso: string | null | undefined) => {
-  if (!iso) return '--'
-  const d = new Date(iso)
-  return isNaN(d.getTime()) ? iso : d.toLocaleString()
-}
-
-function PerAccountConfigBlock({ accounts, configs, onChange }: {
-  accounts: SettingsAccounts
-  configs: Record<string, AccountConfig>
-  onChange: (c: Record<string, AccountConfig>) => void
-}) {
-  // LIVE + EVAL + PA. De-dupe + drop blanks; Sim is intentionally excluded.
-  const ids = Array.from(new Set([...accounts.live, ...accounts.evals, ...accounts.paid]))
-    .map((a) => a.trim())
-    .filter(Boolean)
-    .sort()
-
-  const update = (id: string, patch: Partial<AccountConfig>) => {
-    const cur = configs[id] ?? EMPTY_CFG
-    onChange({ ...configs, [id]: { ...EMPTY_CFG, ...cur, ...patch } })
-  }
-
-  return (
-    <>
-      <h4 style={{ marginTop: 24 }}>Per-account trading config <span className="subtle">(Live + Eval + PA)</span></h4>
-      <p className="subtle">
-        One config per Live / Eval account. These override the global Auto-Trader defaults
-        for that account (risk sizing, contract / concurrency caps, daily-loss + balance-floor
-        kill-switches). Simulation accounts have no card and use the global defaults. The
-        trailing max-drawdown limit is user-entered and enforced server-side against an equity
-        high-water mark computed from each account's current cash (base cash + realized P&L
-        from Trade Performance), so it works even when no strategy is running on the account.
-      </p>
-      {ids.length === 0 ? (
-        <p className="subtle"><em>No Live or Eval accounts yet. Add accounts under the Accounts tab (Live / Eval) to configure them here.</em></p>
-      ) : (
-        ids.map((id) => (
-          <AccountConfigCard
-            key={id}
-            id={id}
-            label={accountLabel(id, accounts.names)}
-            cfg={configs[id] ?? EMPTY_CFG}
-            onChange={(patch) => update(id, patch)}
-          />
-        ))
-      )}
-    </>
-  )
-}
-
-function AccountConfigCard({ id, label, cfg, onChange }: {
-  id: string
-  label: string
-  cfg: AccountConfig
-  onChange: (patch: Partial<AccountConfig>) => void
-}) {
-  const live = useQuery<AccountConfigLive>({
-    queryKey: ['account-config-live', id],
-    queryFn: () => fetchJSON<AccountConfigLive>(`/api/account-configs/live?account=${encodeURIComponent(id)}`),
-    refetchInterval: 5_000,
-  })
-  const d = live.data
-  return (
-    <div className="account-config-card" style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 14, marginBottom: 14 }}>
-      <div className="settings-row">
-        <label>
-          <span>Config name</span>
-          <input
-            type="text"
-            placeholder={label}
-            value={cfg.name}
-            onChange={(e) => onChange({ name: e.target.value })}
-          />
-          <span className="subtle">Account <code>{id}</code> (defaults to <strong>{label}</strong>).</span>
-        </label>
-        <label>
-          <span>Base cash ($)</span>
-          <input
-            type="number" min={0} step="any"
-            value={cfg.base_cash}
-            onChange={(e) => onChange({ base_cash: Number(e.target.value) })}
-          />
-          <span className="subtle">Account cash "as of now". On save, the moment is stamped as the basis; trades that close after it adjust the current cash below.</span>
-        </label>
-        <label>
-          <span>Current cash (computed)</span>
-          <input type="text" disabled value={d ? fmtMoneyOrDash(d.cash) : '...'} />
-          <span className="subtle">
-            {d && d.cash === null
-              ? 'Enter a base cash above and save to set the basis.'
-              : `= base ${fmtMoneyOrDash(d?.base_cash)} ${fmtSignedMoney(d?.realized_since)} realized since ${fmtBasisDate(d?.cash_basis_ts)}`}
-          </span>
-        </label>
-      </div>
-
-      <div className="settings-row">
-        <label>
-          <span>Risk per trade</span>
-          <input
-            type="number" min={0} step="any"
-            value={cfg.risk_per_trade_value}
-            onChange={(e) => onChange({ risk_per_trade_value: Number(e.target.value) })}
-          />
-        </label>
-        <label>
-          <span>Risk mode</span>
-          <select
-            value={cfg.risk_per_trade_mode}
-            onChange={(e) => onChange({ risk_per_trade_mode: e.target.value as AccountConfig['risk_per_trade_mode'] })}
-          >
-            <option value="percent">% of account</option>
-            <option value="price">price ($)</option>
-          </select>
-          <span className="subtle">% of current cash (base + realized), or a fixed $ risk per trade. Sizes the ATM-less order from the stop distance.</span>
-        </label>
-        <label>
-          <span>Max daily loss ($)</span>
-          <input
-            type="number" min={0} step="any"
-            value={cfg.max_daily_loss}
-            onChange={(e) => onChange({ max_daily_loss: Number(e.target.value) })}
-          />
-          <span className="subtle">0 = use global default.</span>
-        </label>
-        <label>
-          <span>Max concurrent / instrument</span>
-          <input
-            type="number" min={1} max={20}
-            value={cfg.max_concurrent_per_instrument}
-            onChange={(e) => onChange({ max_concurrent_per_instrument: Number(e.target.value) })}
-          />
-          <span className="subtle">1 = one open trade per instrument (today's lock).</span>
-        </label>
-        <label>
-          <span>Max contracts / instrument</span>
-          <input
-            type="number" min={1} max={50}
-            value={cfg.max_contracts_per_instrument}
-            onChange={(e) => onChange({ max_contracts_per_instrument: Number(e.target.value) })}
-          />
-          <span className="subtle">Hard ceiling on risk-sized qty.</span>
-        </label>
-        <label>
-          <span>Stop if balance &le; ($)</span>
-          <input
-            type="number" min={0} step="any"
-            value={cfg.stop_if_balance_below}
-            onChange={(e) => onChange({ stop_if_balance_below: Number(e.target.value) })}
-          />
-          <span className="subtle">0 = use global default.</span>
-        </label>
-        <label>
-          <span>Trailing max-DD limit ($)</span>
-          <input
-            type="number" min={0} step="any"
-            value={cfg.trailing_dd_limit}
-            onChange={(e) => onChange({ trailing_dd_limit: Number(e.target.value) })}
-          />
-          <span className="subtle">0 = off. Enforced vs the server-computed high-water mark.</span>
-        </label>
-      </div>
-
-      <div className="settings-row" style={{ alignItems: 'center', gap: 16 }}>
-        <span className="subtle">
-          High-water mark: <strong>{fmtMoneyOrDash(d?.high_water_mark)}</strong>
-          {' · '}Trailing DD used: <strong>{fmtMoneyOrDash(d?.trailing_dd_used)}</strong>
-          {' / '}limit <strong>{fmtMoneyOrDash(cfg.trailing_dd_limit || null)}</strong>
-        </span>
-        {d?.dd_breached && (
-          <span className="badge status-breach" style={{ color: 'var(--neg)' }}>TRAILING DD BREACHED — auto-trading forced OFF</span>
-        )}
-      </div>
-    </div>
-  )
 }
 
 // ---------- Accounts ----------
